@@ -50,9 +50,21 @@ void SettingsScreen::onEnter() {
   timezone.valueFormatter = [](int val) {
     std::string s = (val >= 0 ? "+" : "") + std::to_string(val);
     if (val == 0)
-      s += " (UTC)";
+      s += " (UTC/GMT)";
+    else if (val == 1)
+      s += " (CET)";
+    else if (val == -5)
+      s += " (EST)";
+    else if (val == -6)
+      s += " (CST)";
+    else if (val == -8)
+      s += " (PST)";
+    else if (val == 5)
+      s += " (IST)";
     else if (val == 9)
       s += " (JST/KST)";
+    else if (val == 10)
+      s += " (AEST)";
     return s;
   };
   timezone.onUpdate = [](int val) {
