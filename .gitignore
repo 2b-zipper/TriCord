@@ -1,0 +1,8 @@
+*.elf
+*.3dsx
+*.cia
+*.smdh
+*.lst
+build/
+
+.vscode/

@@ -1,0 +1,128 @@
+#include "ui/emoji_manager.h"
+#include "log.h"
+#include "network/network_manager.h"
+#include "utils/image_utils.h"
+#include <cstdio>
+#include <malloc.h>
+
+namespace UI {
+
+EmojiManager &EmojiManager::getInstance() {
+  static EmojiManager instance;
+  return instance;
+}
+
+void EmojiManager::init() {}
+
+void EmojiManager::shutdown() {
+  std::unique_lock<std::shared_mutex> lock(cacheMutex);
+  for (auto &pair : emojiCache) {
+    if (pair.second.tex) {
+      C3D_TexDelete(pair.second.tex);
+      free(pair.second.tex);
+    }
+  }
+  for (auto &pair : twemojiCache) {
+    if (pair.second.tex) {
+      C3D_TexDelete(pair.second.tex);
+      free(pair.second.tex);
+    }
+  }
+  emojiCache.clear();
+  twemojiCache.clear();
+}
+
+EmojiManager::~EmojiManager() { shutdown(); }
+
+void EmojiManager::update() {}
+
+EmojiManager::EmojiInfo EmojiManager::getEmojiInfo(const std::string &emojiId) {
+  std::shared_lock<std::shared_mutex> lock(cacheMutex);
+  auto it = emojiCache.find(emojiId);
+  if (it != emojiCache.end()) {
+    return it->second;
+  }
+
+  return EmojiInfo();
+}
+
+void EmojiManager::prefetchEmoji(const std::string &emojiId) {
+  if (emojiId.empty())
+    return;
+
+  {
+    std::unique_lock<std::shared_mutex> lock(cacheMutex);
+    if (emojiCache.count(emojiId))
+      return;
+
+    EmojiInfo placeholder;
+    placeholder.tex = nullptr;
+    placeholder.originalW = 0;
+    placeholder.originalH = 0;
+    emojiCache[emojiId] = placeholder;
+  }
+
+  std::string url =
+      "https://media.discordapp.net/emojis/" + emojiId + ".png?size=48";
+
+  Network::NetworkManager::getInstance().enqueue(
+      url, "GET", "", Network::RequestPriority::INTERACTIVE,
+      [this, emojiId](const Network::HttpResponse &resp) {
+        if (resp.statusCode == 200 && !resp.body.empty()) {
+          int w, h;
+          C3D_Tex *tex = Utils::Image::loadTextureFromMemory(
+              (const unsigned char *)resp.body.data(), resp.body.size(), w, h);
+          if (tex) {
+            std::unique_lock<std::shared_mutex> lock(cacheMutex);
+            EmojiInfo info;
+            info.tex = tex;
+            info.originalW = w;
+            info.originalH = h;
+            emojiCache[emojiId] = info;
+          }
+        }
+      });
+}
+
+EmojiManager::EmojiInfo
+EmojiManager::getTwemojiInfo(const std::string &codepointHex) {
+  {
+    std::shared_lock<std::shared_mutex> lock(cacheMutex);
+    auto it = twemojiCache.find(codepointHex);
+    if (it != twemojiCache.end()) {
+      return it->second;
+    }
+  }
+
+  std::string path = "romfs:/twemoji17/" + codepointHex + ".png";
+  FILE *f = fopen(path.c_str(), "rb");
+  if (f) {
+    fseek(f, 0, SEEK_END);
+    size_t size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    std::vector<unsigned char> buffer(size);
+    fread(buffer.data(), 1, size, f);
+    fclose(f);
+
+    int w, h;
+    C3D_Tex *tex =
+        Utils::Image::loadTextureFromMemory(buffer.data(), size, w, h);
+    if (tex) {
+      EmojiInfo info;
+      info.tex = tex;
+      info.originalW = w;
+      info.originalH = h;
+
+      {
+        std::unique_lock<std::shared_mutex> lock(cacheMutex);
+        twemojiCache[codepointHex] = info;
+      }
+      return info;
+    }
+  }
+
+  return EmojiInfo();
+}
+
+} // namespace UI
