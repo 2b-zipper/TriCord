@@ -537,8 +537,8 @@ void ServerListScreen::drawChannelList(float x, float y, float alpha) {
     float currentX = startX + (ch.parent_id.empty() ? 0 : 10.0f);
 
     if (isSelected) {
-      C2D_DrawRectSolid(x, currentY, 0.5f, 400 - x, rowHeight,
-                        ScreenManager::colorBackgroundLight());
+      drawRoundedRect(x + 4, currentY, 0.5f, 400 - x - 8, rowHeight, 4.0f,
+                      ScreenManager::colorBackgroundLight());
     }
 
     std::string name = ch.name;
@@ -588,7 +588,8 @@ void ServerListScreen::drawListItem(int index, const ListItem &item, float x,
   bool isSelected = (index == selectedIndex);
 
   if (isSelected) {
-    C2D_DrawRectSolid(x, y + 10, 0.5f, 4, 28, ScreenManager::colorText());
+    drawRoundedRect(x + 2, y + 10, 0.5f, 4, 28, 2.0f,
+                    ScreenManager::colorText());
   }
 
   float iconSize = 42.0f;
@@ -601,8 +602,38 @@ void ServerListScreen::drawListItem(int index, const ListItem &item, float x,
 
   bool inExpandedFolder = (item.isFolder && item.expanded) || (item.depth > 0);
   if (inExpandedFolder) {
+    bool roundTop = true;
+    bool roundBottom = true;
+
+    if (index > 0) {
+      const auto &prev = listItems[index - 1];
+      if ((prev.isFolder && prev.expanded) || prev.depth > 0)
+        roundTop = false;
+    }
+    if (index < (int)listItems.size() - 1) {
+      const auto &next = listItems[index + 1];
+      if (next.depth > 0)
+        roundBottom = false;
+    }
+
     u32 folderBg = ScreenManager::colorBackground();
-    C2D_DrawRectSolid(x + 12, y, 0.45f, width - 24, 48, folderBg);
+    float fX = x + 12;
+    float fY = y + (roundTop ? 2 : 0);
+    float fW = width - 24;
+    float fH = 48 - (roundTop ? 2 : 0) - (roundBottom ? 2 : 0);
+
+    C2D_DrawRectSolid(fX, fY, 0.45f, fW, fH, folderBg);
+    if (roundTop) {
+      drawCircle(fX + 12.0f, fY + 12.0f, 0.455f, 12.0f, folderBg);
+      drawCircle(fX + fW - 12.0f, fY + 12.0f, 0.455f, 12.0f, folderBg);
+      C2D_DrawRectSolid(fX + 12.0f, fY, 0.455f, fW - 24.0f, 12.0f, folderBg);
+    }
+    if (roundBottom) {
+      drawCircle(fX + 12.0f, fY + fH - 12.0f, 0.455f, 12.0f, folderBg);
+      drawCircle(fX + fW - 12.0f, fY + fH - 12.0f, 0.455f, 12.0f, folderBg);
+      C2D_DrawRectSolid(fX + 12.0f, fY + fH - 12.0f, 0.455f, fW - 24.0f, 12.0f,
+                        folderBg);
+    }
   }
 
   if (item.isFolder) {

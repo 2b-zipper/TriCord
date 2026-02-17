@@ -280,7 +280,14 @@ void HamburgerMenu::render() {
   C2D_DrawRectSolid(0, 0, 0.96f, 400, 240, ScreenManager::colorOverlay());
 
   u32 menuBg = ScreenManager::colorBackgroundDark();
-  C2D_DrawRectSolid(x, 0, 0.97f, MENU_WIDTH, 240, menuBg);
+  u8 r = (menuBg >> 0) & 0xFF;
+  u8 g = (menuBg >> 8) & 0xFF;
+  u8 b = (menuBg >> 16) & 0xFF;
+  u32 glassBg = C2D_Color32(r, g, b, 240);
+
+  C2D_DrawRectSolid(x, 0, 0.97f, MENU_WIDTH, 240, glassBg);
+  C2D_DrawRectSolid(x + MENU_WIDTH - 1, 0, 0.975f, 1, 240,
+                    C2D_Color32(255, 255, 255, 30));
 
   if (state == State::OPEN || state == State::OPENING ||
       state == State::CLOSING) {
@@ -297,8 +304,8 @@ void HamburgerMenu::render() {
     float popupX = (400.0f - popupW) / 2.0f;
     float popupY = (240.0f - popupH) / 2.0f;
 
-    C2D_DrawRectSolid(popupX, popupY, 0.98f, popupW, popupH,
-                      ScreenManager::colorBackground());
+    drawRoundedRect(popupX, popupY, 0.98f, popupW, popupH, 12.0f,
+                    ScreenManager::colorBackground());
 
     drawText(popupX + 10, popupY + 10, 0.99f, 0.6f, 0.6f,
              ScreenManager::colorText(),
@@ -316,10 +323,10 @@ void HamburgerMenu::render() {
       u32 color = ScreenManager::colorTextMuted();
 
       if (i == accountSelectionIndex) {
-        C2D_DrawRectSolid(popupX + 5, itemY, 0.985f, popupW - 10, 25,
-                          (i < (int)accounts.size())
-                              ? ScreenManager::colorSelection()
-                              : ScreenManager::colorSuccess());
+        drawRoundedRect(popupX + 5, itemY, 0.985f, popupW - 10, 26, 6.0f,
+                        (i < (int)accounts.size())
+                            ? ScreenManager::colorSelection()
+                            : ScreenManager::colorSuccess());
         color = ScreenManager::colorWhite();
       }
 
@@ -385,8 +392,8 @@ void HamburgerMenu::render() {
     float popupX = (400.0f - popupW) / 2.0f;
     float popupY = (240.0f - popupH) / 2.0f;
 
-    C2D_DrawRectSolid(popupX, popupY, 0.98f, popupW, popupH,
-                      ScreenManager::colorBackground());
+    drawRoundedRect(popupX, popupY, 0.98f, popupW, popupH, 12.0f,
+                    ScreenManager::colorBackground());
 
     drawText(popupX + 10, popupY + 10, 0.99f, 0.6f, 0.6f,
              ScreenManager::colorText(), TR("menu.status_change"));
@@ -444,7 +451,7 @@ void HamburgerMenu::drawMenuItem(int index, float y, float alpha) {
   u32 textColor = ScreenManager::colorText();
   if (index == selectedIndex && !accountCardSelected) {
     u32 highlight = ScreenManager::colorSelection();
-    C2D_DrawRectSolid(x, y, 0.975f, MENU_WIDTH, 30, highlight);
+    drawRoundedRect(x + 8, y, 0.975f, MENU_WIDTH - 16, 32, 8.0f, highlight);
     textColor = ScreenManager::colorWhite();
   } else {
     u32 base = ScreenManager::colorText();
@@ -460,12 +467,12 @@ void HamburgerMenu::drawMenuItem(int index, float y, float alpha) {
 
 void HamburgerMenu::drawAccountCard(float x, float y, float alpha) {
   Discord::User self = Discord::DiscordClient::getInstance().getCurrentUser();
-  float cardH = 50.0f;
+  float cardH = 55.0f;
 
   // Highlight if selected
   if (accountCardSelected) {
-    C2D_DrawRectSolid(x, y, 0.975f, MENU_WIDTH, cardH,
-                      ScreenManager::colorSelection());
+    drawRoundedRect(x + 8, y, 0.975f, MENU_WIDTH - 16, cardH - 5, 8.0f,
+                    ScreenManager::colorSelection());
   } else {
     // Subtle separator line
     C2D_DrawRectSolid(x + 10, y, 0.975f, MENU_WIDTH - 20, 1.0f,

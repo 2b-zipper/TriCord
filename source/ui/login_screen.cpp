@@ -320,12 +320,12 @@ void LoginScreen::renderTop(C3D_RenderTarget *target) {
   float qrDrawX = qrX - (qrSize / 2.0f);
 
   if (qrCodeGenerated) {
-    C2D_DrawRectSolid(qrDrawX - 8, qrY - 8, 0.25f, qrSize + 16, qrSize + 16,
-                      ScreenManager::colorWhite());
+    drawRoundedRect(qrDrawX - 8, qrY - 8, 0.25f, qrSize + 16, qrSize + 16, 8.0f,
+                    ScreenManager::colorWhite());
     drawQRCode(qrDrawX, qrY, qrSize);
   } else {
-    C2D_DrawRectSolid(qrDrawX - 8, qrY - 8, 0.25f, qrSize + 16, qrSize + 16,
-                      ScreenManager::colorInput());
+    drawRoundedRect(qrDrawX - 8, qrY - 8, 0.25f, qrSize + 16, qrSize + 16, 8.0f,
+                    ScreenManager::colorInput());
 
     std::string s = TR("login.generating");
     drawText(qrX - (measureText(s, 0.45f, 0.45f) / 2.0f),
@@ -365,27 +365,28 @@ void LoginScreen::renderBottom(C3D_RenderTarget *target) {
       C2D_DrawRectSolid(0, 0, 0.4f, BOTTOM_SCREEN_WIDTH, BOTTOM_SCREEN_HEIGHT,
                         ScreenManager::colorOverlay());
 
-      C2D_DrawRectSolid(dX, dY, 0.5f, dialogW, dialogH,
-                        ScreenManager::colorInput());
+      drawRoundedRect(dX, dY, 0.5f, dialogW, dialogH, 12.0f,
+                      ScreenManager::colorInput());
 
-      drawCenteredText(dY + 10.0f, 0.6f, 0.5f, 0.5f, ScreenManager::colorText(),
-                       TR("login.mfa.title"), BOTTOM_SCREEN_WIDTH);
-      drawCenteredText(dY + 30.0f, 0.6f, 0.4f, 0.4f,
+      drawCenteredText(dY + 12.0f, 0.6f, 0.55f, 0.55f,
+                       ScreenManager::colorText(), TR("login.mfa.title"),
+                       BOTTOM_SCREEN_WIDTH);
+      drawCenteredText(dY + 32.0f, 0.6f, 0.4f, 0.4f,
                        ScreenManager::colorTextMuted(), TR("login.mfa.desc"),
                        BOTTOM_SCREEN_WIDTH);
 
-      float inputY = dY + 50.0f;
-      C2D_DrawRectSolid(dX + 20, inputY, 0.6f, dialogW - 40, 30.0f,
-                        ScreenManager::colorBackgroundLight());
+      float inputY = dY + 52.0f;
+      drawRoundedRect(dX + 20, inputY, 0.6f, dialogW - 40, 30.0f, 6.0f,
+                      ScreenManager::colorBackgroundLight());
       std::string codeDisplay =
           mfaCode.empty() ? TR("login.mfa.hint") : mfaCode;
       drawText(dX + 25, inputY + 7.5f, 0.7f, 0.45f, 0.45f,
                ScreenManager::colorText(), codeDisplay);
 
-      float btnY = dY + 90.0f;
-      C2D_DrawRectSolid(dX + 20, btnY, 0.6f, dialogW - 40, 30.0f,
-                        ScreenManager::colorSelection());
-      drawCenteredText(btnY + 7.5f, 0.7f, 0.5f, 0.5f,
+      float btnY = dY + 92.0f;
+      drawRoundedRect(dX + 20, btnY, 0.6f, dialogW - 40, 32.0f, 6.0f,
+                      ScreenManager::colorSelection());
+      drawCenteredText(btnY + 8.5f, 0.7f, 0.5f, 0.5f,
                        ScreenManager::colorWhite(), TR("login.mfa.verify"),
                        BOTTOM_SCREEN_WIDTH);
 
@@ -397,36 +398,36 @@ void LoginScreen::renderBottom(C3D_RenderTarget *target) {
 
       float fieldW = 280.0f;
       float fieldX = (BOTTOM_SCREEN_WIDTH - fieldW) / 2.0f;
-      float emailY = 50.0f;
+      float emailY = 55.0f;
 
-      C2D_DrawRectSolid(fieldX, emailY, 0.5f, fieldW, 30.0f,
-                        ScreenManager::colorInput());
-      drawText(fieldX, emailY - 15.0f, 0.5f, 0.4f, 0.4f,
+      drawRoundedRect(fieldX, emailY, 0.5f, fieldW, 30.0f, 6.0f,
+                      ScreenManager::colorInput());
+      drawText(fieldX, emailY - 18.0f, 0.5f, 0.45f, 0.45f,
                ScreenManager::colorTextMuted(), TR("login.field.email"));
       std::string emailDisplay =
           email.empty() ? TR("login.field.email_hint") : email;
       u32 emailColor = email.empty() ? ScreenManager::colorTextMuted()
                                      : ScreenManager::colorText();
-      drawText(fieldX + 5.0f, emailY + 7.5f, 0.5f, 0.45f, 0.45f, emailColor,
+      drawText(fieldX + 8.0f, emailY + 7.5f, 0.5f, 0.45f, 0.45f, emailColor,
                emailDisplay);
 
-      float passY = emailY + 50.0f;
-      C2D_DrawRectSolid(fieldX, passY, 0.5f, fieldW, 30.0f,
-                        ScreenManager::colorInput());
-      drawText(fieldX, passY - 15.0f, 0.5f, 0.4f, 0.4f,
+      float passY = emailY + 55.0f;
+      drawRoundedRect(fieldX, passY, 0.5f, fieldW, 30.0f, 6.0f,
+                      ScreenManager::colorInput());
+      drawText(fieldX, passY - 18.0f, 0.5f, 0.45f, 0.45f,
                ScreenManager::colorTextMuted(), TR("login.field.password"));
       std::string passDisplay = password.empty()
                                     ? TR("login.field.password_hint")
                                     : std::string(password.length(), '*');
       u32 passColor = password.empty() ? ScreenManager::colorTextMuted()
                                        : ScreenManager::colorText();
-      drawText(fieldX + 5.0f, passY + 7.5f, 0.5f, 0.45f, 0.45f, passColor,
+      drawText(fieldX + 8.0f, passY + 7.5f, 0.5f, 0.45f, 0.45f, passColor,
                passDisplay);
 
-      float btnY = passY + 50.0f;
-      C2D_DrawRectSolid(fieldX, btnY, 0.5f, fieldW, 35.0f,
-                        ScreenManager::colorSelection());
-      drawCenteredText(btnY + 9.5f, 0.5f, 0.5f, 0.5f,
+      float btnY = passY + 55.0f;
+      drawRoundedRect(fieldX, btnY, 0.5f, fieldW, 38.0f, 8.0f,
+                      ScreenManager::colorSelection());
+      drawCenteredText(btnY + 11.0f, 0.5f, 0.55f, 0.55f,
                        ScreenManager::colorWhite(), TR("login.button.login"),
                        BOTTOM_SCREEN_WIDTH);
 

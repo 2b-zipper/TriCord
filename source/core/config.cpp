@@ -29,18 +29,18 @@ Config::Config()
 Theme Config::getDarkPreset() {
   Theme t;
   t.name = "Dark Mode";
-  t.background = 0xFF3F3936;
-  t.backgroundDark = 0xFF36312F;
-  t.backgroundLight = 0xFF4B4440;
-  t.primary = 0xFFEA655A;
+  t.background = 0xFF383331;
+  t.backgroundDark = 0xFF312D2B;
+  t.backgroundLight = 0xFF494240;
+  t.primary = 0xFFF26558;
   t.text = 0xFFFFFFFF;
-  t.textMuted = 0xFF9D9896;
-  t.success = 0xFF5CA53B;
-  t.error = 0xFF4542ED;
-  t.embed = 0xFF36312F;
-  t.embedMedia = 0xFF463C3C;
-  t.reaction = 0xFF36312F;
-  t.reactionMe = 0xFF5A413A;
+  t.textMuted = 0xFFA49B94;
+  t.success = 0xFF6DB143;
+  t.error = 0xFF4D47F0;
+  t.embed = 0xFF312D2B;
+  t.embedMedia = 0xFF383331;
+  t.reaction = 0xFF494240;
+  t.reactionMe = 0xFF8B6447;
   return t;
 }
 
@@ -50,14 +50,14 @@ Theme Config::getLightPreset() {
   t.background = 0xFFFFFFFF;
   t.backgroundDark = 0xFFF5F3F2;
   t.backgroundLight = 0xFFE5E2E0;
-  t.primary = 0xFFEA655A;
+  t.primary = 0xFFF26558;
   t.text = 0xFF070606;
   t.textMuted = 0xFF58504E;
-  t.success = 0xFF5CA53B;
-  t.error = 0xFF4542ED;
+  t.success = 0xFF6DB143;
+  t.error = 0xFF4D47F0;
   t.embed = 0xFFFBFBFB;
   t.embedMedia = 0xFFF5F3F2;
-  t.reaction = 0xFFF5F3F2;
+  t.reaction = 0xFFE0E2E5;
   t.reactionMe = 0xFFFAEAED;
   return t;
 }

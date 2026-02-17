@@ -295,16 +295,17 @@ void ScreenManager::renderDebugOverlay() {
 
 void ScreenManager::drawHamburgerButton() {
   u32 color = colorText();
-  float x = 10.0f;
-  float y = 10.0f;
-  float w = 20.0f;
+  float x = 12.0f;
+  float y = 11.0f;
+  float w = 18.0f;
   float h = 2.0f;
-  float gap = 6.0f;
+  float gap = 5.0f;
   float z = 1.0f;
+  float r = 1.0f;
 
-  C2D_DrawRectSolid(x, y, z, w, h, color);
-  C2D_DrawRectSolid(x, y + gap, z, w, h, color);
-  C2D_DrawRectSolid(x, y + gap * 2, z, w, h, color);
+  drawRoundedRect(x, y, z, w, h, r, color);
+  drawRoundedRect(x, y + gap, z, w, h, r, color);
+  drawRoundedRect(x, y + gap * 2, z, w, h, r, color);
 }
 
 void ScreenManager::showToast(const std::string &message) {
@@ -313,20 +314,19 @@ void ScreenManager::showToast(const std::string &message) {
 }
 
 void ScreenManager::drawToast() {
-  float w = measureText(toastMessage, 0.5f, 0.5f) + 20.0f;
-  float h = 30.0f;
+  float w = measureText(toastMessage, 0.5f, 0.5f) + 24.0f;
+  float h = 32.0f;
   float x = (320.0f - w) / 2.0f;
   float y = 180.0f;
   float z = 0.95f;
 
-  C2D_DrawRectSolid(x, y, z, w, h, C2D_Color32(40, 40, 45, 240));
-  C2D_DrawRectSolid(x, y, z + 0.01f, w, 1, colorSelection());
-  C2D_DrawRectSolid(x, y + h - 1, z + 0.01f, w, 1, colorSelection());
-  C2D_DrawRectSolid(x, y, z + 0.01f, 1, h, colorSelection());
-  C2D_DrawRectSolid(x + w - 1, y, z + 0.01f, 1, h, colorSelection());
+  u32 bg = C2D_Color32(40, 40, 45, 235);
+  drawRoundedRect(x, y, z, w, h, 8.0f, bg);
+  drawRoundedRect(x + 4, y + h - 2.0f, z + 0.01f, w - 8.0f, 1.5f, 0.75f,
+                  colorSelection());
 
   C2D_SceneBegin(bottomTarget);
-  drawCenteredText(y + 8.0f, z + 0.02f, 0.5f, 0.5f, colorWhite(), toastMessage,
+  drawCenteredText(y + 9.0f, z + 0.02f, 0.5f, 0.5f, colorWhite(), toastMessage,
                    320.0f);
 }
 
@@ -380,6 +380,33 @@ float measureTextDirect(const std::string &rawText, float scaleX,
 
 float measureText(const std::string &text, float scaleX, float scaleY) {
   return UI::TextMeasureCache::getInstance().measureText(text, scaleX, scaleY);
+}
+
+void drawRoundedRect(float x, float y, float z, float w, float h, float radius,
+                     u32 color) {
+  if (radius <= 0) {
+    C2D_DrawRectSolid(x, y, z, w, h, color);
+    return;
+  }
+
+  if (radius > w / 2)
+    radius = w / 2;
+  if (radius > h / 2)
+    radius = h / 2;
+
+  C2D_DrawRectSolid(x, y + radius, z, w, h - 2 * radius, color);
+  C2D_DrawRectSolid(x + radius, y, z, w - 2 * radius, radius, color);
+  C2D_DrawRectSolid(x + radius, y + h - radius, z, w - 2 * radius, radius,
+                    color);
+
+  C2D_DrawCircleSolid(x + radius, y + radius, z, radius, color);
+  C2D_DrawCircleSolid(x + w - radius, y + radius, z, radius, color);
+  C2D_DrawCircleSolid(x + radius, y + h - radius, z, radius, color);
+  C2D_DrawCircleSolid(x + w - radius, y + h - radius, z, radius, color);
+}
+
+void drawCircle(float x, float y, float z, float radius, u32 color) {
+  C2D_DrawCircleSolid(x, y, z, radius, color);
 }
 
 void drawRichText(float x, float y, float z, float scaleX, float scaleY,
@@ -475,7 +502,6 @@ void drawRichText(float x, float y, float z, float scaleX, float scaleY,
     size_t end = cursor;
     while (end < text.length()) {
       if (text[end] == '<') {
-        // Check if this looks like a custom emoji
         if (end + 6 < text.length()) {
           bool isAnimated = (text[end + 1] == 'a');
           if (text[end + 1] == ':' || isAnimated) {
@@ -483,7 +509,7 @@ void drawRichText(float x, float y, float z, float scaleX, float scaleY,
             if (secondColon != std::string::npos) {
               size_t closeBracket = text.find('>', secondColon);
               if (closeBracket != std::string::npos) {
-                break; // Found custom emoji, stop segments
+                break;
               }
             }
           }
@@ -570,7 +596,7 @@ float measureRichTextImpl(const std::string &rawText, float scaleX,
               if (secondColon != std::string::npos) {
                 size_t closeBracket = text.find('>', secondColon);
                 if (closeBracket != std::string::npos) {
-                  break; // Found custom emoji, stop segments
+                  break;
                 }
               }
             }

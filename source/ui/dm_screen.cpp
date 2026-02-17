@@ -151,11 +151,12 @@ void DmScreen::drawDmItem(int index, const Discord::Channel &dm, float y) {
   u32 bgColor = isSelected ? ScreenManager::colorBackgroundLight()
                            : ScreenManager::colorBackgroundDark();
 
-  C2D_DrawRectSolid(10.0f, y + 2.0f, 0.4f, 380.0f, ITEM_HEIGHT - 4.0f, bgColor);
+  drawRoundedRect(10.0f, y + 2.0f, 0.4f, 380.0f, ITEM_HEIGHT - 4.0f, 8.0f,
+                  bgColor);
 
   if (isSelected) {
-    C2D_DrawRectSolid(10.0f, y + 2.0f, 0.45f, 4.0f, ITEM_HEIGHT - 4.0f,
-                      ScreenManager::colorSelection());
+    drawRoundedRect(10.0f, y + 10.0f, 0.45f, 4.0f, ITEM_HEIGHT - 20.0f, 2.0f,
+                    ScreenManager::colorSelection());
   }
 
   u32 textColor =

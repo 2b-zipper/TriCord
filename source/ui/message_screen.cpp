@@ -1316,7 +1316,7 @@ float MessageScreen::drawStickers(const Discord::Message &msg, float x,
 }
 
 float MessageScreen::drawReactions(const Discord::Message &msg, float x,
-                                   float y) {
+                                   float y, bool isSelected) {
   if (msg.reactions.empty())
     return y;
 
@@ -1348,15 +1348,23 @@ float MessageScreen::drawReactions(const Discord::Message &msg, float x,
     u32 boxBg = react.me ? ScreenManager::colorReactionMe()
                          : ScreenManager::colorReaction();
 
-    C2D_DrawRectSolid(reactionX, newY, 0.45f, boxW, rowHeight, boxBg);
+    if (isSelected) {
+      u8 r = (boxBg >> 0) & 0xFF;
+      u8 g = (boxBg >> 8) & 0xFF;
+      u8 b = (boxBg >> 16) & 0xFF;
+      boxBg = C2D_Color32(std::min(r + 20, 255), std::min(g + 20, 255),
+                          std::min(b + 20, 255), 255);
+    }
+
+    drawRoundedRect(reactionX, newY, 0.45f, boxW, rowHeight, 6.0f, boxBg);
     if (react.me) {
       u32 borderCol = ScreenManager::colorSelection();
-      C2D_DrawRectSolid(reactionX, newY, 0.46f, boxW, 1.0f, borderCol);
-      C2D_DrawRectSolid(reactionX, newY + rowHeight - 1.0f, 0.46f, boxW, 1.0f,
-                        borderCol);
-      C2D_DrawRectSolid(reactionX, newY, 0.46f, 1.0f, rowHeight, borderCol);
-      C2D_DrawRectSolid(reactionX + boxW - 1.0f, newY, 0.46f, 1.0f, rowHeight,
-                        borderCol);
+      drawRoundedRect(reactionX, newY, 0.46f, boxW, 1.0f, 0.5f, borderCol);
+      drawRoundedRect(reactionX, newY + rowHeight - 1.0f, 0.46f, boxW, 1.0f,
+                      0.5f, borderCol);
+      drawRoundedRect(reactionX, newY, 0.46f, 1.0f, rowHeight, 0.5f, borderCol);
+      drawRoundedRect(reactionX + boxW - 1.0f, newY, 0.46f, 1.0f, rowHeight,
+                      0.5f, borderCol);
     }
 
     drawInfos.push_back({reactionX, newY, boxW, &react});
@@ -1448,10 +1456,8 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y,
   if (isSelected) {
     float highlightY = y + topMargin;
     float highlightH = height - topMargin;
-    C2D_DrawRectSolid(0.0f, highlightY, 0.1f, 400.0f, highlightH,
-                      ScreenManager::colorBackgroundLight());
-    C2D_DrawRectSolid(0.0f, highlightY, 0.1f, 3.0f, highlightH,
-                      ScreenManager::colorPrimary());
+    drawRoundedRect(4.0f, highlightY, 0.1f, 392.0f, highlightH, 6.0f,
+                    ScreenManager::colorBackgroundLight());
   }
 
   if (msg.type >= 6 && msg.type <= 10) {
@@ -1493,7 +1499,7 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y,
 
   contentY = drawAttachments(msg, textOffsetX, contentY);
   contentY = drawStickers(msg, textOffsetX, contentY);
-  contentY = drawReactions(msg, textOffsetX, contentY);
+  contentY = drawReactions(msg, textOffsetX, contentY, isSelected);
 
   if (showHeader) {
     if (contentY < avatarTopY + 28.0f)
@@ -1602,18 +1608,18 @@ void MessageScreen::renderTop(C3D_RenderTarget *target) {
 
   if (showNewMessageIndicator) {
     float indicatorY = 205.0f;
-    float indicatorW = 120.0f;
-    float indicatorH = 20.0f;
+    float indicatorW = 130.0f;
+    float indicatorH = 22.0f;
     float indicatorX = (400.0f - indicatorW) / 2.0f;
 
-    C2D_DrawRectSolid(indicatorX, indicatorY, 0.65f, indicatorW, indicatorH,
-                      ScreenManager::colorSelection());
+    drawRoundedRect(indicatorX, indicatorY, 0.65f, indicatorW, indicatorH,
+                    11.0f, ScreenManager::colorSelection());
     std::string text = TR("message.new_indicator");
     if (newMessageCount > 0) {
       text = Core::I18n::format(TR("message.new_indicator_count"),
                                 std::to_string(newMessageCount));
     }
-    drawCenteredRichText(indicatorY + 4.0f, 0.66f, 0.4f, 0.4f,
+    drawCenteredRichText(indicatorY + 5.0f, 0.66f, 0.4f, 0.4f,
                          ScreenManager::colorWhite(), text, 400.0f);
   }
 
@@ -1733,16 +1739,16 @@ void MessageScreen::renderBottom(C3D_RenderTarget *target) {
     float btnX = 320.0f - btnW - 10.0f;
     float btnY = 240.0f - btnH - 10.0f;
 
-    C2D_DrawRectSolid(btnX, btnY, 0.5f, btnW, btnH,
-                      ScreenManager::colorBackgroundLight());
-    C2D_DrawRectSolid(btnX, btnY, 0.51f, btnW, 1.0f,
-                      ScreenManager::colorSelection());
-    C2D_DrawRectSolid(btnX, btnY + btnH - 1.0f, 0.51f, btnW, 1.0f,
-                      ScreenManager::colorSelection());
-    C2D_DrawRectSolid(btnX, btnY, 0.51f, 1.0f, btnH,
-                      ScreenManager::colorSelection());
-    C2D_DrawRectSolid(btnX + btnW - 1.0f, btnY, 0.51f, 1.0f, btnH,
-                      ScreenManager::colorSelection());
+    drawRoundedRect(btnX, btnY, 0.5f, btnW, btnH, 6.0f,
+                    ScreenManager::colorBackgroundLight());
+
+    u32 borderCol = ScreenManager::colorSelection();
+    drawRoundedRect(btnX, btnY, 0.51f, btnW, 1.0f, 0.5f, borderCol);
+    drawRoundedRect(btnX, btnY + btnH - 1.0f, 0.51f, btnW, 1.0f, 0.5f,
+                    borderCol);
+    drawRoundedRect(btnX, btnY, 0.51f, 1.0f, btnH, 0.5f, borderCol);
+    drawRoundedRect(btnX + btnW - 1.0f, btnY, 0.51f, 1.0f, btnH, 0.5f,
+                    borderCol);
 
     float centerX = btnX + (btnW / 2.0f);
     float centerY = btnY + (btnH / 2.0f) - 2.5f;
@@ -1753,8 +1759,8 @@ void MessageScreen::renderBottom(C3D_RenderTarget *target) {
         centerX + triSize, centerY - (triSize / 2), ScreenManager::colorText(),
         centerX, centerY + triSize, ScreenManager::colorText(), 0.55f);
 
-    C2D_DrawRectSolid(centerX - triSize, centerY + triSize + 1.0f, 0.55f,
-                      triSize * 2, 1.5f, ScreenManager::colorText());
+    drawRoundedRect(centerX - triSize, centerY + triSize + 1.0f, 0.55f,
+                    triSize * 2, 1.5f, 0.75f, ScreenManager::colorText());
   }
 }
 

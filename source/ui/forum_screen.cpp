@@ -182,8 +182,8 @@ void ForumScreen::renderTop(C3D_RenderTarget *target) {
 
   u32 glassCol = ScreenManager::colorHeaderGlass();
   C2D_DrawRectSolid(0, 0, 0.9f, 400.0f, headerH, glassCol);
-  C2D_DrawRectSolid(0, headerH - 1.0f, 0.91f, 400.0f, 1.0f,
-                    ScreenManager::colorHeaderBorder());
+  drawRoundedRect(0, headerH - 1.0f, 0.91f, 400.0f, 1.0f, 0.5f,
+                  ScreenManager::colorHeaderBorder());
   drawCenteredRichText(4.0f, 0.95f, 0.52f, 0.52f, ScreenManager::colorText(),
                        channelName, 400.0f);
 
@@ -274,11 +274,11 @@ void ForumScreen::renderThreadCard(int index, float y) {
   u32 bgColor = isSelected ? ScreenManager::colorBackgroundLight()
                            : ScreenManager::colorBackgroundDark();
 
-  C2D_DrawRectSolid(x, y, 0.5f, CARD_WIDTH, CARD_HEIGHT, bgColor);
+  drawRoundedRect(x, y, 0.5f, CARD_WIDTH, CARD_HEIGHT, 10.0f, bgColor);
 
   if (isSelected) {
-    C2D_DrawRectSolid(x, y, 0.6f, 4.0f, CARD_HEIGHT,
-                      ScreenManager::colorSelection());
+    drawRoundedRect(x + 2, y + 8, 0.6f, 3.0f, CARD_HEIGHT - 16, 1.5f,
+                    ScreenManager::colorSelection());
   }
 
   float textX = x + 12.0f;

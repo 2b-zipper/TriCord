@@ -74,7 +74,8 @@ private:
   float drawMessageContent(const Discord::Message &msg, float x, float y);
   float drawAttachments(const Discord::Message &msg, float x, float y);
   float drawStickers(const Discord::Message &msg, float x, float y);
-  float drawReactions(const Discord::Message &msg, float x, float y);
+  float drawReactions(const Discord::Message &msg, float x, float y,
+                      bool isSelected);
   float calculateMessageHeight(const Discord::Message &msg, bool showHeader);
   float calculateMessageHeight(const Discord::Message &msg);
   float calculateEmbedHeight(const Discord::Embed &embed, float maxWidth);

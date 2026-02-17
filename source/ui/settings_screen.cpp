@@ -185,12 +185,13 @@ void SettingsScreen::renderTop(C3D_RenderTarget *target) {
     bool isSelected = (i == selectedIndex);
 
     if (isSelected) {
-      C2D_DrawRectSolid(10, y, 0.5f, TOP_SCREEN_WIDTH - 20, 34,
-                        ScreenManager::colorBackgroundLight());
-      C2D_DrawRectSolid(10, y, 0.55f, 4, 34, ScreenManager::colorSelection());
+      drawRoundedRect(10, y, 0.5f, TOP_SCREEN_WIDTH - 20, 36, 8.0f,
+                      ScreenManager::colorBackgroundLight());
+      drawRoundedRect(10, y + 4, 0.55f, 4, 28, 2.0f,
+                      ScreenManager::colorSelection());
     } else {
-      C2D_DrawRectSolid(10, y, 0.5f, TOP_SCREEN_WIDTH - 20, 34,
-                        ScreenManager::colorBackgroundDark());
+      drawRoundedRect(10, y, 0.5f, TOP_SCREEN_WIDTH - 20, 36, 8.0f,
+                      ScreenManager::colorBackgroundDark());
     }
 
     u32 textColor = isSelected ? ScreenManager::colorText()

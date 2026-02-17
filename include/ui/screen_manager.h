@@ -173,6 +173,9 @@ void drawCenteredText(float y, float z, float scaleX, float scaleY, u32 color,
                       const std::string &text, float screenWidth);
 float measureText(const std::string &text, float scaleX, float scaleY);
 float measureTextDirect(const std::string &text, float scaleX, float scaleY);
+void drawRoundedRect(float x, float y, float z, float w, float h, float radius,
+                     u32 color);
+void drawCircle(float x, float y, float z, float radius, u32 color);
 void drawRichText(float x, float y, float z, float scaleX, float scaleY,
                   u32 color, const std::string &rawText);
 void drawCenteredRichText(float y, float z, float scaleX, float scaleY,
