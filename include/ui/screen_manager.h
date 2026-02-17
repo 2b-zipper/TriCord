@@ -188,6 +188,11 @@ void drawRichTextUnicodeOnly(float x, float y, float z, float scaleX,
 float measureRichTextUnicodeOnly(const std::string &rawText, float scaleX,
                                  float scaleY);
 
+std::string getTruncatedText(const std::string &text, float maxWidth,
+                             float scaleX, float scaleY);
+std::string getTruncatedRichText(const std::string &rawText, float maxWidth,
+                                 float scaleX, float scaleY);
+
 void drawOverlay(float z);
 void drawPopupBackground(float x, float y, float w, float h, float z,
                          float radius = 12.0f);

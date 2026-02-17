@@ -631,6 +631,84 @@ float measureRichText(const std::string &rawText, float scaleX, float scaleY) {
   return measureRichTextImpl(rawText, scaleX, scaleY, false);
 }
 
+std::string getTruncatedText(const std::string &text, float maxWidth,
+                             float scaleX, float scaleY) {
+  if (measureText(text, scaleX, scaleY) <= maxWidth)
+    return text;
+
+  std::vector<size_t> offsets;
+  for (size_t i = 0; i < text.length();) {
+    offsets.push_back(i);
+    unsigned char c = (unsigned char)text[i];
+    if (c < 0x80)
+      i += 1;
+    else if ((c & 0xE0) == 0xC0)
+      i += 2;
+    else if ((c & 0xF0) == 0xE0)
+      i += 3;
+    else if ((c & 0xF4) == 0xF0)
+      i += 4;
+    else
+      i += 1;
+  }
+
+  int low = 0;
+  int high = (int)offsets.size() - 1;
+  int best = 0;
+
+  while (low <= high) {
+    int mid = low + (high - low) / 2;
+    std::string test = text.substr(0, offsets[mid]) + "...";
+    if (measureText(test, scaleX, scaleY) <= maxWidth) {
+      best = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return text.substr(0, offsets[best]) + "...";
+}
+
+std::string getTruncatedRichText(const std::string &rawText, float maxWidth,
+                                 float scaleX, float scaleY) {
+  if (measureRichText(rawText, scaleX, scaleY) <= maxWidth)
+    return rawText;
+
+  std::vector<size_t> offsets;
+  for (size_t i = 0; i < rawText.length();) {
+    offsets.push_back(i);
+    unsigned char c = (unsigned char)rawText[i];
+    if (c < 0x80)
+      i += 1;
+    else if ((c & 0xE0) == 0xC0)
+      i += 2;
+    else if ((c & 0xF0) == 0xE0)
+      i += 3;
+    else if ((c & 0xF4) == 0xF0)
+      i += 4;
+    else
+      i += 1;
+  }
+
+  int low = 0;
+  int high = (int)offsets.size() - 1;
+  int best = 0;
+
+  while (low <= high) {
+    int mid = low + (high - low) / 2;
+    std::string test = rawText.substr(0, offsets[mid]) + "...";
+    if (measureRichText(test, scaleX, scaleY) <= maxWidth) {
+      best = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return rawText.substr(0, offsets[best]) + "...";
+}
+
 void drawRichTextUnicodeOnly(float x, float y, float z, float scaleX,
                              float scaleY, u32 color,
                              const std::string &rawText) {

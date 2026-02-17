@@ -51,6 +51,9 @@ void MessageScreen::onEnter() {
   this->channelTopic = channel.topic;
   this->guildId = client.getGuildIdFromChannel(channelId);
 
+  this->truncatedChannelName =
+      getTruncatedRichText(this->channelName, 310.0f - 60.0f, 0.55f, 0.55f);
+
   if (!this->guildId.empty()) {
     client.sendLazyRequest(this->guildId, channelId);
   }
@@ -865,7 +868,8 @@ float MessageScreen::drawForumMessage(const Discord::Message &msg, float y,
   drawText(15.0f, drawY + 10.0f, 0.5f, 0.6f, 0.6f,
            ScreenManager::colorTextMuted(), icon);
 
-  std::string name = msg.content;
+  std::string name =
+      getTruncatedText(msg.content, 400.0f - 40.0f - 15.0f, 0.5f, 0.5f);
   drawText(40.0f, drawY + 8.0f, 0.5f, 0.5f, 0.5f, ScreenManager::colorText(),
            name);
 
@@ -1663,7 +1667,7 @@ void MessageScreen::renderBottom(C3D_RenderTarget *target) {
   }
 
   drawRichText(headerX, 10.0f, 0.5f, 0.55f, 0.55f, ScreenManager::colorText(),
-               channelName);
+               truncatedChannelName);
 
   C2D_DrawRectSolid(10, 32, 0.5f, 320 - 20, 1, ScreenManager::colorSeparator());
 

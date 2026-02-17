@@ -18,6 +18,9 @@ ForumScreen::ForumScreen(const std::string &channelId,
   auto &sm = ScreenManager::getInstance();
   selectedIndex = sm.getLastForumIndex(channelId);
   scrollOffset = sm.getLastForumScroll(channelId);
+
+  truncatedChannelName =
+      getTruncatedRichText(channelName, 380.0f, 0.52f, 0.52f);
 }
 
 ForumScreen::~ForumScreen() {}
@@ -30,6 +33,9 @@ void ForumScreen::onEnter() {
   std::lock_guard<std::recursive_mutex> lock(client.getMutex());
   Discord::Channel channel = client.getChannel(channelId);
   channelTopic = channel.topic;
+
+  truncatedChannelName =
+      getTruncatedRichText(channelName, 380.0f, 0.52f, 0.52f);
 
   fetchThreads();
 }
@@ -66,13 +72,15 @@ void ForumScreen::fetchThreads() {
         std::sort(archived.begin(), archived.end(), sortThreads);
 
         this->activeThreadCount = (int)active.size();
-        this->threads = std::move(active);
-        this->threads.insert(this->threads.end(), archived.begin(),
-                             archived.end());
 
-        if (this->threads.empty()) {
-          this->isLoading = false;
-          return;
+        std::vector<Discord::Channel> allChannels = std::move(active);
+        allChannels.insert(allChannels.end(), archived.begin(), archived.end());
+
+        this->threads.clear();
+        for (const auto &ch : allChannels) {
+          ThreadInfo info;
+          info.channel = ch;
+          this->threads.push_back(info);
         }
 
         this->isLoading = false;
@@ -146,7 +154,7 @@ void ForumScreen::update() {
 
   if (kDown & KEY_A) {
     if (selectedIndex >= 0 && selectedIndex < (int)threads.size()) {
-      const auto &thread = threads[selectedIndex];
+      const auto &thread = threads[selectedIndex].channel;
       Discord::DiscordClient::getInstance().setSelectedChannelId(thread.id);
       ScreenManager::getInstance().setScreen(ScreenType::MESSAGES);
     }
@@ -185,7 +193,7 @@ void ForumScreen::renderTop(C3D_RenderTarget *target) {
   drawRoundedRect(0, headerH - 1.0f, 0.91f, 400.0f, 1.0f, 0.5f,
                   ScreenManager::colorHeaderBorder());
   drawCenteredRichText(4.0f, 0.95f, 0.52f, 0.52f, ScreenManager::colorText(),
-                       channelName, 400.0f);
+                       truncatedChannelName, 400.0f);
 
   for (int i = scrollOffset; i < (int)threads.size(); ++i) {
     if (i == activeThreadCount && activeThreadCount > 0 &&
@@ -231,8 +239,11 @@ void ForumScreen::renderBottom(C3D_RenderTarget *target) {
     headerX = 55.0f;
   }
 
+  std::string dispNameBottom =
+      getTruncatedRichText(channelName, 310.0f - headerX, 0.6f, 0.6f);
+
   drawRichText(headerX, 10.0f, 0.5f, 0.6f, 0.6f, ScreenManager::colorText(),
-               channelName);
+               dispNameBottom);
 
   C2D_DrawRectSolid(10, 32, 0.5f, 320 - 20, 1, ScreenManager::colorSeparator());
 
@@ -267,7 +278,8 @@ void ForumScreen::renderBottom(C3D_RenderTarget *target) {
 
 void ForumScreen::renderThreadCard(int index, float y) {
   bool isSelected = (index == selectedIndex);
-  const auto &thread = threads[index];
+  const auto &info = threads[index];
+  const auto &thread = info.channel;
 
   float x = (400.0f - CARD_WIDTH) / 2.0f;
 
@@ -304,12 +316,15 @@ void ForumScreen::renderThreadCard(int index, float y) {
     }
   }
 
-  std::string titleStr = thread.name;
-  u32 titleColor = ScreenManager::colorText();
-
-  if (thread.is_archived) {
-    titleColor = ScreenManager::colorTextMuted();
+  if (!info.titleProcessed) {
+    float maxTitleW = CARD_WIDTH - (textX - x) - 15.0f;
+    info.truncatedTitle =
+        getTruncatedRichText(thread.name, maxTitleW, 0.65f, 0.65f);
+    info.titleProcessed = true;
   }
+  std::string titleStr = info.truncatedTitle;
+  u32 titleColor = thread.is_archived ? ScreenManager::colorTextMuted()
+                                      : ScreenManager::colorText();
 
   drawRichText(textX, currentY, 0.6f, 0.65f, 0.65f, titleColor, titleStr);
   currentY += 20.0f;
@@ -335,13 +350,6 @@ void ForumScreen::renderThreadCard(int index, float y) {
       if (roleColor != 0) {
         nameColor = C2D_Color32((roleColor >> 16) & 0xFF,
                                 (roleColor >> 8) & 0xFF, roleColor & 0xFF, 255);
-      } else if (!guildId.empty()) {
-        if (forumPendingMemberFetches.find(thread.owner_id) ==
-            forumPendingMemberFetches.end()) {
-          forumPendingMemberFetches.insert(thread.owner_id);
-          client.fetchMember(guildId, thread.owner_id,
-                             [](const Discord::Member &) {});
-        }
       }
     }
 
@@ -355,13 +363,17 @@ void ForumScreen::renderThreadCard(int index, float y) {
       previewX += measureText(colon, 0.45f, 0.45f);
     }
 
-    std::string preview = thread.op_content;
-    if (preview.length() > 60)
-      preview = preview.substr(0, 57) + "...";
-    std::replace(preview.begin(), preview.end(), '\n', ' ');
+    if (!info.previewProcessed) {
+      std::string preview = thread.op_content;
+      std::replace(preview.begin(), preview.end(), '\n', ' ');
+
+      float maxPrevW = (x + CARD_WIDTH - 15.0f) - previewX;
+      info.truncatedPreview = getTruncatedText(preview, maxPrevW, 0.45f, 0.45f);
+      info.previewProcessed = true;
+    }
 
     drawText(previewX, currentY, 0.5f, 0.45f, 0.45f,
-             ScreenManager::colorTextMuted(), preview);
+             ScreenManager::colorTextMuted(), info.truncatedPreview);
     currentY += 15.0f;
   }
 

@@ -136,8 +136,24 @@ void DmScreen::renderBottom(C3D_RenderTarget *target) {
 
   if (selectedIndex >= 0 && selectedIndex < (int)dms.size()) {
     const auto &dm = dms[selectedIndex];
+    std::string dispNameBottom = dm.name;
+    float maxBottomW = 310.0f - 10.0f;
+    if (measureRichText(dispNameBottom, 0.6f, 0.6f) > maxBottomW) {
+      while (!dispNameBottom.empty() &&
+             measureRichText(dispNameBottom + "...", 0.6f, 0.6f) > maxBottomW) {
+        if ((dispNameBottom.back() & 0xc0) == 0x80) {
+          while (!dispNameBottom.empty() &&
+                 (dispNameBottom.back() & 0xc0) == 0x80)
+            dispNameBottom.pop_back();
+        }
+        if (!dispNameBottom.empty())
+          dispNameBottom.pop_back();
+      }
+      dispNameBottom += "...";
+    }
+
     drawRichText(10.0f, 40.0f, 0.5f, 0.6f, 0.6f, ScreenManager::colorPrimary(),
-                 dm.name);
+                 dispNameBottom);
   }
 
   drawText(
@@ -192,7 +208,22 @@ void DmScreen::drawDmItem(int index, const Discord::Channel &dm, float y) {
     }
   }
 
-  drawRichText(60.0f, y + 14.5f, 0.5f, 0.55f, 0.55f, textColor, dm.name);
+  std::string dispName = dm.name;
+  float maxW = 390.0f - 60.0f - 10.0f;
+  if (measureRichText(dispName, 0.55f, 0.55f) > maxW) {
+    while (!dispName.empty() &&
+           measureRichText(dispName + "...", 0.55f, 0.55f) > maxW) {
+      if ((dispName.back() & 0xc0) == 0x80) {
+        while (!dispName.empty() && (dispName.back() & 0xc0) == 0x80)
+          dispName.pop_back();
+      }
+      if (!dispName.empty())
+        dispName.pop_back();
+    }
+    dispName += "...";
+  }
+
+  drawRichText(60.0f, y + 14.5f, 0.5f, 0.55f, 0.55f, textColor, dispName);
 }
 
 } // namespace UI

@@ -23,9 +23,17 @@ public:
 private:
   std::string channelId;
   std::string channelName;
+  std::string truncatedChannelName;
   std::string channelTopic;
   std::string guildId;
-  std::vector<Discord::Channel> threads;
+  struct ThreadInfo {
+    Discord::Channel channel;
+    mutable std::string truncatedTitle;
+    mutable std::string truncatedPreview;
+    mutable bool titleProcessed = false;
+    mutable bool previewProcessed = false;
+  };
+  std::vector<ThreadInfo> threads;
   int activeThreadCount;
   int selectedIndex;
   int scrollOffset;

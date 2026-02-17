@@ -25,6 +25,7 @@ public:
 private:
   std::string channelId;
   std::string channelName;
+  std::string truncatedChannelName;
   int channelType;
   std::string channelTopic;
   std::string guildId;
