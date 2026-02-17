@@ -8,7 +8,8 @@
 
 namespace UI {
 
-SettingsScreen::SettingsScreen() : selectedIndex(0), scrollOffset(0.0f) {}
+SettingsScreen::SettingsScreen()
+    : selectedIndex(0), scrollOffset(0.0f), repeatTimer(0), lastKey(0) {}
 
 SettingsScreen::~SettingsScreen() {}
 
@@ -132,16 +133,43 @@ void SettingsScreen::onExit() { Logger::log("[SettingsScreen] Exited"); }
 
 void SettingsScreen::update() {
   u32 kDown = hidKeysDown();
+  u32 kHeld = hidKeysHeld();
 
   if (items.empty())
     return;
 
-  if (kDown & KEY_UP) {
-    if (selectedIndex > 0)
+  u32 moveDir = 0;
+  if (kDown & KEY_DOWN)
+    moveDir = KEY_DOWN;
+  else if (kDown & KEY_UP)
+    moveDir = KEY_UP;
+  else if (kHeld & KEY_DOWN && (--repeatTimer <= 0)) {
+    moveDir = KEY_DOWN;
+    repeatTimer = 6;
+  } else if (kHeld & KEY_UP && (--repeatTimer <= 0)) {
+    moveDir = KEY_UP;
+    repeatTimer = 6;
+  }
+
+  if (kDown & (KEY_DOWN | KEY_UP)) {
+    repeatTimer = 30;
+    lastKey = (kDown & KEY_DOWN) ? KEY_DOWN : KEY_UP;
+  }
+  if (!(kHeld & (KEY_DOWN | KEY_UP)))
+    lastKey = 0;
+
+  if (moveDir & KEY_UP) {
+    if (selectedIndex > 0) {
       selectedIndex--;
-  } else if (kDown & KEY_DOWN) {
-    if (selectedIndex < (int)items.size() - 1)
+      if (selectedIndex < (float)scrollOffset)
+        scrollOffset = (float)selectedIndex;
+    }
+  } else if (moveDir & KEY_DOWN) {
+    if (selectedIndex < (int)items.size() - 1) {
       selectedIndex++;
+      if (selectedIndex >= (int)scrollOffset + 4)
+        scrollOffset = (float)(selectedIndex - 3);
+    }
   }
 
   SettingItem &selected = items[selectedIndex];
@@ -180,7 +208,8 @@ void SettingsScreen::renderTop(C3D_RenderTarget *target) {
                    TR("settings.title"), TOP_SCREEN_WIDTH);
 
   float y = headerH + 10.0f;
-  for (int i = 0; i < (int)items.size(); i++) {
+
+  for (int i = (int)scrollOffset; i < (int)items.size(); i++) {
     const auto &item = items[i];
     bool isSelected = (i == selectedIndex);
 
@@ -219,6 +248,8 @@ void SettingsScreen::renderTop(C3D_RenderTarget *target) {
              valStr);
 
     y += 42.0f;
+    if (y > TOP_SCREEN_HEIGHT)
+      break;
   }
 }
 

@@ -36,6 +36,8 @@ private:
   std::vector<SettingItem> items;
   int selectedIndex;
   float scrollOffset;
+  int repeatTimer;
+  u32 lastKey;
 
   void saveAndExit();
 };
