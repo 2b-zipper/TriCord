@@ -129,7 +129,7 @@ void DmScreen::renderBottom(C3D_RenderTarget *target) {
   C2D_SceneBegin(target);
   C2D_TargetClear(target, ScreenManager::colorBackgroundDark());
 
-  drawText(45.0f, 10.0f, 0.6f, 0.5f, 0.5f, ScreenManager::colorText(),
+  drawText(35.0f, 10.0f, 0.6f, 0.5f, 0.5f, ScreenManager::colorText(),
            TR("menu.direct_messages"));
 
   C2D_DrawRectSolid(10, 32, 0.5f, 320 - 20, 1, ScreenManager::colorSeparator());

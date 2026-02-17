@@ -822,11 +822,11 @@ void ServerListScreen::renderBottom(C3D_RenderTarget *target) {
         float overviewY = statsY + 35.0f;
         drawText(10.0f, overviewY, 0.5f, 0.45f, 0.45f,
                  ScreenManager::colorSelection(), TR("server.description"));
-        overviewY += 14.0f;
+        overviewY += 15.0f;
 
         std::string desc = guild->description;
         if (desc.empty())
-          desc = TR("message.no_topic");
+          desc = TR("common.no_topic");
 
         auto lines = MessageUtils::wrapText(desc, 300.0f, 0.4f);
         int lineCount = 0;
@@ -835,7 +835,7 @@ void ServerListScreen::renderBottom(C3D_RenderTarget *target) {
             break;
           drawRichText(10.0f, overviewY, 0.5f, 0.4f, 0.4f,
                        ScreenManager::colorText(), line);
-          overviewY += 11.0f;
+          overviewY += 13.0f;
           lineCount++;
         }
         infoDrawn = true;
@@ -853,7 +853,7 @@ void ServerListScreen::renderBottom(C3D_RenderTarget *target) {
     std::string title = (state == State::SELECTING_SERVER)
                             ? TR("server.select")
                             : TR("channel.select");
-    drawText(45.0f, 10.0f, 0.5f, 0.5f, 0.5f, ScreenManager::colorText(), title);
+    drawText(35.0f, 10.0f, 0.5f, 0.5f, 0.5f, ScreenManager::colorText(), title);
   }
 
   if (state == State::SELECTING_SERVER) {

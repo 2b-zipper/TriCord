@@ -217,7 +217,7 @@ void ForumScreen::renderBottom(C3D_RenderTarget *target) {
   C2D_SceneBegin(target);
   C2D_TargetClear(target, ScreenManager::colorBackgroundDark());
 
-  float headerX = 40.0f;
+  float headerX = 35.0f;
 
   std::string iconPath = "romfs:/discord-icons/forum.png";
   C3D_Tex *icon = UI::ImageManager::getInstance().getLocalImage(iconPath);
@@ -230,13 +230,13 @@ void ForumScreen::renderBottom(C3D_RenderTarget *target) {
     C2D_ImageTint tint;
     C2D_PlainImageTint(&tint, ScreenManager::colorText(), 1.0f);
 
-    C2D_DrawImageAt(img, 40.0f, 9.0f, 0.5f, &tint, iconSize / icon->width,
+    C2D_DrawImageAt(img, 35.0f, 9.0f, 0.5f, &tint, iconSize / icon->width,
                     iconSize / icon->height);
-    headerX = 40.0f + iconSize + 5.0f;
+    headerX = 35.0f + iconSize + 5.0f;
   } else {
-    drawText(40.0f, 10.0f, 0.5f, 0.6f, 0.6f, ScreenManager::colorTextMuted(),
+    drawText(35.0f, 10.0f, 0.5f, 0.6f, 0.6f, ScreenManager::colorTextMuted(),
              "#");
-    headerX = 55.0f;
+    headerX = 50.0f;
   }
 
   std::string dispNameBottom =
@@ -248,13 +248,13 @@ void ForumScreen::renderBottom(C3D_RenderTarget *target) {
   C2D_DrawRectSolid(10, 32, 0.5f, 320 - 20, 1, ScreenManager::colorSeparator());
 
   std::string displayTopic =
-      channelTopic.empty() ? TR("forum.no_topic") : channelTopic;
+      channelTopic.empty() ? TR("common.no_topic") : channelTopic;
 
-  float topicY = 35.0f;
+  float topicY = 40.0f;
 
   drawText(10.0f, topicY, 0.5f, 0.45f, 0.45f, ScreenManager::colorSelection(),
            TR("forum.topic_label"));
-  topicY += 14.0f;
+  topicY += 15.0f;
 
   auto lines = MessageUtils::wrapText(displayTopic, 300.0f, 0.4f);
   int lineCount = 0;
@@ -265,7 +265,7 @@ void ForumScreen::renderBottom(C3D_RenderTarget *target) {
 
     drawRichText(10.0f, topicY, 0.5f, 0.4f, 0.4f, ScreenManager::colorText(),
                  line);
-    topicY += 12.0f;
+    topicY += 13.0f;
     lineCount++;
   }
 

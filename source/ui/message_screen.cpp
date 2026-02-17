@@ -52,7 +52,7 @@ void MessageScreen::onEnter() {
   this->guildId = client.getGuildIdFromChannel(channelId);
 
   this->truncatedChannelName =
-      getTruncatedRichText(this->channelName, 310.0f - 60.0f, 0.55f, 0.55f);
+      getTruncatedRichText(this->channelName, 310.0f - 56.0f, 0.55f, 0.55f);
 
   if (!this->guildId.empty()) {
     client.sendLazyRequest(this->guildId, channelId);
@@ -1635,7 +1635,7 @@ void MessageScreen::renderTop(C3D_RenderTarget *target) {
 void MessageScreen::renderBottom(C3D_RenderTarget *target) {
   C2D_DrawRectSolid(0, 0, 0.0f, 320, 240, ScreenManager::colorBackgroundDark());
 
-  float headerX = 45.0f;
+  float headerX = 35.0f;
 
   std::string iconPath;
   if (channelType == 5) {
@@ -1657,13 +1657,13 @@ void MessageScreen::renderBottom(C3D_RenderTarget *target) {
     C2D_ImageTint tint;
     C2D_PlainImageTint(&tint, ScreenManager::colorText(), 1.0f);
 
-    C2D_DrawImageAt(img, 45.0f, 10.0f, 0.51f, &tint, iconSize / icon->width,
+    C2D_DrawImageAt(img, 35.0f, 10.0f, 0.51f, &tint, iconSize / icon->width,
                     iconSize / icon->height);
-    headerX = 45.0f + iconSize + 5.0f;
+    headerX = 35.0f + iconSize + 5.0f;
   } else {
-    drawText(45.0f, 10.0f, 0.5f, 0.5f, 0.5f, ScreenManager::colorTextMuted(),
+    drawText(35.0f, 10.0f, 0.5f, 0.5f, 0.5f, ScreenManager::colorTextMuted(),
              "#");
-    headerX = 60.0f;
+    headerX = 50.0f;
   }
 
   drawRichText(headerX, 10.0f, 0.5f, 0.55f, 0.55f, ScreenManager::colorText(),
@@ -1672,7 +1672,7 @@ void MessageScreen::renderBottom(C3D_RenderTarget *target) {
   C2D_DrawRectSolid(10, 32, 0.5f, 320 - 20, 1, ScreenManager::colorSeparator());
 
   std::string displayTopic =
-      channelTopic.empty() ? Core::I18n::getInstance().get("message.no_topic")
+      channelTopic.empty() ? Core::I18n::getInstance().get("common.no_topic")
                            : channelTopic;
 
   float topicY = 40.0f;

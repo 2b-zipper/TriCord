@@ -230,7 +230,7 @@ void SettingsScreen::renderBottom(C3D_RenderTarget *target) {
       selectedIndex < (int)items.size()) {
     const auto &item = items[selectedIndex];
 
-    drawText(45.0f, 10.0f, 0.6f, 0.5f, 0.5f, ScreenManager::colorText(),
+    drawText(35.0f, 10.0f, 0.6f, 0.5f, 0.5f, ScreenManager::colorText(),
              item.label);
 
     C2D_DrawRectSolid(10, 32, 0.5f, BOTTOM_SCREEN_WIDTH - 20, 1,
