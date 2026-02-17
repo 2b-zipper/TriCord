@@ -4,6 +4,7 @@
 #include "discord/avatar_cache.h"
 #include "log.h"
 #include "ui/image_manager.h"
+#include "utils/message_utils.h"
 #include <3ds.h>
 #include <algorithm>
 #include <cstdio>
@@ -36,6 +37,14 @@ ServerListScreen::ServerListScreen()
   rebuildList();
   Logger::log("ServerListScreen: Refreshing channels...");
   refreshChannels();
+
+  if (selectedIndex >= 0 && selectedIndex < (int)listItems.size()) {
+    if (!listItems[selectedIndex].isFolder) {
+      Discord::DiscordClient::getInstance().fetchGuildDetails(
+          listItems[selectedIndex].id);
+    }
+  }
+
   Logger::log("ServerListScreen: Constructor finished");
 }
 
@@ -343,6 +352,13 @@ void ServerListScreen::update() {
 
       sm.setLastChannelIndex(sm.getSelectedGuildId(), selectedChannelIndex);
       sm.setLastChannelScroll(sm.getSelectedGuildId(), channelScrollOffset);
+
+      if (selectedIndex >= 0 && selectedIndex < (int)listItems.size()) {
+        if (!listItems[selectedIndex].isFolder) {
+          Discord::DiscordClient::getInstance().fetchGuildDetails(
+              listItems[selectedIndex].id);
+        }
+      }
     }
 
     if (kDown & KEY_A) {
@@ -755,17 +771,89 @@ void ServerListScreen::renderBottom(C3D_RenderTarget *target) {
   Discord::DiscordClient &client = Discord::DiscordClient::getInstance();
   std::lock_guard<std::recursive_mutex> lock(client.getMutex());
 
-  std::string title = (state == State::SELECTING_SERVER) ? TR("server.select")
-                                                         : TR("channel.select");
-
-  drawText(45.0f, 10.0f, 0.5f, 0.5f, 0.5f, ScreenManager::colorText(), title);
-
-  C2D_DrawRectSolid(10, 32, 0.5f, 320 - 20, 1, ScreenManager::colorSeparator());
+  bool infoDrawn = false;
 
   if (selectedIndex >= 0 && selectedIndex < (int)listItems.size()) {
-    drawRichText(10.0f, 40.0f, 0.5f, 0.6f, 0.6f,
-                 ScreenManager::colorSelection(),
-                 listItems[selectedIndex].name);
+    const auto &item = listItems[selectedIndex];
+
+    if (!item.isFolder) {
+      const Discord::Guild *guild = getGuild(item.id);
+      if (guild) {
+        float headerX = 35.0f;
+        std::string iconKey = guild->id + "_" + guild->icon;
+        C3D_Tex *tex = nullptr;
+        auto it = iconCache.find(iconKey);
+        if (it != iconCache.end())
+          tex = it->second;
+
+        if (tex) {
+          float iconSize = 18.0f;
+          Tex3DS_SubTexture subtex = {
+              (u16)tex->width, (u16)tex->height, 0.0f, 1.0f, 1.0f, 0.0f};
+          C2D_Image img = {tex, &subtex};
+          C2D_DrawImageAt(img, headerX, 8.0f, 0.5f, nullptr,
+                          iconSize / tex->width, iconSize / tex->height);
+          headerX += iconSize + 6.0f;
+        }
+
+        drawRichText(
+            headerX, 8.5f, 0.5f, 0.55f, 0.55f, ScreenManager::colorPrimary(),
+            getTruncatedRichText(guild->name, 305.0f - headerX, 0.55f, 0.55f));
+
+        C2D_DrawRectSolid(10, 32, 0.5f, 320 - 20, 1,
+                          ScreenManager::colorSeparator());
+
+        float statsY = 40.0f;
+
+        drawText(10.0f, statsY, 0.5f, 0.45f, 0.45f,
+                 ScreenManager::colorTextMuted(),
+                 TR("server.member_count") + ":");
+        drawText(10.0f, statsY + 12.0f, 0.5f, 0.5f, 0.5f,
+                 ScreenManager::colorText(),
+                 std::to_string(guild->approximateMemberCount));
+
+        drawText(100.0f, statsY, 0.5f, 0.45f, 0.45f,
+                 ScreenManager::colorTextMuted(),
+                 TR("server.online_count") + ":");
+        drawText(100.0f, statsY + 12.0f, 0.5f, 0.5f, 0.5f,
+                 ScreenManager::colorSuccess(),
+                 std::to_string(guild->approximatePresenceCount));
+
+        float overviewY = statsY + 35.0f;
+        drawText(10.0f, overviewY, 0.5f, 0.45f, 0.45f,
+                 ScreenManager::colorSelection(), TR("server.description"));
+        overviewY += 14.0f;
+
+        std::string desc = guild->description;
+        if (desc.empty())
+          desc = TR("message.no_topic");
+
+        auto lines = MessageUtils::wrapText(desc, 300.0f, 0.4f);
+        int lineCount = 0;
+        for (const auto &line : lines) {
+          if (lineCount >= 10)
+            break;
+          drawRichText(10.0f, overviewY, 0.5f, 0.4f, 0.4f,
+                       ScreenManager::colorText(), line);
+          overviewY += 11.0f;
+          lineCount++;
+        }
+        infoDrawn = true;
+      }
+    } else {
+      drawText(35.0f, 10.0f, 0.5f, 0.6f, 0.6f, ScreenManager::colorText(),
+               item.name);
+      C2D_DrawRectSolid(10, 32, 0.5f, 320 - 20, 1,
+                        ScreenManager::colorSeparator());
+      infoDrawn = true;
+    }
+  }
+
+  if (!infoDrawn) {
+    std::string title = (state == State::SELECTING_SERVER)
+                            ? TR("server.select")
+                            : TR("channel.select");
+    drawText(45.0f, 10.0f, 0.5f, 0.5f, 0.5f, ScreenManager::colorText(), title);
   }
 
   if (state == State::SELECTING_SERVER) {

@@ -1426,6 +1426,43 @@ std::string DiscordClient::getGuildIdFromChannel(const std::string &channelId) {
   return "";
 }
 
+void DiscordClient::fetchGuildDetails(const std::string &guildId,
+                                      std::function<void(bool)> cb) {
+  if (token.empty() || guildId.empty()) {
+    if (cb)
+      cb(false);
+    return;
+  }
+
+  std::string url =
+      "https://discord.com/api/v10/guilds/" + guildId + "?with_counts=true";
+
+  Network::NetworkManager::getInstance().enqueue(
+      url, "GET", "", Network::RequestPriority::INTERACTIVE,
+      [this, guildId, cb](const Network::HttpResponse &resp) {
+        if (resp.success) {
+          rapidjson::Document doc;
+          doc.Parse(resp.body.c_str());
+
+          if (!doc.HasParseError() && doc.IsObject()) {
+            std::lock_guard<std::recursive_mutex> lock(clientMutex);
+            for (auto &g : guilds) {
+              if (g.id == guildId) {
+                parseGuildObject(doc, g, currentUser.id);
+                break;
+              }
+            }
+            if (cb)
+              cb(true);
+            return;
+          }
+        }
+        if (cb)
+          cb(false);
+      },
+      {{"Authorization", token}});
+}
+
 Message DiscordClient::parseSingleMessage(const std::string &json) {
   rapidjson::Document doc;
   std::string buffer = json;
@@ -2352,6 +2389,14 @@ void DiscordClient::parseGuildObject(const rapidjson::Value &gObj, Guild &guild,
   guild.name = Utils::Json::getString(gObj, "name");
   guild.icon = Utils::Json::getString(gObj, "icon");
   guild.ownerId = Utils::Json::getString(gObj, "owner_id");
+  guild.description = Utils::Json::getString(gObj, "description");
+  guild.approximateMemberCount =
+      Utils::Json::getInt(gObj, "approximate_member_count");
+  guild.approximatePresenceCount =
+      Utils::Json::getInt(gObj, "approximate_presence_count");
+  if (guild.approximateMemberCount == 0) {
+    guild.approximateMemberCount = Utils::Json::getInt(gObj, "member_count");
+  }
 
   if (gObj.HasMember("roles") && gObj["roles"].IsArray()) {
     const rapidjson::Value &rolesArr = gObj["roles"];

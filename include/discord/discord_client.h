@@ -142,6 +142,8 @@ public:
   void deleteMessageAsync(const std::string &channelId,
                           const std::string &messageId, SuccessCallback cb);
   void fetchForumThreads(const std::string &channelId, ThreadsCallback cb);
+  void fetchGuildDetails(const std::string &guildId,
+                         std::function<void(bool)> cb = nullptr);
   void exchangeTicketForToken(const std::string &ticket, TokenCallback cb);
   void fetchMember(const std::string &guildId, const std::string &userId,
                    MemberCallback cb);

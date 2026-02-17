@@ -156,5 +156,8 @@
     "status.idle": "Idle",
     "status.dnd": "Do Not Disturb",
     "status.invisible": "Invisible",
-    "menu.status_change": "Change Status"
+    "menu.status_change": "Change Status",
+    "server.member_count": "Members",
+    "server.online_count": "Online",
+    "server.description": "Server Overview"
 }

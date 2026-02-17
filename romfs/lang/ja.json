@@ -156,5 +156,8 @@
     "status.idle": "退席中",
     "status.dnd": "取り込み中",
     "status.invisible": "オンライン状態を隠す",
-    "menu.status_change": "ステータス変更"
+    "menu.status_change": "ステータス変更",
+    "server.member_count": "メンバー数",
+    "server.online_count": "オンライン",
+    "server.description": "サーバー概要"
 }
