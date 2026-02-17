@@ -395,7 +395,7 @@ void LoginScreen::renderBottom(C3D_RenderTarget *target) {
 
       float fieldW = 280.0f;
       float fieldX = (BOTTOM_SCREEN_WIDTH - fieldW) / 2.0f;
-      float emailY = 55.0f;
+      float emailY = 45.0f;
 
       drawRoundedRect(fieldX, emailY, 0.5f, fieldW, 30.0f, 6.0f,
                       ScreenManager::colorInput());
@@ -408,7 +408,7 @@ void LoginScreen::renderBottom(C3D_RenderTarget *target) {
       drawText(fieldX + 8.0f, emailY + 7.5f, 0.5f, 0.45f, 0.45f, emailColor,
                emailDisplay);
 
-      float passY = emailY + 55.0f;
+      float passY = emailY + 50.0f;
       drawRoundedRect(fieldX, passY, 0.5f, fieldW, 30.0f, 6.0f,
                       ScreenManager::colorInput());
       drawText(fieldX, passY - 18.0f, 0.5f, 0.45f, 0.45f,
@@ -421,7 +421,7 @@ void LoginScreen::renderBottom(C3D_RenderTarget *target) {
       drawText(fieldX + 8.0f, passY + 7.5f, 0.5f, 0.45f, 0.45f, passColor,
                passDisplay);
 
-      float btnY = passY + 55.0f;
+      float btnY = passY + 50.0f;
       drawRoundedRect(fieldX, btnY, 0.5f, fieldW, 38.0f, 8.0f,
                       ScreenManager::colorSelection());
       drawCenteredText(btnY + 11.0f, 0.5f, 0.55f, 0.55f,
