@@ -1,18 +1,24 @@
 # TriCord
+![License](https://img.shields.io/badge/license-GPLv3-green)
+![Platform](https://img.shields.io/badge/platform-Nintendo%203DS-red)
+![Downloads](https://img.shields.io/github/downloads/2b-zipper/TriCord/total?style=flat&color=blue)
 
 Discord client for Nintendo 3DS.
 
-# Disclaimer
-This project is developed for educational purposes only. This is an unofficial Discord client and is not affiliated with or endorsed by Discord Inc.
-<br>
-This software is provided "as is", and you use it at your own risk. The developers assume no responsibility for any damages, data loss, or violations of Discord's Terms of Service (ToS) resulting from the use of this software.
+## Disclaimer
 
-![License](https://img.shields.io/badge/license-GPLv3-green)
-![Platform](https://img.shields.io/badge/platform-Nintendo%203DS-red)
+> **This project is developed for educational purposes only.**
+> This is an unofficial Discord client and is not affiliated with or endorsed by Discord Inc.
 
+This software is provided **"as is"**, and you use it at your own risk. The developers assume no responsibility for:
+* Any damages or data loss.
+* Violations of Discord's **Terms of Service (ToS)** resulting from the use of this software.
 
-![Screenshot 1](screenshots/login.png)
-![Screenshot 2](screenshots/serverlist.png)
+## Screenshots
+![login](screenshots/1.png)
+![serverlist](screenshots/2.png)
+![hamburger](screenshots/3.png)
+![chat](screenshots/4.png)
 
 ## Features
 - QR code and email/password authentication
