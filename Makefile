@@ -48,6 +48,7 @@ APP_INFO := $(RESOURCES)/AppInfo
 BANNER_AUDIO := $(RESOURCES)/audio
 BANNER_IMAGE := $(RESOURCES)/banner
 ICON := $(RESOURCES)/icon.png
+LOGO := $(RESOURCES)/logo.bcma.lz
 RSF := $(TOPDIR)/$(RESOURCES)/$(TARGET).rsf
 
 #---------------------------------------------------------------------------------
@@ -241,6 +242,10 @@ COMMON_MAKEROM_PARAMS := -rsf $(RSF) -target t -exefslogo -elf $(OUTPUT).elf -ic
 -DAPP_UNIQUE_ID="$(APP_UNIQUE_ID)" -DAPP_ROMFS="$(APP_ROMFS)" -DAPP_SYSTEM_MODE="64MB" \
 -DAPP_SYSTEM_MODE_EXT="Legacy" -major "$(APP_VERSION_MAJOR)" -minor "$(APP_VERSION_MINOR)" \
 -micro "$(APP_VERSION_MICRO)"
+
+ifneq ("$(wildcard $(TOPDIR)/$(LOGO))","")
+	COMMON_MAKEROM_PARAMS += -logo $(TOPDIR)/$(LOGO)
+endif
 
 ifeq ($(OS),Windows_NT)
 	MAKEROM = makerom.exe
