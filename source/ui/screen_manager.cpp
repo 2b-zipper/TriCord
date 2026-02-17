@@ -787,4 +787,21 @@ void ScreenManager::clearCaches() {
   ImageManager::getInstance().clear();
 }
 
+void drawOverlay(float z) {
+  C2D_DrawRectSolid(0.0f, 0.0f, z, 400.0f, 240.0f,
+                    ScreenManager::colorOverlay());
+}
+
+void drawPopupBackground(float x, float y, float w, float h, float z,
+                         float radius) {
+  drawRoundedRect(x, y, z, w, h, radius, ScreenManager::colorBackground());
+}
+
+void drawPopupMenuItem(float x, float y, float w, float h, float z,
+                       bool isSelected, u32 selectionColor) {
+  if (isSelected) {
+    drawRoundedRect(x, y, z, w, h, 6.0f, selectionColor);
+  }
+}
+
 } // namespace UI

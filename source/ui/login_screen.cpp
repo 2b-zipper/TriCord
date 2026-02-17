@@ -362,11 +362,8 @@ void LoginScreen::renderBottom(C3D_RenderTarget *target) {
       float dX = (BOTTOM_SCREEN_WIDTH - dialogW) / 2.0f;
       float dY = (BOTTOM_SCREEN_HEIGHT - dialogH) / 2.0f;
 
-      C2D_DrawRectSolid(0, 0, 0.4f, BOTTOM_SCREEN_WIDTH, BOTTOM_SCREEN_HEIGHT,
-                        ScreenManager::colorOverlay());
-
-      drawRoundedRect(dX, dY, 0.5f, dialogW, dialogH, 12.0f,
-                      ScreenManager::colorInput());
+      drawOverlay(0.4f);
+      drawPopupBackground(dX, dY, dialogW, dialogH, 0.5f);
 
       drawCenteredText(dY + 12.0f, 0.6f, 0.55f, 0.55f,
                        ScreenManager::colorText(), TR("login.mfa.title"),

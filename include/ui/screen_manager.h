@@ -188,6 +188,12 @@ void drawRichTextUnicodeOnly(float x, float y, float z, float scaleX,
 float measureRichTextUnicodeOnly(const std::string &rawText, float scaleX,
                                  float scaleY);
 
+void drawOverlay(float z);
+void drawPopupBackground(float x, float y, float w, float h, float z,
+                         float radius = 12.0f);
+void drawPopupMenuItem(float x, float y, float w, float h, float z,
+                       bool isSelected, u32 selectionColor);
+
 } // namespace UI
 
 #endif // SCREEN_MANAGER_H

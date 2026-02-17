@@ -277,7 +277,7 @@ void HamburgerMenu::render() {
   float x = (slideProgress * MENU_WIDTH) - MENU_WIDTH;
   float alpha = slideProgress;
 
-  C2D_DrawRectSolid(0, 0, 0.96f, 400, 240, ScreenManager::colorOverlay());
+  drawOverlay(0.96f);
 
   u32 menuBg = ScreenManager::colorBackgroundDark();
   u8 r = (menuBg >> 0) & 0xFF;
@@ -300,14 +300,14 @@ void HamburgerMenu::render() {
     drawAccountCard(x, 240.0f - 50.0f, alpha);
   } else if (state == State::ACCOUNT_SELECTION) {
     float popupW = 280.0f;
-    float popupH = 180.0f;
+    float popupH = 200.0f;
     float popupX = (400.0f - popupW) / 2.0f;
     float popupY = (240.0f - popupH) / 2.0f;
 
-    drawRoundedRect(popupX, popupY, 0.98f, popupW, popupH, 12.0f,
-                    ScreenManager::colorBackground());
+    drawPopupBackground(popupX, popupY, popupW, popupH, 0.98f);
 
-    drawText(popupX + 10, popupY + 10, 0.99f, 0.6f, 0.6f,
+    float padding = 10.0f;
+    drawText(popupX + padding, popupY + padding, 0.99f, 0.6f, 0.6f,
              ScreenManager::colorText(),
              Core::I18n::getInstance().get("menu.select_account"));
 
@@ -319,14 +319,16 @@ void HamburgerMenu::render() {
       if (i < accountScrollOffset || i >= accountScrollOffset + maxVisible)
         continue;
 
-      float itemY = itemStartDim + (i - accountScrollOffset) * 30.0f;
+      float itemY = itemStartDim + (i - accountScrollOffset) * 34.0f;
       u32 color = ScreenManager::colorTextMuted();
 
-      if (i == accountSelectionIndex) {
-        drawRoundedRect(popupX + 5, itemY, 0.985f, popupW - 10, 26, 6.0f,
-                        (i < (int)accounts.size())
-                            ? ScreenManager::colorSelection()
-                            : ScreenManager::colorSuccess());
+      bool isSelected = i == accountSelectionIndex;
+      u32 selCol = (i < (int)accounts.size()) ? ScreenManager::colorSelection()
+                                              : ScreenManager::colorSuccess();
+      drawPopupMenuItem(popupX + 5, itemY, popupW - 10, 30.0f, 0.985f,
+                        isSelected, selCol);
+
+      if (isSelected) {
         color = ScreenManager::colorWhite();
       }
 
@@ -362,50 +364,48 @@ void HamburgerMenu::render() {
                               ? accounts[accountSelectionIndex].name
                               : "Account";
 
-    float cw = 240.0f;
-    float ch = 100.0f;
+    float cw = 280.0f;
+    float ch = 110.0f;
     float cx = (400.0f - cw) / 2.0f;
     float cy = (240.0f - ch) / 2.0f;
 
-    C2D_DrawRectSolid(0, 0, 0.99f, 400, 240, C2D_Color32(0, 0, 0, 100));
-
-    C2D_DrawRectSolid(cx, cy, 0.995f, cw, ch,
-                      ScreenManager::colorBackgroundDark());
-    C2D_DrawRectSolid(cx + 2, cy + 2, 0.996f, cw - 4, ch - 4,
-                      ScreenManager::colorBackground());
+    drawOverlay(0.99f);
+    drawPopupBackground(cx, cy, cw, ch, 0.995f, 12.0f);
 
     std::string confirmMsg =
         Core::I18n::format(TR("menu.delete_confirm"), accName);
-    drawText(cx + 10, cy + 15, 0.997f, 0.5f, 0.5f, ScreenManager::colorWhite(),
-             confirmMsg);
+    drawText(cx + 10, cy + 12.0f, 0.997f, 0.5f, 0.5f,
+             ScreenManager::colorText(), confirmMsg);
 
-    drawText(cx + 10, cy + 45, 0.997f, 0.45f, 0.45f,
-             C2D_Color32(180, 180, 180, 255), TR("menu.delete_warning"));
+    drawText(cx + 10, cy + 42.0f, 0.997f, 0.45f, 0.45f,
+             ScreenManager::colorTextMuted(), TR("menu.delete_warning"));
 
-    drawText(cx + 10, cx + ch - 25, 0.997f, 0.4f, 0.4f,
-             C2D_Color32(0xFF, 0x47, 0x47, 255),
+    drawText(cx + 10, cy + ch - 22.0f, 0.997f, 0.4f, 0.4f,
+             ScreenManager::colorError(),
              "\uE000: " + TR("common.delete") +
                  "  \uE001: " + TR("common.cancel"));
   } else if (state == State::STATUS_SELECTION) {
     float popupW = 200.0f;
-    float popupH = 140.0f;
+    float popupH = 142.0f;
     float popupX = (400.0f - popupW) / 2.0f;
     float popupY = (240.0f - popupH) / 2.0f;
 
-    drawRoundedRect(popupX, popupY, 0.98f, popupW, popupH, 12.0f,
-                    ScreenManager::colorBackground());
+    drawPopupBackground(popupX, popupY, popupW, popupH, 0.98f);
 
-    drawText(popupX + 10, popupY + 10, 0.99f, 0.6f, 0.6f,
+    float padding = 8.0f;
+    drawText(popupX + padding, popupY + padding, 0.99f, 0.6f, 0.6f,
              ScreenManager::colorText(), TR("menu.status_change"));
 
-    float itemStartDim = popupY + 40.0f;
+    float itemStartDim = popupY + 34.0f;
     for (int i = 0; i < 4; i++) {
-      float itemY = itemStartDim + i * 25.0f;
+      float itemY = itemStartDim + i * 26.0f;
       u32 color = ScreenManager::colorTextMuted();
 
-      if (i == statusSelectionIndex) {
-        C2D_DrawRectSolid(popupX + 5, itemY, 0.985f, popupW - 10, 22,
-                          ScreenManager::colorSelection());
+      bool isSelected = i == statusSelectionIndex;
+      drawPopupMenuItem(popupX + 5, itemY, popupW - 10, 24.0f, 0.985f,
+                        isSelected, ScreenManager::colorSelection());
+
+      if (isSelected) {
         color = ScreenManager::colorWhite();
       }
 

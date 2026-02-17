@@ -2064,38 +2064,29 @@ void MessageScreen::renderMenu() {
   if (!isMenuOpen)
     return;
 
-  C2D_DrawRectSolid(0.0f, 0.0f, 0.98f, 400.0f, 240.0f,
-                    C2D_Color32(0, 0, 0, 150));
+  drawOverlay(0.98f);
 
   float menuW = 200.0f;
-  float menuH = menuOptions.size() * 25.0f + 5.0f;
+  float menuH = menuOptions.size() * 25.0f + 9.0f;
   float menuX = (400.0f - menuW) / 2.0f;
   float menuY = (240.0f - menuH) / 2.0f;
 
-  C2D_DrawRectSolid(menuX, menuY, 0.99f, menuW, menuH,
-                    ScreenManager::colorBackgroundDark());
-
-  C2D_DrawRectSolid(menuX, menuY, 0.99f, menuW, 2.0f,
-                    ScreenManager::colorPrimary());
-  C2D_DrawRectSolid(menuX, menuY + menuH - 2.0f, 0.99f, menuW, 2.0f,
-                    ScreenManager::colorPrimary());
-  C2D_DrawRectSolid(menuX, menuY, 0.99f, 2.0f, menuH,
-                    ScreenManager::colorPrimary());
-  C2D_DrawRectSolid(menuX + menuW - 2.0f, menuY, 0.99f, 2.0f, menuH,
-                    ScreenManager::colorPrimary());
+  drawPopupBackground(menuX, menuY, menuW, menuH, 0.99f);
 
   for (size_t i = 0; i < menuOptions.size(); i++) {
-    float itemY = menuY + 5.0f + i * 25.0f;
+    float itemY = menuY + 6.0f + i * 25.0f;
     u32 color = ScreenManager::colorText();
 
-    if (i == (size_t)menuIndex) {
+    bool isSelected = (i == (size_t)menuIndex);
+    drawPopupMenuItem(menuX + 5.0f, itemY, menuW - 10.0f, 22.0f, 0.995f,
+                      isSelected, ScreenManager::colorSelection());
 
-      C2D_DrawRectSolid(menuX + 5.0f, itemY, 0.995f, menuW - 10.0f, 20.0f,
-                        ScreenManager::colorPrimary());
-      color = C2D_Color32(255, 255, 255, 255);
+    if (isSelected) {
+      color = ScreenManager::colorWhite();
     }
 
-    drawCenteredText(itemY, 0.996f, 0.5f, 0.5f, color, menuOptions[i], 400.0f);
+    drawCenteredText(itemY + 4.0f, 0.996f, 0.5f, 0.5f, color, menuOptions[i],
+                     400.0f);
   }
 }
 
