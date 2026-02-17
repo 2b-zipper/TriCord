@@ -27,6 +27,7 @@ void HamburgerMenu::refreshStrings() {
   items.push_back({TR("menu.direct_messages"), MenuItemType::DIRECT_MESSAGES});
   items.push_back({TR("menu.servers"), MenuItemType::SERVER_LIST});
   items.push_back({TR("menu.settings"), MenuItemType::SETTINGS});
+  items.push_back({TR("menu.about"), MenuItemType::ABOUT});
 }
 
 void HamburgerMenu::toggle() {
@@ -124,6 +125,10 @@ void HamburgerMenu::update() {
           return;
         case MenuItemType::SETTINGS:
           sm.setScreen(ScreenType::SETTINGS);
+          close();
+          return;
+        case MenuItemType::ABOUT:
+          sm.setScreen(ScreenType::ABOUT);
           close();
           return;
         default:

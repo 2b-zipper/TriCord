@@ -12,7 +12,8 @@ enum class MenuItemType {
   SETTINGS,
   HOME,
   DIRECT_MESSAGES,
-  ACCOUNT_SWITCH
+  ACCOUNT_SWITCH,
+  ABOUT
 };
 
 struct MenuItem {

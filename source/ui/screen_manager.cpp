@@ -4,6 +4,7 @@
 #include "discord/avatar_cache.h"
 #include "discord/discord_client.h"
 #include "log.h"
+#include "ui/about_screen.h"
 #include "ui/dm_screen.h"
 #include "ui/emoji_manager.h"
 #include "ui/forum_screen.h"
@@ -143,6 +144,9 @@ void ScreenManager::setScreen(ScreenType type) {
     break;
   case ScreenType::DM_LIST:
     currentScreen = std::make_unique<DmScreen>();
+    break;
+  case ScreenType::ABOUT:
+    currentScreen = std::make_unique<AboutScreen>();
     break;
   }
 

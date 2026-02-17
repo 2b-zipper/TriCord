@@ -51,6 +51,7 @@
     "menu.select_account": "Select Account",
     "menu.add_account": "Add Account",
     "menu.settings": "Settings",
+    "menu.about": "About TriCord",
     "menu.log_out": "Log Out",
     "server.select": "Server Selection",
     "channel.select": "Channel Selection",

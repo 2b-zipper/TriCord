@@ -20,7 +20,8 @@ enum class ScreenType {
   ADD_ACCOUNT,
   FORUM_CHANNEL,
   SETTINGS,
-  DM_LIST
+  DM_LIST,
+  ABOUT
 };
 
 class Screen {
