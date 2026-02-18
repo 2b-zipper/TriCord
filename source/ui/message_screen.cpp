@@ -38,6 +38,7 @@ MessageScreen::~MessageScreen() {
   Discord::DiscordClient::getInstance().setConnectionCallback(nullptr);
 
   embedHeightCache.clear();
+  ImageManager::getInstance().clearRemote();
 }
 
 void MessageScreen::onEnter() {
@@ -770,16 +771,16 @@ float MessageScreen::calculateMessageHeight(const Discord::Message &msg,
                      attach.filename.find(".jpeg") != std::string::npos;
 
       if (isImage) {
-        float maxWidth = 200.0f;
-        float maxHeight = 200.0f;
+        float maxWidth = 348.0f;
+        float maxHeight = 260.0f;
         float drawW = maxWidth;
         float drawH = 100.0f;
 
         if (attach.width > 0 && attach.height > 0) {
 
-          if ((float)attach.width < maxWidth) {
-            drawW = (float)attach.width;
-          }
+          drawW = std::min((float)attach.width, maxWidth);
+          if (attach.width > 160)
+            drawW = maxWidth;
 
           float aspect = (float)attach.width / attach.height;
           drawH = drawW / aspect;
@@ -1190,16 +1191,18 @@ float MessageScreen::drawAttachments(const Discord::Message &msg, float x,
           attach.proxy_url.empty() ? attach.url : attach.proxy_url;
       auto info = ImageManager::getInstance().getImageInfo(imageUrl);
 
-      float maxWidth = 200.0f;
-      float maxHeight = 200.0f;
+      float maxWidth = 348.0f;
+      float maxHeight = 260.0f;
       float drawW = maxWidth;
       float drawH = 100.0f;
 
       bool hasMeta = (attach.width > 0 && attach.height > 0);
       if (hasMeta) {
         float aspect = (float)attach.width / attach.height;
-        float maxW = std::min(maxWidth, 200.0f);
-        drawW = std::min((float)attach.width, maxW);
+        drawW = std::min((float)attach.width, maxWidth);
+        if (attach.width > 160)
+          drawW = maxWidth;
+
         drawH = drawW / aspect;
         if (drawH > maxHeight) {
           drawH = maxHeight;
@@ -1209,8 +1212,10 @@ float MessageScreen::drawAttachments(const Discord::Message &msg, float x,
 
       if (info.tex) {
         float aspect = (float)info.originalW / info.originalH;
-        float maxW = std::min(maxWidth, 200.0f);
-        drawW = std::min((float)info.originalW, maxW);
+        drawW = std::min((float)info.originalW, 348.0f);
+        if (info.originalW > 160)
+          drawW = 348.0f;
+
         drawH = drawW / aspect;
         if (drawH > maxHeight) {
           drawH = maxHeight;
@@ -1219,7 +1224,6 @@ float MessageScreen::drawAttachments(const Discord::Message &msg, float x,
 
         float uMax = (float)info.originalW / info.tex->width;
         float vMax = (float)info.originalH / info.tex->height;
-
         Tex3DS_SubTexture subtex = {
             (u16)info.originalW, (u16)info.originalH, 0.0f, 1.0f, uMax,
             1.0f - vMax};
@@ -2108,69 +2112,78 @@ float MessageScreen::calculateEmbedHeight(const Discord::Embed &embed,
     return cacheIt->second;
   }
 
-  bool isMedia =
-      (embed.type == "image" || embed.type == "gifv" || embed.type == "video");
   bool hasImage = !embed.image_url.empty();
   bool hasThumbnail = !embed.thumbnail_url.empty();
+
+  bool isLargeThumbnail =
+      (hasThumbnail && embed.thumbnail_width >= 160 &&
+       (float)embed.thumbnail_width > (float)embed.thumbnail_height * 1.2f);
+  bool isMedia =
+      (embed.type == "image" || embed.type == "gifv" || embed.type == "video" ||
+       embed.type == "article" || isLargeThumbnail);
 
   bool isSimpleMedia = isMedia && embed.title.empty() &&
                        embed.description.empty() && embed.fields.empty() &&
                        embed.author_name.empty() && (hasImage || hasThumbnail);
 
-  float pixelWidth =
-      maxWidth - (!isSimpleMedia && hasThumbnail ? 56.0f : 16.0f);
+  bool showThumbnailOnRight = !isSimpleMedia && hasThumbnail && !isMedia;
+  float pixelWidth = maxWidth - (showThumbnailOnRight ? 76.0f : 16.0f);
   float h = isSimpleMedia ? 0.0f : 10.0f;
 
   if (!embed.provider_name.empty())
     h += 11.0f;
   if (!embed.author_name.empty()) {
     auto lines =
-        MessageUtils::wrapText(embed.author_name, pixelWidth, 0.38f, true);
+        MessageUtils::wrapText(embed.author_name, pixelWidth, 0.38f, false);
     h += lines.size() * 11.0f;
   }
   if (!embed.title.empty()) {
-    auto lines = MessageUtils::wrapText(embed.title, pixelWidth, 0.42f, true);
+    auto lines = MessageUtils::wrapText(embed.title, pixelWidth, 0.42f, false);
     h += lines.size() * 14.0f;
   }
   if (!embed.description.empty()) {
     auto lines =
-        MessageUtils::wrapText(embed.description, pixelWidth, 0.36f, true);
+        MessageUtils::wrapText(embed.description, pixelWidth, 0.36f, false);
     h += lines.size() * 11.0f;
   }
 
   for (const auto &field : embed.fields) {
-    auto nLines = MessageUtils::wrapText(field.name, pixelWidth, 0.35f, true);
+    auto nLines = MessageUtils::wrapText(field.name, pixelWidth, 0.35f, false);
     h += nLines.size() * 11.0f;
-    auto vLines = MessageUtils::wrapText(field.value, pixelWidth, 0.34f, true);
+    auto vLines = MessageUtils::wrapText(field.value, pixelWidth, 0.34f, false);
     h += vLines.size() * 11.0f;
     h += 2.0f;
   }
 
   if (!embed.footer_text.empty()) {
     auto lines =
-        MessageUtils::wrapText(embed.footer_text, pixelWidth, 0.30f, true);
+        MessageUtils::wrapText(embed.footer_text, pixelWidth, 0.30f, false);
     h += lines.size() * 10.0f;
   }
 
-  if (!isSimpleMedia && hasThumbnail)
-    h = std::max(h, 52.0f);
+  if (showThumbnailOnRight)
+    h = std::max(h, 72.0f);
 
   if (hasImage || (isMedia && hasThumbnail)) {
-
     int w = hasImage ? embed.image_width : embed.thumbnail_width;
     int h_img = hasImage ? embed.image_height : embed.thumbnail_height;
 
-    float drawW = maxWidth - (isSimpleMedia ? 0.0f : 16.0f);
-    float imgH = 80.0f;
+    float availableMaxWidth = maxWidth - (isSimpleMedia ? 0.0f : 16.0f);
+    availableMaxWidth = std::min(availableMaxWidth, 348.0f);
+    float drawW = availableMaxWidth;
+    if (w > 0 && w < 160) {
+      drawW = (float)w;
+    }
+
+    float imgH = 100.0f;
     if (w > 0 && h_img > 0) {
       float aspect = (float)w / h_img;
-
-      drawW = std::min((float)w, drawW);
       imgH = drawW / aspect;
-
-      if (imgH > 300.0f) {
-        imgH = 300.0f;
+      if (imgH > 220.0f) {
+        imgH = 220.0f;
       }
+    } else {
+      imgH = drawW * 0.5625f;
     }
     h += imgH + 4.0f;
   }
@@ -2182,10 +2195,15 @@ float MessageScreen::calculateEmbedHeight(const Discord::Embed &embed,
 
 float MessageScreen::renderEmbed(const Discord::Embed &embed, float x, float y,
                                  float maxWidth) {
-  bool isMedia =
-      (embed.type == "image" || embed.type == "gifv" || embed.type == "video");
   bool hasImage = !embed.image_url.empty();
   bool hasThumbnail = !embed.thumbnail_url.empty();
+
+  bool isLargeThumbnail =
+      (hasThumbnail && embed.thumbnail_width >= 160 &&
+       (float)embed.thumbnail_width > (float)embed.thumbnail_height * 1.2f);
+  bool isMedia =
+      (embed.type == "image" || embed.type == "gifv" || embed.type == "video" ||
+       embed.type == "article" || isLargeThumbnail);
 
   bool isSimpleMedia = isMedia && embed.title.empty() &&
                        embed.description.empty() && embed.fields.empty() &&
@@ -2196,8 +2214,9 @@ float MessageScreen::renderEmbed(const Discord::Embed &embed, float x, float y,
                                                   embed.color & 0xFF, 255)
                                     : C2D_Color32(32, 102, 148, 255);
   float embedH = calculateEmbedHeight(embed, maxWidth);
-  float pixelWidth =
-      maxWidth - (!isSimpleMedia && hasThumbnail ? 56.0f : 16.0f);
+
+  bool showThumbnailOnRight = !isSimpleMedia && hasThumbnail && !isMedia;
+  float pixelWidth = maxWidth - (showThumbnailOnRight ? 76.0f : 16.0f);
 
   if (!isSimpleMedia) {
     C2D_DrawRectSolid(x, y, 0.4f, maxWidth, embedH,
@@ -2264,27 +2283,39 @@ float MessageScreen::renderEmbed(const Discord::Embed &embed, float x, float y,
     }
   }
 
-  if (!isSimpleMedia && hasThumbnail) {
-    float thumbX = x + maxWidth - 48.0f;
+  if (showThumbnailOnRight) {
+    float thumbSize = 64.0f;
+    float thumbX = x + maxWidth - (thumbSize + 4.0f);
     float thumbY = y + 5.0f;
-    float thumbSize = 44.0f;
     std::string thumbUrl = embed.thumbnail_url;
 
-    C3D_Tex *thumbTex = UI::ImageManager::getInstance().getImage(thumbUrl);
-    if (thumbTex) {
+    auto info = UI::ImageManager::getInstance().getImageInfo(thumbUrl);
+    if (info.tex) {
+      float scale =
+          thumbSize / std::max((float)info.originalW, (float)info.originalH);
+      float drawW = info.originalW * scale;
+      float drawH = info.originalH * scale;
+      float offsetX = (thumbSize - drawW) / 2.0f;
+      float offsetY = (thumbSize - drawH) / 2.0f;
+
+      float uMax = (float)info.originalW / info.tex->width;
+      float vMax = (float)info.originalH / info.tex->height;
       Tex3DS_SubTexture subtex = {
-          (u16)thumbTex->width, (u16)thumbTex->height, 0.0f, 1.0f, 1.0f, 0.0f};
-      C2D_Image img = {thumbTex, &subtex};
-      float scale = thumbSize / std::max(thumbTex->width, thumbTex->height);
-      C2D_DrawImageAt(img, thumbX, thumbY, 0.48f, nullptr, scale, scale);
+          (u16)info.originalW, (u16)info.originalH, 0.0f, 1.0f, uMax,
+          1.0f - vMax};
+      C2D_Image img = {info.tex, &subtex};
+      C2D_DrawImageAt(img, thumbX + offsetX, thumbY + offsetY, 0.48f, nullptr,
+                      scale, scale);
     } else {
+      UI::ImageManager::getInstance().prefetch(
+          thumbUrl, embed.thumbnail_width, embed.thumbnail_height,
+          Network::RequestPriority::INTERACTIVE);
       C2D_DrawRectSolid(thumbX, thumbY, 0.48f, thumbSize, thumbSize,
                         ScreenManager::colorEmbedMedia());
     }
   }
 
   if (hasImage || (isMedia && hasThumbnail)) {
-
     std::string mediaUrl =
         hasImage
             ? (!embed.image_proxy_url.empty() ? embed.image_proxy_url
@@ -2295,22 +2326,26 @@ float MessageScreen::renderEmbed(const Discord::Embed &embed, float x, float y,
     int mediaH = hasImage ? embed.image_height : embed.thumbnail_height;
 
     float availableMaxWidth = maxWidth - (isSimpleMedia ? 0.0f : 16.0f);
+    availableMaxWidth = std::min(availableMaxWidth, 348.0f);
     float drawW = availableMaxWidth;
-    float drawH = 80.0f;
+    if (mediaW > 0 && mediaW < 160) {
+      drawW = (float)mediaW;
+    }
+
+    float drawH = 100.0f;
     if (mediaW > 0 && mediaH > 0) {
       float aspect = (float)mediaW / mediaH;
-      drawW = std::min((float)mediaW, availableMaxWidth);
       drawH = drawW / aspect;
-
-      if (drawH > 300.0f) {
-        drawH = 300.0f;
+      if (drawH > 220.0f) {
+        drawH = 220.0f;
         drawW = drawH * aspect;
       }
+    } else {
+      drawH = drawW * 0.5625f;
     }
 
     auto info = ImageManager::getInstance().getImageInfo(mediaUrl);
     if (info.tex) {
-
       float uMax = (float)info.originalW / info.tex->width;
       float vMax = (float)info.originalH / info.tex->height;
       Tex3DS_SubTexture subtex = {
@@ -2332,9 +2367,10 @@ float MessageScreen::renderEmbed(const Discord::Embed &embed, float x, float y,
       drawText(textX + 5, currentY + (drawH / 2) - 6, 0.5f, 0.35f, 0.35f,
                ScreenManager::colorTextMuted(), TR("common.loading"));
     }
+    currentY += drawH + 4.0f;
   }
 
-  return embedH;
+  return currentY - y;
 }
 
 void MessageScreen::catchUpMessages() {

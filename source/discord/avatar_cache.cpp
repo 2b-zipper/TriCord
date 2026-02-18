@@ -87,8 +87,14 @@ void AvatarCache::prefetchAvatar(const std::string &userId,
     return;
 
   std::lock_guard<std::recursive_mutex> lock(cacheMutex);
-  if (cache.count(userId))
-    return;
+  auto it = cache.find(userId);
+  if (it != cache.end()) {
+    if (!it->second.tex && !it->second.loading) {
+      cache.erase(it);
+    } else {
+      return;
+    }
+  }
 
   AvatarInfo info;
   if (!avatarHash.empty()) {
@@ -142,8 +148,14 @@ void AvatarCache::prefetchGuildIcon(const std::string &guildId,
     return;
 
   std::lock_guard<std::recursive_mutex> lock(cacheMutex);
-  if (cache.count(guildId))
-    return;
+  auto it = cache.find(guildId);
+  if (it != cache.end()) {
+    if (!it->second.tex && !it->second.loading) {
+      cache.erase(it);
+    } else {
+      return;
+    }
+  }
 
   AvatarInfo info;
   info.url = "https://cdn.discordapp.com/icons/" + guildId + "/" + iconHash +

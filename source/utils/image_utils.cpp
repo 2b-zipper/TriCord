@@ -15,41 +15,39 @@ static const int mortonTable[] = {
     32, 33, 36, 37, 48, 49, 52, 53, 34, 35, 38, 39, 50, 51, 54, 55,
     40, 41, 44, 45, 56, 57, 60, 61, 42, 43, 46, 47, 58, 59, 62, 63};
 
-C3D_Tex *loadTextureFromMemory(const unsigned char *data, size_t size,
-                               int &outW, int &outH, bool noResize) {
+TiledData decodeToTiled(const unsigned char *data, size_t size, int maxWidth,
+                        int maxHeight, bool noResize) {
+  TiledData result;
   int w, h, c;
 
   if (!stbi_info_from_memory(data, size, &w, &h, &c)) {
-    return nullptr;
+    return result;
   }
 
-  if (w > 4096 || h > 4096)
-    return nullptr;
-  if (w * h > 1600 * 1600)
-    return nullptr;
+  if (w > 8192 || h > 8192)
+    return result;
+  if (w * h > 3000 * 3000)
+    return result;
 
   stbi_set_flip_vertically_on_load(false);
   unsigned char *img = stbi_load_from_memory(data, size, &w, &h, &c, 4);
 
   if (!img) {
-    return nullptr;
+    return result;
   }
 
   int targetW = w;
   int targetH = h;
-  if (!noResize && (targetW > 320 || targetH > 320)) {
+  if (!noResize && (targetW > maxWidth || targetH > maxHeight)) {
     float ratio = (float)w / h;
     if (w > h) {
-      targetW = 320;
-      targetH = 320 / ratio;
+      targetW = maxWidth;
+      targetH = maxWidth / ratio;
     } else {
-      targetH = 320;
-      targetW = 320 * ratio;
+      targetH = maxHeight;
+      targetW = maxHeight * ratio;
     }
   }
-
-  outW = targetW;
-  outH = targetH;
 
   int p2_w = 1, p2_h = 1;
   while (p2_w < targetW)
@@ -57,17 +55,13 @@ C3D_Tex *loadTextureFromMemory(const unsigned char *data, size_t size,
   while (p2_h < targetH)
     p2_h *= 2;
 
-  C3D_Tex *tex = (C3D_Tex *)malloc(sizeof(C3D_Tex));
-  if (!C3D_TexInit(tex, p2_w, p2_h, GPU_RGBA8)) {
+  size_t vramSize = p2_w * p2_h * 4;
+  u32 *tiledBuf = (u32 *)malloc(vramSize);
+  if (!tiledBuf) {
     stbi_image_free(img);
-    free(tex);
-    return nullptr;
+    return result;
   }
-
-  C3D_TexSetFilter(tex, GPU_LINEAR, GPU_LINEAR);
-
-  u32 *gpuBuf = (u32 *)tex->data;
-  memset(gpuBuf, 0, tex->size);
+  memset(tiledBuf, 0, vramSize);
 
   for (int y = 0; y < targetH; y++) {
     for (int x = 0; x < targetW; x++) {
@@ -87,14 +81,43 @@ C3D_Tex *loadTextureFromMemory(const unsigned char *data, size_t size,
       int tileIdx = ((y >> 3) * (p2_w >> 3) + (x >> 3)) * 64;
       int dstIdx = tileIdx + mortonTable[tileY * 8 + tileX];
 
-      if (dstIdx < (int)(tex->size / 4)) {
-        gpuBuf[dstIdx] = color;
+      if (dstIdx < (int)(vramSize / 4)) {
+        tiledBuf[dstIdx] = color;
       }
     }
   }
 
-  GSPGPU_FlushDataCache(tex->data, tex->size);
   stbi_image_free(img);
+
+  result.pixels = tiledBuf;
+  result.w = targetW;
+  result.h = targetH;
+  result.p2w = p2_w;
+  result.p2h = p2_h;
+  result.vramSize = vramSize;
+  return result;
+}
+
+C3D_Tex *loadTextureFromMemory(const unsigned char *data, size_t size,
+                               int &outW, int &outH, bool noResize) {
+  TiledData tiled = decodeToTiled(data, size, 512, 512, noResize);
+  if (!tiled.pixels)
+    return nullptr;
+
+  C3D_Tex *tex = (C3D_Tex *)malloc(sizeof(C3D_Tex));
+  if (!C3D_TexInit(tex, tiled.p2w, tiled.p2h, GPU_RGBA8)) {
+    free(tiled.pixels);
+    free(tex);
+    return nullptr;
+  }
+
+  C3D_TexSetFilter(tex, GPU_LINEAR, GPU_LINEAR);
+  memcpy(tex->data, tiled.pixels, tiled.vramSize);
+  GSPGPU_FlushDataCache(tex->data, tex->size);
+  free(tiled.pixels);
+
+  outW = tiled.w;
+  outH = tiled.h;
   return tex;
 }
 
