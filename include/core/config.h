@@ -6,8 +6,8 @@
 #define DISCORD_QR_BASE_URL "https://discord.com/ra/"
 
 #define APP_NAME "TriCord"
-#define APP_VERSION "0.1.0"
-#define APP_USER_AGENT "TriCord/0.1.0 (Nintendo 3DS)"
+#define APP_VERSION "0.2.0"
+#define APP_USER_AGENT "TriCord/0.2.0 (Nintendo 3DS)"
 
 #define HTTP_TIMEOUT_SECONDS 30
 
