@@ -1360,15 +1360,13 @@ float MessageScreen::drawReactions(const Discord::Message &msg, float x,
                           std::min(b + 20, 255), 255);
     }
 
-    drawRoundedRect(reactionX, newY, 0.45f, boxW, rowHeight, 6.0f, boxBg);
     if (react.me) {
       u32 borderCol = ScreenManager::colorSelection();
-      drawRoundedRect(reactionX, newY, 0.46f, boxW, 1.0f, 0.5f, borderCol);
-      drawRoundedRect(reactionX, newY + rowHeight - 1.0f, 0.46f, boxW, 1.0f,
-                      0.5f, borderCol);
-      drawRoundedRect(reactionX, newY, 0.46f, 1.0f, rowHeight, 0.5f, borderCol);
-      drawRoundedRect(reactionX + boxW - 1.0f, newY, 0.46f, 1.0f, rowHeight,
-                      0.5f, borderCol);
+      drawRoundedRect(reactionX, newY, 0.45f, boxW, rowHeight, 6.0f, borderCol);
+      drawRoundedRect(reactionX + 1.0f, newY + 1.0f, 0.46f, boxW - 2.0f,
+                      rowHeight - 2.0f, 5.0f, boxBg);
+    } else {
+      drawRoundedRect(reactionX, newY, 0.45f, boxW, rowHeight, 6.0f, boxBg);
     }
 
     drawInfos.push_back({reactionX, newY, boxW, &react});
