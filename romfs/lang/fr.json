@@ -157,7 +157,7 @@
     "status.dnd": "Ne pas déranger",
     "status.invisible": "Invisible",
     "menu.status_change": "Changer de statut",
-    "server.member_count": "Membres",
-    "server.online_count": "En ligne",
+    "server.member_count": "Membres ",
+    "server.online_count": "En ligne ",
     "server.description": "Aperçu du serveur"
 }
