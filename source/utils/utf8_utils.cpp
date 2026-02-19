@@ -57,32 +57,16 @@ bool isEmoji(uint32_t cp) {
   };
 
   static const Range ranges[] = {
-      {0x203C, 0x203C},   // ‼️
-      {0x2049, 0x2049},   // ⁉️
-      {0x2122, 0x2122},   // ™️
-      {0x2139, 0x2139},   // ℹ️
-      {0x231A, 0x23F3},   // Misc Technical
-      {0x24C2, 0x24C2},   // Ⓜ️
-      {0x25AA, 0x25FE},   // Geometric Shapes
-      {0x2600, 0x26FF},   // Misc Symbols
-      {0x2700, 0x27BF},   // Dingbats
-      {0x2934, 0x2935},   // ⤴️, ⤵️
-      {0x2B05, 0x2B07},   // ⬅️, ⬆️, ⬇️
-      {0x2B1B, 0x2B1C},   // ⬛, ⬜
-      {0x2B50, 0x2B50},   // ⭐
-      {0x2B55, 0x2B55},   // ⭕
-      {0x3030, 0x3030},   // 〰️
-      {0x303D, 0x303D},   // 〽️
-      {0x3297, 0x3297},   // ㊗️
-      {0x3299, 0x3299},   // ㊙️
-      {0x1F1E6, 0x1F1FF}, // Flags
-      {0x1F300, 0x1F5FF}, // Misc Symbols and Pictographs
-      {0x1F600, 0x1F64F}, // Emoticons
-      {0x1F680, 0x1F6FF}, // Transport and Map
-      {0x1F7E0, 0x1F7EB}, // Large Circles/Squares
-      {0x1F900, 0x1F9FF}, // Supplemental
-      {0x1FA70, 0x1FAFF}  // Extended-A
-  };
+      {0x0023, 0x0023},   {0x002A, 0x002A},   {0x0030, 0x0039},
+      {0x00A9, 0x00A9},   {0x00AE, 0x00AE},   {0x203C, 0x203C},
+      {0x2049, 0x2049},   {0x2122, 0x2122},   {0x2139, 0x2139},
+      {0x231A, 0x23F3},   {0x24C2, 0x24C2},   {0x25AA, 0x25FE},
+      {0x2600, 0x26FF},   {0x2700, 0x27BF},   {0x2934, 0x2935},
+      {0x2B05, 0x2B07},   {0x2B1B, 0x2B1C},   {0x2B50, 0x2B50},
+      {0x2B55, 0x2B55},   {0x3030, 0x3030},   {0x303D, 0x303D},
+      {0x3297, 0x3297},   {0x3299, 0x3299},   {0x1F1E6, 0x1F1FF},
+      {0x1F300, 0x1F5FF}, {0x1F600, 0x1F64F}, {0x1F680, 0x1F6FF},
+      {0x1F7E0, 0x1F7EB}, {0x1F900, 0x1F9FF}, {0x1FA70, 0x1FAFF}};
 
   for (const auto &range : ranges) {
     if (cp >= range.start && cp <= range.end) {
@@ -92,28 +76,40 @@ bool isEmoji(uint32_t cp) {
   return false;
 }
 
-std::string removeMarkdown(const std::string &text) {
-  std::string result = text;
-  size_t pos = 0;
+bool isEmojiModifier(uint32_t cp) {
+  return (cp >= 0x1F3FB && cp <= 0x1F3FF) || (cp >= 0xFE0E && cp <= 0xFE0F);
+}
 
-  while ((pos = result.find("**", pos)) != std::string::npos) {
-    result.erase(pos, 2);
-  }
+bool isEmojiJoiner(uint32_t cp) { return cp == 0x200D; }
 
-  while ((pos = result.find("__", pos)) != std::string::npos) {
-    result.erase(pos, 2);
-  }
+std::string getEmojiSequence(const std::string &text, size_t &cursor) {
+  size_t start = cursor;
+  uint32_t cp = decodeNext(text, cursor);
+  std::string result = text.substr(start, cursor - start);
 
-  while ((pos = result.find("~~", pos)) != std::string::npos) {
-    result.erase(pos, 2);
-  }
+  while (cursor < text.length()) {
+    size_t nextCursor = cursor;
+    uint32_t nextCp = decodeNext(text, nextCursor);
 
-  while ((pos = result.find("||", pos)) != std::string::npos) {
-    result.erase(pos, 2);
-  }
-
-  while ((pos = result.find("`", pos)) != std::string::npos) {
-    result.erase(pos, 1);
+    if (isEmojiModifier(nextCp) || isEmojiJoiner(nextCp)) {
+      result += text.substr(cursor, nextCursor - cursor);
+      cursor = nextCursor;
+      if (nextCp == 0x200D && cursor < text.length()) {
+        size_t afterJoiner = cursor;
+        uint32_t followCp = decodeNext(text, afterJoiner);
+        if (isEmoji(followCp)) {
+          result += text.substr(cursor, afterJoiner - cursor);
+          cursor = afterJoiner;
+        }
+      }
+    } else if (cp >= 0x1F1E6 && cp <= 0x1F1FF && nextCp >= 0x1F1E6 &&
+               nextCp <= 0x1F1FF) {
+      result += text.substr(cursor, nextCursor - cursor);
+      cursor = nextCursor;
+      break;
+    } else {
+      break;
+    }
   }
 
   return result;

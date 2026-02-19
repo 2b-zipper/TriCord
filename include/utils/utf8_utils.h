@@ -12,6 +12,10 @@ uint32_t decodeNext(const std::string &text, size_t &cursor);
 std::string codepointToHex(uint32_t cp);
 
 bool isEmoji(uint32_t cp);
+bool isEmojiModifier(uint32_t cp);
+bool isEmojiJoiner(uint32_t cp);
+
+std::string getEmojiSequence(const std::string &text, size_t &cursor);
 
 std::string sanitizeText(const std::string &text);
 } // namespace Utf8

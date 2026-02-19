@@ -94,8 +94,28 @@ EmojiManager::getTwemojiInfo(const std::string &codepointHex) {
     }
   }
 
-  std::string path = "romfs:/twemoji17/" + codepointHex + ".png";
+  auto getPath = [](const std::string &h) {
+    return "romfs:/twemoji17/" + h + ".png";
+  };
+
+  std::string hex = codepointHex;
+  std::string path = getPath(hex);
   FILE *f = fopen(path.c_str(), "rb");
+
+  if (!f) {
+    // Fallback: Try stripping "-fe0f" from the hex string
+    std::string strippedHex = hex;
+    size_t pos = 0;
+    while ((pos = strippedHex.find("-fe0f")) != std::string::npos) {
+      strippedHex.erase(pos, 5);
+    }
+    if (strippedHex != hex) {
+      hex = strippedHex;
+      path = getPath(hex);
+      f = fopen(path.c_str(), "rb");
+    }
+  }
+
   if (f) {
     fseek(f, 0, SEEK_END);
     size_t size = ftell(f);

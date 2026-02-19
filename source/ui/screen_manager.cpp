@@ -14,6 +14,7 @@
 #include "ui/server_list_screen.h"
 #include "ui/settings_screen.h"
 #include "ui/text_measure_cache.h"
+#include "utils/message_utils.h"
 #include "utils/utf8_utils.h"
 
 namespace UI {
@@ -478,11 +479,13 @@ void drawRichText(float x, float y, float z, float scaleX, float scaleY,
       }
     }
 
-    size_t tempCursor = cursor;
-    uint32_t codepoint = Utils::Utf8::decodeNext(text, tempCursor);
+    size_t tempCharCursor = cursor;
+    uint32_t firstCp = Utils::Utf8::decodeNext(text, tempCharCursor);
 
-    if (Utils::Utf8::isEmoji(codepoint)) {
-      std::string hex = Utils::Utf8::codepointToHex(codepoint);
+    if (Utils::Utf8::isEmoji(firstCp)) {
+      size_t seqCursor = cursor;
+      std::string sequence = Utils::Utf8::getEmojiSequence(text, seqCursor);
+      std::string hex = MessageUtils::getEmojiFilename(sequence);
       EmojiManager::EmojiInfo info =
           EmojiManager::getInstance().getTwemojiInfo(hex);
       float emojiSize = 28.0f * scaleY;
@@ -496,10 +499,13 @@ void drawRichText(float x, float y, float z, float scaleX, float scaleY,
         const C2D_Image img = {info.tex, &subtex};
         C2D_DrawImageAt(img, currentX, y + 1.0f, z, nullptr,
                         emojiSize / info.originalW, emojiSize / info.originalH);
+        currentX += emojiSize + (2.0f * scaleX);
+      } else {
+        std::string clean = Utils::Utf8::sanitizeText(sequence);
+        drawText(currentX, y, z, scaleX, scaleY, color, clean);
+        currentX += measureText(clean, scaleX, scaleY);
       }
-
-      currentX += emojiSize + (2.0f * scaleX);
-      cursor = tempCursor;
+      cursor = seqCursor;
       continue;
     }
 
@@ -581,13 +587,15 @@ float measureRichTextImpl(const std::string &rawText, float scaleX,
       }
     }
 
-    size_t tempCursor = cursor;
-    uint32_t codepoint = Utils::Utf8::decodeNext(text, tempCursor);
+    size_t tempCharCursor = cursor;
+    uint32_t firstCp = Utils::Utf8::decodeNext(text, tempCharCursor);
 
-    if (Utils::Utf8::isEmoji(codepoint)) {
+    if (Utils::Utf8::isEmoji(firstCp)) {
+      size_t seqCursor = cursor;
+      Utils::Utf8::getEmojiSequence(text, seqCursor);
       float emojiSize = 28.0f * scaleY;
       currentX += emojiSize + (2.0f * scaleX);
-      cursor = tempCursor;
+      cursor = seqCursor;
     } else {
       size_t end = cursor;
       while (end < text.length()) {
@@ -725,11 +733,13 @@ void drawRichTextUnicodeOnly(float x, float y, float z, float scaleX,
   float currentX = x;
 
   while (cursor < text.length()) {
-    size_t tempCursor = cursor;
-    uint32_t codepoint = Utils::Utf8::decodeNext(text, tempCursor);
+    size_t tempCharCursor = cursor;
+    uint32_t firstCp = Utils::Utf8::decodeNext(text, tempCharCursor);
 
-    if (Utils::Utf8::isEmoji(codepoint)) {
-      std::string hex = Utils::Utf8::codepointToHex(codepoint);
+    if (Utils::Utf8::isEmoji(firstCp)) {
+      size_t seqCursor = cursor;
+      std::string sequence = Utils::Utf8::getEmojiSequence(text, seqCursor);
+      std::string hex = MessageUtils::getEmojiFilename(sequence);
       EmojiManager::EmojiInfo info =
           EmojiManager::getInstance().getTwemojiInfo(hex);
       float emojiSize = 28.0f * scaleY;
@@ -746,10 +756,13 @@ void drawRichTextUnicodeOnly(float x, float y, float z, float scaleX,
         const C2D_Image img = {info.tex, &subtex};
         C2D_DrawImageAt(img, currentX, y + 1.0f, z, nullptr,
                         emojiSize / info.originalW, emojiSize / info.originalH);
+        currentX += emojiSize + (2.0f * scaleX);
+      } else {
+        std::string clean = Utils::Utf8::sanitizeText(sequence);
+        drawText(currentX, y, z, scaleX, scaleY, color, clean);
+        currentX += measureText(clean, scaleX, scaleY);
       }
-
-      currentX += emojiSize + (2.0f * scaleX);
-      cursor = tempCursor;
+      cursor = seqCursor;
     } else {
       size_t end = cursor;
       while (end < text.length()) {

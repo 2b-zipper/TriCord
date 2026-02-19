@@ -357,8 +357,6 @@ std::string getEmojiFilename(const std::string &emoji) {
     uint32_t cp = Utils::Utf8::decodeNext(emoji, cursor);
     if (cp == 0)
       break;
-    if (cp == 0xFE0F)
-      continue;
     if (!result.empty())
       result += "-";
     result += Utils::Utf8::codepointToHex(cp);
