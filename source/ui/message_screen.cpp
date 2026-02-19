@@ -1138,7 +1138,7 @@ float MessageScreen::drawAuthorHeader(const Discord::Message &msg, float x,
              C2D_Color32(255, 255, 255, 255), initial);
   }
 
-  drawRichText(x, y, 0.5f, 0.45f, 0.45f, nameColor, displayName);
+  drawRichText(x, y - 2.0f, 0.5f, 0.45f, 0.45f, nameColor, displayName);
   float nameWidth = UI::measureRichText(displayName, 0.45f, 0.45f);
   float timeX = x + nameWidth + 8.0f;
   std::string time = MessageUtils::formatTimestamp(msg.timestamp);
@@ -1499,7 +1499,7 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y,
 
   if (!showHeader && isSelected) {
     std::string time = MessageUtils::formatTimeOnly(msg.timestamp);
-    drawText(10.0f, contentY, 0.5f, 0.35f, 0.35f,
+    drawText(10.0f, contentY + 2.0f, 0.5f, 0.35f, 0.35f,
              ScreenManager::colorTextMuted(), time);
   }
 
