@@ -6,8 +6,14 @@
 #define DISCORD_QR_BASE_URL "https://discord.com/ra/"
 
 #define APP_NAME "TriCord"
-#define APP_VERSION "0.2.0"
-#define APP_USER_AGENT "TriCord/0.2.0 (Nintendo 3DS)"
+
+#define STRINGIFY(x) #x
+#define TOSTRING(x) STRINGIFY(x)
+
+#define APP_VERSION                                                            \
+  TOSTRING(APP_VERSION_MAJOR)                                                  \
+  "." TOSTRING(APP_VERSION_MINOR) "." TOSTRING(APP_VERSION_MICRO)
+#define APP_USER_AGENT "TriCord/" APP_VERSION " (Nintendo 3DS)"
 
 #define HTTP_TIMEOUT_SECONDS 30
 
