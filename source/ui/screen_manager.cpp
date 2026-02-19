@@ -84,7 +84,11 @@ void ScreenManager::setScreen(ScreenType type) {
     currentScreen->onExit();
   }
 
-  previousType = currentType;
+  if (type == ScreenType::LOGIN || type == ScreenType::GUILD_LIST ||
+      type == ScreenType::ADD_ACCOUNT || type == ScreenType::DM_LIST) {
+    screenHistory.clear();
+  }
+
   currentType = type;
 
   if (type == ScreenType::LOGIN || type == ScreenType::ADD_ACCOUNT) {
@@ -156,12 +160,29 @@ void ScreenManager::setScreen(ScreenType type) {
   }
 }
 
-void ScreenManager::returnToPreviousScreen() {
+void ScreenManager::pushScreen(ScreenType type) {
+  if (currentType != type) {
+    screenHistory.push_back(currentType);
+  }
+  setScreen(type);
+}
 
-  if (previousType == ScreenType::GUILD_LIST) {
+void ScreenManager::returnToPreviousScreen() {
+  if (screenHistory.empty()) {
+    if (currentType != ScreenType::GUILD_LIST &&
+        currentType != ScreenType::LOGIN) {
+      setScreen(ScreenType::GUILD_LIST);
+    }
+    return;
+  }
+
+  ScreenType prev = screenHistory.back();
+  screenHistory.pop_back();
+
+  if (prev == ScreenType::GUILD_LIST) {
     selectedGuildId = "";
   }
-  setScreen(previousType);
+  setScreen(prev);
 }
 
 void ScreenManager::update() {

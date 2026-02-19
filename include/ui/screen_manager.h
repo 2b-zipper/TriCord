@@ -49,8 +49,8 @@ public:
   void shutdown();
 
   void setScreen(ScreenType type);
+  void pushScreen(ScreenType type);
   ScreenType getCurrentType() const { return currentType; }
-  ScreenType getPreviousType() const { return previousType; }
   void returnToPreviousScreen();
   void update();
   void render();
@@ -145,7 +145,7 @@ private:
 
   std::unique_ptr<Screen> currentScreen;
   ScreenType currentType;
-  ScreenType previousType;
+  std::vector<ScreenType> screenHistory;
   std::string selectedGuildId;
   bool debugOverlayEnabled;
   bool appExitRequested;

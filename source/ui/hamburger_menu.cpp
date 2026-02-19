@@ -124,11 +124,11 @@ void HamburgerMenu::update() {
           close();
           return;
         case MenuItemType::SETTINGS:
-          sm.setScreen(ScreenType::SETTINGS);
+          sm.pushScreen(ScreenType::SETTINGS);
           close();
           return;
         case MenuItemType::ABOUT:
-          sm.setScreen(ScreenType::ABOUT);
+          sm.pushScreen(ScreenType::ABOUT);
           close();
           return;
         default:

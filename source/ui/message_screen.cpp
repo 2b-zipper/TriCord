@@ -342,23 +342,18 @@ void MessageScreen::update() {
         nullptr);
 
     Discord::DiscordClient &client = Discord::DiscordClient::getInstance();
-    std::lock_guard<std::recursive_mutex> lock(client.getMutex());
-    Discord::Channel channel = client.getChannel(channelId);
-
-    if (!channel.parent_id.empty()) {
-      Discord::Channel parentChannel = client.getChannel(channel.parent_id);
-      if (parentChannel.type == 15) {
-        client.setSelectedChannelId(channel.parent_id);
-        ScreenManager::getInstance().setScreen(ScreenType::FORUM_CHANNEL);
-        return;
+    {
+      std::lock_guard<std::recursive_mutex> lock(client.getMutex());
+      Discord::Channel channel = client.getChannel(channelId);
+      if (!channel.parent_id.empty()) {
+        Discord::Channel parent = client.getChannel(channel.parent_id);
+        if (parent.type == 15) {
+          client.setSelectedChannelId(channel.parent_id);
+        }
       }
     }
 
-    if (channelType == 1 || channelType == 3) {
-      ScreenManager::getInstance().setScreen(ScreenType::DM_LIST);
-    } else {
-      ScreenManager::getInstance().setScreen(ScreenType::GUILD_LIST);
-    }
+    ScreenManager::getInstance().returnToPreviousScreen();
     return;
   }
 

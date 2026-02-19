@@ -89,7 +89,7 @@ void DmScreen::update() {
     if (selectedIndex >= 0 && selectedIndex < (int)dms.size()) {
       const auto &dm = dms[selectedIndex];
       Discord::DiscordClient::getInstance().setSelectedChannelId(dm.id);
-      ScreenManager::getInstance().setScreen(ScreenType::MESSAGES);
+      ScreenManager::getInstance().pushScreen(ScreenType::MESSAGES);
     }
   }
 

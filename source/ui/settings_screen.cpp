@@ -286,8 +286,7 @@ void SettingsScreen::renderBottom(C3D_RenderTarget *target) {
 
 void SettingsScreen::saveAndExit() {
   Config::getInstance().saveSettings();
-  ScreenManager::getInstance().setSelectedGuildId("");
-  ScreenManager::getInstance().setScreen(ScreenType::GUILD_LIST);
+  ScreenManager::getInstance().returnToPreviousScreen();
 }
 
 } // namespace UI

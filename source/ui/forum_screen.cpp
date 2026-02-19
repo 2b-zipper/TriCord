@@ -156,12 +156,12 @@ void ForumScreen::update() {
     if (selectedIndex >= 0 && selectedIndex < (int)threads.size()) {
       const auto &thread = threads[selectedIndex].channel;
       Discord::DiscordClient::getInstance().setSelectedChannelId(thread.id);
-      ScreenManager::getInstance().setScreen(ScreenType::MESSAGES);
+      ScreenManager::getInstance().pushScreen(ScreenType::MESSAGES);
     }
   }
 
   if (kDown & KEY_B) {
-    ScreenManager::getInstance().setScreen(ScreenType::GUILD_LIST);
+    ScreenManager::getInstance().returnToPreviousScreen();
   }
 }
 

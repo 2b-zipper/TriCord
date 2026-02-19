@@ -433,10 +433,10 @@ void ServerListScreen::update() {
         if (ch.type == 0 || ch.type == 5 || ch.type == 10 || ch.type == 11 ||
             ch.type == 12 || ch.type == 1 || ch.type == 3) {
           Discord::DiscordClient::getInstance().setSelectedChannelId(ch.id);
-          ScreenManager::getInstance().setScreen(ScreenType::MESSAGES);
+          ScreenManager::getInstance().pushScreen(ScreenType::MESSAGES);
         } else if (ch.type == 15) {
           Discord::DiscordClient::getInstance().setSelectedChannelId(ch.id);
-          ScreenManager::getInstance().setScreen(ScreenType::FORUM_CHANNEL);
+          ScreenManager::getInstance().pushScreen(ScreenType::FORUM_CHANNEL);
         }
       }
     }

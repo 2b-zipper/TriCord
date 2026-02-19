@@ -103,7 +103,6 @@ EmojiManager::getTwemojiInfo(const std::string &codepointHex) {
   FILE *f = fopen(path.c_str(), "rb");
 
   if (!f) {
-    // Fallback: Try stripping "-fe0f" from the hex string
     std::string strippedHex = hex;
     size_t pos = 0;
     while ((pos = strippedHex.find("-fe0f")) != std::string::npos) {
