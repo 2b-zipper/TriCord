@@ -610,47 +610,57 @@ float measureRichTextImpl(const std::string &rawText, float scaleX,
 
     if (Utils::Utf8::isEmoji(firstCp)) {
       size_t seqCursor = cursor;
-      Utils::Utf8::getEmojiSequence(text, seqCursor);
+      std::string sequence = Utils::Utf8::getEmojiSequence(text, seqCursor);
+      std::string hex = MessageUtils::getEmojiFilename(sequence);
+      EmojiManager::EmojiInfo info =
+          EmojiManager::getInstance().getTwemojiInfo(hex);
       float emojiSize = 28.0f * scaleY;
-      currentX += emojiSize + (2.0f * scaleX);
+
+      if (info.tex) {
+        currentX += emojiSize + (2.0f * scaleX);
+      } else {
+        std::string clean = Utils::Utf8::sanitizeText(sequence);
+        currentX += measureText(clean, scaleX, scaleY);
+      }
       cursor = seqCursor;
-    } else {
-      size_t end = cursor;
-      while (end < text.length()) {
-        if (!unicodeOnly && text[end] == '<') {
-          // Check if this looks like a custom emoji
-          if (end + 6 < text.length()) {
-            bool isAnimated = (text[end + 1] == 'a');
-            if (text[end + 1] == ':' || isAnimated) {
-              size_t secondColon = text.find(':', end + (isAnimated ? 3 : 2));
-              if (secondColon != std::string::npos) {
-                size_t closeBracket = text.find('>', secondColon);
-                if (closeBracket != std::string::npos) {
-                  break;
-                }
+      continue;
+    }
+
+    size_t end = cursor;
+    while (end < text.length()) {
+      if (!unicodeOnly && text[end] == '<') {
+        // Check if this looks like a custom emoji
+        if (end + 6 < text.length()) {
+          bool isAnimated = (text[end + 1] == 'a');
+          if (text[end + 1] == ':' || isAnimated) {
+            size_t secondColon = text.find(':', end + (isAnimated ? 3 : 2));
+            if (secondColon != std::string::npos) {
+              size_t closeBracket = text.find('>', secondColon);
+              if (closeBracket != std::string::npos) {
+                break;
               }
             }
           }
         }
-
-        size_t nextC = end;
-        uint32_t cp = Utils::Utf8::decodeNext(text, nextC);
-        if (Utils::Utf8::isEmoji(cp))
-          break;
-        end = nextC;
       }
 
-      if (end > cursor) {
-        std::string segment = text.substr(cursor, end - cursor);
-        currentX += measureText(segment, scaleX, scaleY);
-        cursor = end;
-      } else if (cursor < text.length()) {
-        size_t nextC = cursor;
-        Utils::Utf8::decodeNext(text, nextC);
-        std::string segment = text.substr(cursor, nextC - cursor);
-        currentX += measureText(segment, scaleX, scaleY);
-        cursor = nextC;
-      }
+      size_t nextC = end;
+      uint32_t cp = Utils::Utf8::decodeNext(text, nextC);
+      if (Utils::Utf8::isEmoji(cp))
+        break;
+      end = nextC;
+    }
+
+    if (end > cursor) {
+      std::string segment = text.substr(cursor, end - cursor);
+      currentX += measureText(segment, scaleX, scaleY);
+      cursor = end;
+    } else if (cursor < text.length()) {
+      size_t nextC = cursor;
+      Utils::Utf8::decodeNext(text, nextC);
+      std::string segment = text.substr(cursor, nextC - cursor);
+      currentX += measureText(segment, scaleX, scaleY);
+      cursor = nextC;
     }
   }
 
