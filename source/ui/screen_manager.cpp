@@ -179,9 +179,6 @@ void ScreenManager::returnToPreviousScreen() {
   ScreenType prev = screenHistory.back();
   screenHistory.pop_back();
 
-  if (prev == ScreenType::GUILD_LIST) {
-    selectedGuildId = "";
-  }
   setScreen(prev);
 }
 
