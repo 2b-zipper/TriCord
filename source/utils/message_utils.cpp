@@ -294,6 +294,10 @@ std::vector<std::string> wrapText(const std::string &text, float maxWidth,
       break;
     }
     start = newlinePos + 1;
+    if (start == text.length()) {
+      lines.push_back("");
+      break;
+    }
   }
 
   if (lines.empty())

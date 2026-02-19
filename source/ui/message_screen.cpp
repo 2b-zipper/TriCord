@@ -394,7 +394,7 @@ void MessageScreen::update() {
           swkbdSetFeatures(&swkbd, SWKBD_PREDICTIVE_INPUT |
                                        SWKBD_DARKEN_TOP_SCREEN |
                                        SWKBD_ALLOW_HOME | SWKBD_ALLOW_RESET |
-                                       SWKBD_ALLOW_POWER);
+                                       SWKBD_ALLOW_POWER | SWKBD_MULTILINE);
           swkbdSetHintText(&swkbd, TR("common.reply_hint").c_str());
           swkbdSetButton(&swkbd, SWKBD_BUTTON_LEFT, TR("common.cancel").c_str(),
                          false);
@@ -402,13 +402,25 @@ void MessageScreen::update() {
                          true);
           SwkbdButton button = swkbdInputText(&swkbd, mybuf, sizeof(mybuf));
 
-          if (button == SWKBD_BUTTON_RIGHT && strlen(mybuf) > 0) {
+          if (button == SWKBD_BUTTON_RIGHT) {
+            std::string content = mybuf;
+            size_t first = content.find_first_not_of(" \n\r\t");
+            if (first != std::string::npos) {
+              content = content.substr(
+                  first, content.find_last_not_of(" \n\r\t") - first + 1);
+            } else {
+              content = "";
+            }
+
+            if (content.empty())
+              return;
+
             Discord::DiscordClient &client =
                 Discord::DiscordClient::getInstance();
             std::lock_guard<std::recursive_mutex> clientLock(client.getMutex());
             Discord::Message replyMsg;
             replyMsg.id = "pending_" + std::to_string(time(NULL));
-            replyMsg.content = mybuf;
+            replyMsg.content = content;
             replyMsg.channelId = channelId;
             replyMsg.author = client.getCurrentUser();
             replyMsg.timestamp = TR("message.status.sending");
@@ -422,7 +434,7 @@ void MessageScreen::update() {
             scrollToBottom();
 
             client.sendReply(
-                channelId, mybuf, msg.id,
+                channelId, content, msg.id,
                 [this,
                  replyMsgId = replyMsg.id](const Discord::Message &sentMsg,
                                            bool success, int errorCode) {
@@ -456,7 +468,7 @@ void MessageScreen::update() {
           swkbdSetFeatures(&swkbd, SWKBD_PREDICTIVE_INPUT |
                                        SWKBD_DARKEN_TOP_SCREEN |
                                        SWKBD_ALLOW_HOME | SWKBD_ALLOW_RESET |
-                                       SWKBD_ALLOW_POWER);
+                                       SWKBD_ALLOW_POWER | SWKBD_MULTILINE);
           swkbdSetInitialText(&swkbd, editbuf);
           swkbdSetButton(&swkbd, SWKBD_BUTTON_LEFT, TR("common.cancel").c_str(),
                          false);
@@ -464,9 +476,17 @@ void MessageScreen::update() {
                          true);
           SwkbdButton button = swkbdInputText(&swkbd, editbuf, sizeof(editbuf));
 
-          if (button == SWKBD_BUTTON_RIGHT && strlen(editbuf) > 0) {
+          if (button == SWKBD_BUTTON_RIGHT) {
             std::string newContent = editbuf;
-            if (newContent != msg.content) {
+            size_t first = newContent.find_first_not_of(" \n\r\t");
+            if (first != std::string::npos) {
+              newContent = newContent.substr(
+                  first, newContent.find_last_not_of(" \n\r\t") - first + 1);
+            } else {
+              newContent = "";
+            }
+
+            if (!newContent.empty() && newContent != msg.content) {
               Discord::DiscordClient::getInstance().editMessage(
                   channelId, msg.id, newContent);
 
@@ -728,25 +748,24 @@ float MessageScreen::calculateMessageHeight(const Discord::Message &msg,
   std::string content = msg.content;
   if (!content.empty()) {
     int emojiCount = 0;
-    if (MessageUtils::isEmojiOnly(content, emojiCount) && emojiCount <= 10) {
-      float lineHeight = (emojiCount <= 3) ? 34.0f : 26.0f;
-      totalH += lineHeight;
-    } else {
-      auto lines = MessageUtils::wrapText(content, 320.0f, 0.4f);
-      totalH += lines.size() * 12.0f;
+    bool isJumbo =
+        MessageUtils::isEmojiOnly(content, emojiCount) && emojiCount <= 30;
+    float scale = isJumbo ? 1.15f : 0.4f;
 
-      if (!msg.edited_timestamp.empty()) {
-        float lastLineWidth = 0.0f;
-        if (!lines.empty()) {
-          lastLineWidth = UI::measureText(lines.back(), 0.4f, 0.4f);
-        }
-        std::string editedText = TR("message.edited");
-        float editedWidth = UI::measureText(editedText, 0.35f, 0.35f);
-        float padding = 4.0f;
+    float h = 0;
+    float lastLineWidth = 0;
+    UI::measureRichText(content, scale, scale, 320.0f, &h, &lastLineWidth);
+    totalH += h;
 
-        if (lastLineWidth + padding + editedWidth > 320.0f) {
-          totalH += 12.0f;
-        }
+    if (!msg.edited_timestamp.empty()) {
+      std::string editedText = TR("message.edited");
+      float editedScale = 0.35f;
+      float editedWidth = UI::measureText(editedText, editedScale, editedScale);
+      float padding = 4.0f;
+
+      if (!isJumbo && (lastLineWidth + padding + editedWidth <= 320.0f)) {
+      } else {
+        totalH += 10.0f;
       }
     }
   }
@@ -1131,40 +1150,36 @@ float MessageScreen::drawAuthorHeader(const Discord::Message &msg, float x,
 float MessageScreen::drawMessageContent(const Discord::Message &msg, float x,
                                         float y) {
   std::string content = msg.content;
-  float lastLineWidth = -1.0f;
-  int emojiCount = 0;
-  float newY = y;
+  if (content.empty())
+    return y;
 
-  if (MessageUtils::isEmojiOnly(content, emojiCount) && emojiCount <= 10) {
-    float jumboScale = (emojiCount <= 3) ? 1.15f : 0.85f;
-    float lineHeight = (emojiCount <= 3) ? 34.0f : 26.0f;
-    drawRichText(x, newY, 0.5f, jumboScale, jumboScale,
-                 ScreenManager::colorText(), content);
-    newY += lineHeight;
-  } else if (!content.empty()) {
-    auto lines = MessageUtils::wrapText(content, 320.0f, 0.4f);
-    for (const auto &line : lines) {
-      drawRichText(x, newY, 0.5f, 0.4f, 0.4f, ScreenManager::colorText(), line);
-      newY += 12.0f;
-      lastLineWidth = UI::measureText(line, 0.4f, 0.4f);
-    }
-  }
+  int emojiCount = 0;
+  bool isJumbo =
+      MessageUtils::isEmojiOnly(content, emojiCount) && emojiCount <= 30;
+  float scale = isJumbo ? 1.15f : 0.4f;
+
+  float h = 0;
+  float lastLineWidth = 0;
+  UI::measureRichText(content, scale, scale, 320.0f, &h, &lastLineWidth);
+  UI::drawRichText(x, y, 0.5f, scale, scale, ScreenManager::colorText(),
+                   content, 320.0f);
+  float newY = y + h;
 
   if (!msg.edited_timestamp.empty()) {
     std::string editedText = TR("message.edited");
     float editedScale = 0.35f;
     float editedWidth = UI::measureText(editedText, editedScale, editedScale);
     float padding = 4.0f;
+    float currentLineHeight = scale * 30.0f;
 
-    if (lastLineWidth >= 0.0f &&
-        (lastLineWidth + padding + editedWidth <= 320.0f)) {
-      drawText(x + lastLineWidth + padding, newY - 12.0f + 2.0f, 0.5f,
-               editedScale, editedScale, ScreenManager::colorTextMuted(),
+    if (!isJumbo && (lastLineWidth + padding + editedWidth <= 320.0f)) {
+      drawText(x + lastLineWidth + padding, newY - currentLineHeight + 1.0f,
+               0.5f, editedScale, editedScale, ScreenManager::colorTextMuted(),
                editedText);
     } else {
       drawText(x, newY, 0.5f, editedScale, editedScale,
                ScreenManager::colorTextMuted(), editedText);
-      newY += 12.0f;
+      newY += 10.0f;
     }
   }
   return newY;
@@ -1830,7 +1845,7 @@ void MessageScreen::openKeyboard() {
   swkbdInit(&swkbd, SWKBD_TYPE_NORMAL, 2, -1);
   swkbdSetFeatures(&swkbd, SWKBD_PREDICTIVE_INPUT | SWKBD_DARKEN_TOP_SCREEN |
                                SWKBD_ALLOW_HOME | SWKBD_ALLOW_RESET |
-                               SWKBD_ALLOW_POWER);
+                               SWKBD_ALLOW_POWER | SWKBD_MULTILINE);
   swkbdSetInitialText(&swkbd, mybuf);
   swkbdSetHintText(&swkbd, TR("common.message_hint").c_str());
   swkbdSetButton(&swkbd, SWKBD_BUTTON_LEFT, TR("common.cancel").c_str(), false);
@@ -1844,6 +1859,14 @@ void MessageScreen::openKeyboard() {
       return;
     }
     std::string content = mybuf;
+    size_t first = content.find_first_not_of(" \n\r\t");
+    if (first != std::string::npos) {
+      content = content.substr(first,
+                               content.find_last_not_of(" \n\r\t") - first + 1);
+    } else {
+      content = "";
+    }
+
     if (!content.empty()) {
       Logger::log("Sending message: %s", content.c_str());
 

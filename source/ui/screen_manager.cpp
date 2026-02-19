@@ -433,7 +433,7 @@ void drawCircle(float x, float y, float z, float radius, u32 color) {
 }
 
 void drawRichText(float x, float y, float z, float scaleX, float scaleY,
-                  u32 color, const std::string &rawText) {
+                  u32 color, const std::string &rawText, float maxWidth) {
   std::string text = Utils::Utf8::sanitizeText(rawText);
 
   if (!textBuf || text.empty())
@@ -441,8 +441,27 @@ void drawRichText(float x, float y, float z, float scaleX, float scaleY,
 
   size_t cursor = 0;
   float currentX = x;
+  float startX = x;
+  float emojiSpacing = 0.0f;
+  float lineHeight = 30.0f * scaleY;
 
   while (cursor < text.length()) {
+    if (text[cursor] == '\n') {
+      y += lineHeight;
+      currentX = startX;
+      cursor++;
+      continue;
+    }
+
+    if (text[cursor] == ' ') {
+      float spaceW = measureText(" ", scaleX, scaleY);
+      if (scaleX > 0.5f)
+        spaceW *= 0.4f;
+      currentX += spaceW;
+      cursor++;
+      continue;
+    }
+
     if (text[cursor] == '<') {
       size_t start = cursor;
       if (start + 6 < text.length()) {
@@ -457,19 +476,20 @@ void drawRichText(float x, float y, float z, float scaleX, float scaleY,
               EmojiManager::EmojiInfo info =
                   EmojiManager::getInstance().getEmojiInfo(id);
               float emojiSize = 28.0f * scaleY;
+              float elementW = emojiSize + emojiSpacing;
+
+              if (maxWidth > 0.0f && currentX + elementW > startX + maxWidth) {
+                y += lineHeight;
+                currentX = startX;
+              }
 
               if (info.tex) {
                 float uMax = (float)info.originalW / info.tex->width;
                 float vMax = (float)info.originalH / info.tex->height;
 
                 Tex3DS_SubTexture subtex = {
-                    (u16)info.originalW, // width
-                    (u16)info.originalH, // height
-                    0.0f,                // left
-                    1.0f,                // top
-                    uMax,                // right
-                    1.0f - vMax          // bottom
-                };
+                    (u16)info.originalW, (u16)info.originalH, 0.0f, 1.0f, uMax,
+                    1.0f - vMax};
 
                 const C2D_Image img = {info.tex, &subtex};
                 C2D_DrawImageAt(img, currentX, y + 1.0f, z, nullptr,
@@ -477,18 +497,13 @@ void drawRichText(float x, float y, float z, float scaleX, float scaleY,
                                 emojiSize / info.originalH);
               } else {
                 EmojiManager::getInstance().prefetchEmoji(id);
-
-                std::string name =
-                    text.substr(start + (isAnimated ? 3 : 2),
-                                secondColon - (start + (isAnimated ? 3 : 2)));
-                std::string fallback = ":" + name + ":";
-                drawText(currentX, y, z, scaleX, scaleY, color, fallback);
-
-                currentX += measureText(fallback, scaleX, scaleY) -
-                            (emojiSize + (2.0f * scaleX));
+                float pad = 2.0f * scaleX;
+                drawRoundedRect(currentX + pad, y + pad + 2.0f, z,
+                                emojiSize - pad * 2, emojiSize - pad * 2, 4.0f,
+                                ScreenManager::colorHeaderGlass());
               }
 
-              currentX += emojiSize + (2.0f * scaleX);
+              currentX += elementW;
               cursor = closeBracket + 1;
               continue;
             }
@@ -507,6 +522,12 @@ void drawRichText(float x, float y, float z, float scaleX, float scaleY,
       EmojiManager::EmojiInfo info =
           EmojiManager::getInstance().getTwemojiInfo(hex);
       float emojiSize = 28.0f * scaleY;
+      float elementW = emojiSize + emojiSpacing;
+
+      if (maxWidth > 0.0f && currentX + elementW > startX + maxWidth) {
+        y += lineHeight;
+        currentX = startX;
+      }
 
       if (info.tex) {
         float uMax = (float)info.originalW / info.tex->width;
@@ -517,7 +538,7 @@ void drawRichText(float x, float y, float z, float scaleX, float scaleY,
         const C2D_Image img = {info.tex, &subtex};
         C2D_DrawImageAt(img, currentX, y + 1.0f, z, nullptr,
                         emojiSize / info.originalW, emojiSize / info.originalH);
-        currentX += emojiSize + (2.0f * scaleX);
+        currentX += elementW;
       } else {
         std::string clean = Utils::Utf8::sanitizeText(sequence);
         drawText(currentX, y, z, scaleX, scaleY, color, clean);
@@ -529,6 +550,8 @@ void drawRichText(float x, float y, float z, float scaleX, float scaleY,
 
     size_t end = cursor;
     while (end < text.length()) {
+      if (text[end] == '\n')
+        break;
       if (text[end] == '<') {
         if (end + 6 < text.length()) {
           bool isAnimated = (text[end + 1] == 'a');
@@ -553,15 +576,31 @@ void drawRichText(float x, float y, float z, float scaleX, float scaleY,
 
     if (end > cursor) {
       std::string segment = text.substr(cursor, end - cursor);
+
+      float segW = measureText(segment, scaleX, scaleY);
+      if (maxWidth > 0.0f && currentX + segW > startX + maxWidth &&
+          currentX > startX) {
+        y += lineHeight;
+        currentX = startX;
+      }
+
       drawText(currentX, y, z, scaleX, scaleY, color, segment);
-      currentX += measureText(segment, scaleX, scaleY);
+      currentX += segW;
       cursor = end;
     } else if (cursor < text.length()) {
       size_t nextC = cursor;
       Utils::Utf8::decodeNext(text, nextC);
       std::string segment = text.substr(cursor, nextC - cursor);
+      float segW = measureText(segment, scaleX, scaleY);
+
+      if (maxWidth > 0.0f && currentX + segW > startX + maxWidth &&
+          currentX > startX) {
+        y += lineHeight;
+        currentX = startX;
+      }
+
       drawText(currentX, y, z, scaleX, scaleY, color, segment);
-      currentX += measureText(segment, scaleX, scaleY);
+      currentX += segW;
       cursor = nextC;
     }
   }
@@ -576,16 +615,43 @@ void drawCenteredRichText(float y, float z, float scaleX, float scaleY,
 }
 
 float measureRichTextImpl(const std::string &rawText, float scaleX,
-                          float scaleY, bool unicodeOnly) {
+                          float scaleY, bool unicodeOnly, float maxWidth,
+                          float *outHeight, float *outLastWidth) {
   std::string text = Utils::Utf8::sanitizeText(rawText);
 
-  if (!layoutTextBuf || text.empty())
+  if (!layoutTextBuf || text.empty()) {
+    if (outHeight)
+      *outHeight = 0.0f;
+    if (outLastWidth)
+      *outLastWidth = 0.0f;
     return 0.0f;
+  }
 
   size_t cursor = 0;
   float currentX = 0;
+  float maxW = 0;
+  float emojiSpacing = 0.0f;
+  float lineHeight = 30.0f * scaleY;
+  float currentY = lineHeight;
 
   while (cursor < text.length()) {
+    if (text[cursor] == '\n') {
+      maxW = std::max(maxW, currentX);
+      currentX = 0;
+      currentY += lineHeight;
+      cursor++;
+      continue;
+    }
+
+    if (text[cursor] == ' ') {
+      float spaceW = measureText(" ", scaleX, scaleY);
+      if (scaleX > 0.5f)
+        spaceW *= 0.4f;
+      currentX += spaceW;
+      cursor++;
+      continue;
+    }
+
     if (!unicodeOnly && text[cursor] == '<') {
       size_t start = cursor;
       if (start + 6 < text.length()) {
@@ -596,7 +662,14 @@ float measureRichTextImpl(const std::string &rawText, float scaleX,
             size_t closeBracket = text.find('>', secondColon);
             if (closeBracket != std::string::npos) {
               float emojiSize = 28.0f * scaleY;
-              currentX += emojiSize + (2.0f * scaleX);
+              float elementW = emojiSize + emojiSpacing;
+              if (maxWidth > 0.0f && currentX + elementW > maxWidth &&
+                  currentX > 0) {
+                maxW = std::max(maxW, currentX);
+                currentX = 0;
+                currentY += lineHeight;
+              }
+              currentX += elementW;
               cursor = closeBracket + 1;
               continue;
             }
@@ -610,26 +683,24 @@ float measureRichTextImpl(const std::string &rawText, float scaleX,
 
     if (Utils::Utf8::isEmoji(firstCp)) {
       size_t seqCursor = cursor;
-      std::string sequence = Utils::Utf8::getEmojiSequence(text, seqCursor);
-      std::string hex = MessageUtils::getEmojiFilename(sequence);
-      EmojiManager::EmojiInfo info =
-          EmojiManager::getInstance().getTwemojiInfo(hex);
+      Utils::Utf8::getEmojiSequence(text, seqCursor);
       float emojiSize = 28.0f * scaleY;
-
-      if (info.tex) {
-        currentX += emojiSize + (2.0f * scaleX);
-      } else {
-        std::string clean = Utils::Utf8::sanitizeText(sequence);
-        currentX += measureText(clean, scaleX, scaleY);
+      float elementW = emojiSize + emojiSpacing;
+      if (maxWidth > 0.0f && currentX + elementW > maxWidth && currentX > 0) {
+        maxW = std::max(maxW, currentX);
+        currentX = 0;
+        currentY += lineHeight;
       }
+      currentX += elementW;
       cursor = seqCursor;
       continue;
     }
 
     size_t end = cursor;
     while (end < text.length()) {
+      if (text[end] == '\n')
+        break;
       if (!unicodeOnly && text[end] == '<') {
-        // Check if this looks like a custom emoji
         if (end + 6 < text.length()) {
           bool isAnimated = (text[end + 1] == 'a');
           if (text[end + 1] == ':' || isAnimated) {
@@ -653,22 +724,40 @@ float measureRichTextImpl(const std::string &rawText, float scaleX,
 
     if (end > cursor) {
       std::string segment = text.substr(cursor, end - cursor);
-      currentX += measureText(segment, scaleX, scaleY);
+      float segW = measureText(segment, scaleX, scaleY);
+      if (maxWidth > 0.0f && currentX + segW > maxWidth && currentX > 0) {
+        maxW = std::max(maxW, currentX);
+        currentX = 0;
+        currentY += lineHeight;
+      }
+      currentX += segW;
       cursor = end;
     } else if (cursor < text.length()) {
       size_t nextC = cursor;
       Utils::Utf8::decodeNext(text, nextC);
       std::string segment = text.substr(cursor, nextC - cursor);
-      currentX += measureText(segment, scaleX, scaleY);
+      float segW = measureText(segment, scaleX, scaleY);
+      if (maxWidth > 0.0f && currentX + segW > maxWidth && currentX > 0) {
+        maxW = std::max(maxW, currentX);
+        currentX = 0;
+        currentY += lineHeight;
+      }
+      currentX += segW;
       cursor = nextC;
     }
   }
 
-  return currentX;
+  if (outHeight)
+    *outHeight = currentY;
+  if (outLastWidth)
+    *outLastWidth = currentX;
+  return std::max(maxW, currentX);
 }
 
-float measureRichText(const std::string &rawText, float scaleX, float scaleY) {
-  return measureRichTextImpl(rawText, scaleX, scaleY, false);
+float measureRichText(const std::string &rawText, float scaleX, float scaleY,
+                      float maxWidth, float *outHeight, float *outLastWidth) {
+  return measureRichTextImpl(rawText, scaleX, scaleY, false, maxWidth,
+                             outHeight, outLastWidth);
 }
 
 std::string getTruncatedText(const std::string &text, float maxWidth,
@@ -784,7 +873,7 @@ void drawRichTextUnicodeOnly(float x, float y, float z, float scaleX,
         const C2D_Image img = {info.tex, &subtex};
         C2D_DrawImageAt(img, currentX, y + 1.0f, z, nullptr,
                         emojiSize / info.originalW, emojiSize / info.originalH);
-        currentX += emojiSize + (2.0f * scaleX);
+        currentX += emojiSize + (0.0f * scaleX);
       } else {
         std::string clean = Utils::Utf8::sanitizeText(sequence);
         drawText(currentX, y, z, scaleX, scaleY, color, clean);
@@ -820,7 +909,8 @@ void drawRichTextUnicodeOnly(float x, float y, float z, float scaleX,
 
 float measureRichTextUnicodeOnly(const std::string &rawText, float scaleX,
                                  float scaleY) {
-  return measureRichTextImpl(rawText, scaleX, scaleY, true);
+  return measureRichTextImpl(rawText, scaleX, scaleY, true, 0.0f, nullptr,
+                             nullptr);
 }
 
 u32 ScreenManager::colorBackground() {
