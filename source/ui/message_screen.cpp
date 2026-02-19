@@ -1607,8 +1607,10 @@ void MessageScreen::renderTop(C3D_RenderTarget *target) {
         C2D_DrawRectSolid(10.0f, lineY, 0.7f, 130.0f, 1.0f, lineColor);
         C2D_DrawRectSolid(260.0f, lineY, 0.7f, 130.0f, 1.0f, lineColor);
 
-        drawCenteredRichText(dateY, 0.7f, 0.4f, 0.4f,
-                             ScreenManager::colorTextMuted(), currDate, 400.0f);
+        float dateW = UI::measureText(currDate, 0.4f, 0.4f);
+        float dateX = (400.0f - dateW) / 2.0f;
+        drawText(dateX, dateY, 0.7f, 0.4f, 0.4f,
+                 ScreenManager::colorTextMuted(), currDate);
       }
     }
 
