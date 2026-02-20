@@ -530,7 +530,7 @@ void DiscordClient::handleReady(const rapidjson::Value &d) {
       const rapidjson::Value &gObj = guildsArr[i];
       Guild guild;
       parseGuildObject(gObj, guild, newCurrentUser.id);
-      newGuilds.push_back(guild);
+      newGuilds.push_back(std::move(guild));
     }
   }
 
@@ -541,7 +541,7 @@ void DiscordClient::handleReady(const rapidjson::Value &d) {
     for (rapidjson::SizeType i = 0; i < pcs.Size(); i++) {
       Channel channel;
       parseChannelObject(pcs[i], channel);
-      newPrivateChannels.push_back(channel);
+      newPrivateChannels.push_back(std::move(channel));
     }
   }
 
@@ -638,20 +638,20 @@ void DiscordClient::handleGuildCreate(const rapidjson::Value &d) {
       g.icon = guild.icon;
       g.ownerId = guild.ownerId;
       if (!guild.roles.empty())
-        g.roles = guild.roles;
+        g.roles = std::move(guild.roles);
       if (!guild.members.empty())
-        g.members = guild.members;
+        g.members = std::move(guild.members);
       if (!guild.myRoles.empty())
-        g.myRoles = guild.myRoles;
-      g.channels = guild.channels;
+        g.myRoles = std::move(guild.myRoles);
+      g.channels = std::move(guild.channels);
       Logger::log("Updated existing guild %s (merged)", g.name.c_str());
       found = true;
       break;
     }
   }
   if (!found) {
-    guilds.push_back(guild);
-    Logger::log("Added new guild %s", guild.name.c_str());
+    guilds.push_back(std::move(guild));
+    Logger::log("Added new guild %s", guilds.back().name.c_str());
   }
 }
 
@@ -2409,7 +2409,7 @@ void DiscordClient::parseGuildObject(const rapidjson::Value &gObj, Guild &guild,
       role.color = Utils::Json::getInt(roleObj, "color");
       role.position = Utils::Json::getInt(roleObj, "position");
       role.permissions = Utils::Json::getUint64(roleObj, "permissions");
-      guild.roles.push_back(role);
+      guild.roles.push_back(std::move(role));
     }
   }
 
@@ -2434,7 +2434,7 @@ void DiscordClient::parseGuildObject(const rapidjson::Value &gObj, Guild &guild,
           }
         }
 
-        guild.members.push_back(member);
+        guild.members.push_back(std::move(member));
 
         if (memberId == userId) {
           guild.myRoles = member.role_ids;
@@ -2450,7 +2450,7 @@ void DiscordClient::parseGuildObject(const rapidjson::Value &gObj, Guild &guild,
     for (rapidjson::SizeType k = 0; k < channels.Size(); k++) {
       Channel channel;
       parseChannelObject(channels[k], channel);
-      guild.channels.push_back(channel);
+      guild.channels.push_back(std::move(channel));
     }
 
     for (auto &channel : guild.channels) {
@@ -2489,7 +2489,7 @@ void DiscordClient::parseChannelObject(const rapidjson::Value &cObj,
       u.global_name = Utils::Json::getString(userVal, "global_name");
       u.avatar = Utils::Json::getString(userVal, "avatar");
       u.discriminator = Utils::Json::getString(userVal, "discriminator");
-      channel.recipients.push_back(u);
+      channel.recipients.push_back(std::move(u));
 
       if (!generatedName.empty())
         generatedName += ", ";
@@ -2518,7 +2518,7 @@ void DiscordClient::parseOverwrites(const rapidjson::Value &ows,
     overwrite.type = Utils::Json::getInt(ow, "type");
     overwrite.allow = Utils::Json::getUint64(ow, "allow");
     overwrite.deny = Utils::Json::getUint64(ow, "deny");
-    overwrites.push_back(overwrite);
+    overwrites.push_back(std::move(overwrite));
   }
 }
 
