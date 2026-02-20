@@ -719,7 +719,7 @@ void MessageScreen::update() {
 }
 
 float MessageScreen::calculateMessageHeight(const Discord::Message &msg,
-                                            bool showHeader) {
+                                            bool showHeader, float maxWidth) {
   float topMargin = showHeader ? 4.0f : 0.0f;
   float totalH = 0.0f;
 
@@ -754,7 +754,8 @@ float MessageScreen::calculateMessageHeight(const Discord::Message &msg,
 
     float h = 0;
     float lastLineWidth = 0;
-    UI::measureRichText(content, scale, scale, 320.0f, &h, &lastLineWidth);
+    UI::measureRichText(content, scale, scale, maxWidth - 42.0f - 10.0f, &h,
+                        &lastLineWidth);
     totalH += h;
 
     if (!msg.edited_timestamp.empty()) {
@@ -763,7 +764,8 @@ float MessageScreen::calculateMessageHeight(const Discord::Message &msg,
       float editedWidth = UI::measureText(editedText, editedScale, editedScale);
       float padding = 4.0f;
 
-      if (!isJumbo && (lastLineWidth + padding + editedWidth <= 320.0f)) {
+      if (!isJumbo &&
+          (lastLineWidth + padding + editedWidth <= maxWidth - 42.0f - 10.0f)) {
       } else {
         totalH += 10.0f;
       }
@@ -827,7 +829,7 @@ float MessageScreen::calculateMessageHeight(const Discord::Message &msg,
     float reactionX = textOffsetX;
     float rowHeight = 21.0f;
     float gap = 4.0f;
-    float wrapBound = 320.0f;
+    float wrapBound = maxWidth - textOffsetX - 10.0f;
     float currentReactionsH = rowHeight;
 
     for (const auto &react : msg.reactions) {
@@ -856,7 +858,7 @@ float MessageScreen::calculateMessageHeight(const Discord::Message &msg,
 }
 
 float MessageScreen::calculateMessageHeight(const Discord::Message &msg) {
-  return calculateMessageHeight(msg, true);
+  return calculateMessageHeight(msg, true, 400.0f);
 }
 
 float MessageScreen::drawForumMessage(const Discord::Message &msg, float y,
@@ -1148,7 +1150,7 @@ float MessageScreen::drawAuthorHeader(const Discord::Message &msg, float x,
 }
 
 float MessageScreen::drawMessageContent(const Discord::Message &msg, float x,
-                                        float y) {
+                                        float y, float maxWidth) {
   std::string content = msg.content;
   if (content.empty())
     return y;
@@ -1160,9 +1162,9 @@ float MessageScreen::drawMessageContent(const Discord::Message &msg, float x,
 
   float h = 0;
   float lastLineWidth = 0;
-  UI::measureRichText(content, scale, scale, 320.0f, &h, &lastLineWidth);
+  UI::measureRichText(content, scale, scale, maxWidth, &h, &lastLineWidth);
   UI::drawRichText(x, y, 0.5f, scale, scale, ScreenManager::colorText(),
-                   content, 320.0f);
+                   content, maxWidth);
   float newY = y + h;
 
   if (!msg.edited_timestamp.empty()) {
@@ -1172,7 +1174,7 @@ float MessageScreen::drawMessageContent(const Discord::Message &msg, float x,
     float padding = 4.0f;
     float currentLineHeight = scale * 30.0f;
 
-    if (!isJumbo && (lastLineWidth + padding + editedWidth <= 320.0f)) {
+    if (!isJumbo && (lastLineWidth + padding + editedWidth <= maxWidth)) {
       drawText(x + lastLineWidth + padding, newY - currentLineHeight + 1.0f,
                0.5f, editedScale, editedScale, ScreenManager::colorTextMuted(),
                editedText);
@@ -1334,7 +1336,7 @@ float MessageScreen::drawStickers(const Discord::Message &msg, float x,
 }
 
 float MessageScreen::drawReactions(const Discord::Message &msg, float x,
-                                   float y, bool isSelected) {
+                                   float y, bool isSelected, float maxWidth) {
   if (msg.reactions.empty())
     return y;
 
@@ -1358,7 +1360,7 @@ float MessageScreen::drawReactions(const Discord::Message &msg, float x,
     float boxPad = 6.0f;
     float boxW = emojiW + countW + boxPad + 4.0f;
 
-    if (reactionX + boxW > x + 320.0f) {
+    if (reactionX + boxW > x + maxWidth) {
       reactionX = x;
       newY += rowHeight + gap;
     }
@@ -1461,7 +1463,7 @@ float MessageScreen::drawReactions(const Discord::Message &msg, float x,
 float MessageScreen::drawMessage(const Discord::Message &msg, float y,
                                  float maxWidth, bool isSelected,
                                  bool showHeader) {
-  float height = calculateMessageHeight(msg, showHeader);
+  float height = calculateMessageHeight(msg, showHeader, maxWidth);
   float topMargin = showHeader ? 4.0f : 0.0f;
   const float textOffsetX = 42.0f;
 
@@ -1503,19 +1505,21 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y,
              ScreenManager::colorTextMuted(), time);
   }
 
-  contentY = drawMessageContent(msg, textOffsetX, contentY);
+  contentY = drawMessageContent(msg, textOffsetX, contentY,
+                                maxWidth - textOffsetX - 10.0f);
 
   if (!msg.embeds.empty()) {
     for (const auto &embed : msg.embeds) {
       contentY += renderEmbed(embed, textOffsetX, contentY,
-                              400.0f - textOffsetX - 10.0f);
+                              maxWidth - textOffsetX - 10.0f);
       contentY += 6.0f;
     }
   }
 
   contentY = drawAttachments(msg, textOffsetX, contentY);
   contentY = drawStickers(msg, textOffsetX, contentY);
-  contentY = drawReactions(msg, textOffsetX, contentY, isSelected);
+  contentY = drawReactions(msg, textOffsetX, contentY, isSelected,
+                           maxWidth - textOffsetX - 10.0f);
 
   if (showHeader) {
     if (contentY < avatarTopY + 28.0f)
@@ -2040,7 +2044,7 @@ void MessageScreen::rebuildLayoutCache() {
     }
 
     messagePositions.push_back(y);
-    float h = calculateMessageHeight(this->messages[i], showHeader);
+    float h = calculateMessageHeight(this->messages[i], showHeader, 400.0f);
     messageHeights.push_back(h);
 
     y += h;

@@ -550,7 +550,7 @@ void drawRichText(float x, float y, float z, float scaleX, float scaleY,
 
     size_t end = cursor;
     while (end < text.length()) {
-      if (text[end] == '\n')
+      if (text[end] == '\n' || text[end] == ' ')
         break;
       if (text[end] == '<') {
         if (end + 6 < text.length()) {
@@ -576,12 +576,34 @@ void drawRichText(float x, float y, float z, float scaleX, float scaleY,
 
     if (end > cursor) {
       std::string segment = text.substr(cursor, end - cursor);
-
       float segW = measureText(segment, scaleX, scaleY);
-      if (maxWidth > 0.0f && currentX + segW > startX + maxWidth &&
-          currentX > startX) {
-        y += lineHeight;
-        currentX = startX;
+
+      if (maxWidth > 0.0f && currentX + segW > startX + maxWidth) {
+        if (currentX > startX) {
+          y += lineHeight;
+          currentX = startX;
+        }
+
+        if (segW > maxWidth) {
+          size_t segCursor = 0;
+          while (segCursor < segment.length()) {
+            size_t charNext = segCursor;
+            Utils::Utf8::decodeNext(segment, charNext);
+            std::string ch = segment.substr(segCursor, charNext - segCursor);
+            float chW = measureText(ch, scaleX, scaleY);
+
+            if (currentX > startX && currentX + chW > startX + maxWidth) {
+              y += lineHeight;
+              currentX = startX;
+            }
+
+            drawText(currentX, y, z, scaleX, scaleY, color, ch);
+            currentX += chW;
+            segCursor = charNext;
+          }
+          cursor = end;
+          continue;
+        }
       }
 
       drawText(currentX, y, z, scaleX, scaleY, color, segment);
@@ -698,7 +720,7 @@ float measureRichTextImpl(const std::string &rawText, float scaleX,
 
     size_t end = cursor;
     while (end < text.length()) {
-      if (text[end] == '\n')
+      if (text[end] == '\n' || text[end] == ' ')
         break;
       if (!unicodeOnly && text[end] == '<') {
         if (end + 6 < text.length()) {
@@ -725,10 +747,33 @@ float measureRichTextImpl(const std::string &rawText, float scaleX,
     if (end > cursor) {
       std::string segment = text.substr(cursor, end - cursor);
       float segW = measureText(segment, scaleX, scaleY);
-      if (maxWidth > 0.0f && currentX + segW > maxWidth && currentX > 0) {
-        maxW = std::max(maxW, currentX);
-        currentX = 0;
-        currentY += lineHeight;
+      if (maxWidth > 0.0f && currentX + segW > maxWidth) {
+        if (currentX > 0) {
+          maxW = std::max(maxW, currentX);
+          currentX = 0;
+          currentY += lineHeight;
+        }
+
+        if (segW > maxWidth) {
+          size_t segCursor = 0;
+          while (segCursor < segment.length()) {
+            size_t charNext = segCursor;
+            Utils::Utf8::decodeNext(segment, charNext);
+            std::string ch = segment.substr(segCursor, charNext - segCursor);
+            float chW = measureText(ch, scaleX, scaleY);
+
+            if (currentX > 0 && currentX + chW > maxWidth) {
+              maxW = std::max(maxW, currentX);
+              currentX = 0;
+              currentY += lineHeight;
+            }
+
+            currentX += chW;
+            segCursor = charNext;
+          }
+          cursor = end;
+          continue;
+        }
       }
       currentX += segW;
       cursor = end;
