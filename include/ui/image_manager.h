@@ -43,6 +43,7 @@ public:
   void clear();
   void clearFailed(const std::string &url);
   void clearRemote();
+  uint32_t getGeneration() const { return generation; }
 
 private:
   ImageManager() = default;
@@ -79,6 +80,7 @@ private:
   std::atomic<bool> stopDecoder{false};
 
   std::atomic<int> currentSessionId{0};
+  std::atomic<uint32_t> generation{0};
 
   static constexpr size_t MAX_TEXTURES = 15;
   void touchImage(const std::string &url);

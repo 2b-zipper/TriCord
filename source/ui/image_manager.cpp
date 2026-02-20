@@ -355,12 +355,14 @@ void ImageManager::update() {
         std::lock_guard<std::mutex> lock(cacheMutex);
         textureCache[p.url] = info;
         touchImage(p.url);
+        generation++;
       } else {
         free(tex);
         std::lock_guard<std::mutex> lock(cacheMutex);
         ImageInfo info;
         info.failed = true;
         textureCache[p.url] = info;
+        generation++;
       }
       free(p.tiled.pixels);
     }
@@ -369,6 +371,7 @@ void ImageManager::update() {
     ImageInfo info;
     info.failed = true;
     textureCache[p.url] = info;
+    generation++;
   }
 }
 

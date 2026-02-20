@@ -40,6 +40,7 @@ private:
   int newMessageCount;
   bool isForumView;
   bool hasMoreHistory;
+  uint32_t lastImageGeneration;
 
   int keyRepeatTimer;
   static const int REPEAT_INITIAL_DELAY = 25;
@@ -74,8 +75,10 @@ private:
                          bool showHeader);
   float drawMessageContent(const Discord::Message &msg, float x, float y,
                            float maxWidth);
-  float drawAttachments(const Discord::Message &msg, float x, float y);
-  float drawStickers(const Discord::Message &msg, float x, float y);
+  float drawAttachments(const Discord::Message &msg, float x, float y,
+                        float maxWidth);
+  float drawStickers(const Discord::Message &msg, float x, float y,
+                     float maxWidth);
   float drawReactions(const Discord::Message &msg, float x, float y,
                       bool isSelected, float maxWidth);
   float calculateMessageHeight(const Discord::Message &msg, bool showHeader,
