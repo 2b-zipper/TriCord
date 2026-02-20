@@ -85,7 +85,9 @@ Config: `sdmc:/3ds/TriCord/config.json`
 ## License
 This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
 
-## Acknowledgments
+## Credits
+- [2b-zipper](https://github.com/2b-zipper) for the main development
+- [Str4ky](https://github.com/Str4ky) for the French translation
 - [Discord Userdoccers](https://github.com/discord-userdoccers/discord-userdoccers) for the documentation of the Discord API
 
 ## Support

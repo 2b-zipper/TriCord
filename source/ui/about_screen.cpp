@@ -86,21 +86,26 @@ void AboutScreen::renderBottom(C3D_RenderTarget *target) {
     y += 14.0f;
   };
 
-  drawInfo("Developer:", "2b-zipper");
+  drawText(x, y, 0.5f, 0.45f, 0.45f, ScreenManager::colorTextMuted(),
+           "Credits:");
+  y += 14.0f;
+
+  float subX = x + 10.0f;
+  drawText(subX, y, 0.5f, 0.38f, 0.38f, ScreenManager::colorText(),
+           "2b-zipper (Main Development)");
+  y += 12.0f;
+  drawText(subX, y, 0.5f, 0.38f, 0.38f, ScreenManager::colorText(),
+           "Str4ky (French Translation)");
+  y += 12.0f;
+  drawText(subX, y, 0.5f, 0.38f, 0.38f, ScreenManager::colorText(),
+           "Discord Userdoccers (API Docs)");
+
+  y += 16.0f;
   drawInfo("Libraries:", "libctru, citro3d, citro2d, libcurl, mbedtls, zlib");
   drawRichText(x + 70.0f, y, 0.5f, 0.4f, 0.4f, ScreenManager::colorWhite(),
                "RapidJSON, stb_image, qrcodegen, Twemoji");
   y += 14.0f;
   drawInfo("License:", "GNU GPL v3.0");
-
-  y += 8.0f;
-  drawText(x, y, 0.5f, 0.45f, 0.45f, ScreenManager::colorTextMuted(),
-           "Special Thanks:");
-  y += 14.0f;
-
-  float subX = x + 10.0f;
-  drawText(subX, y, 0.5f, 0.38f, 0.38f, ScreenManager::colorText(),
-           "Discord Userdoccers (API Docs)");
 
   y += 18.0f;
   drawText(x, y, 0.5f, 0.45f, 0.45f, ScreenManager::colorTextMuted(),
