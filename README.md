@@ -10,8 +10,8 @@ Discord client for Nintendo 3DS.
 > **This project is developed for educational purposes only.**
 > This is an unofficial Discord client and is not affiliated with or endorsed by Discord Inc.
 
-This software is provided **"as is"**, and you use it at your own risk. The developers assume no responsibility for:
-* Any damages or data loss.
+This software is provided **"as is"**, and you use it at your own risk. The use of this application is entirely the user's own responsibility. The developers assume no responsibility for:
+* Any damages, data loss, or account-related issues.
 * Violations of Discord's **Terms of Service (ToS)** resulting from the use of this software.
 
 ## Screenshots
