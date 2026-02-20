@@ -1,9 +1,12 @@
 #include "discord/remote_auth.h"
+#include "core/config.h"
 #include "core/i18n.h"
 #include "log.h"
 #include "utils/base64_utils.h"
+#include "utils/file_utils.h"
 #include "utils/json_utils.h"
 #include <3ds.h>
+#include <sys/stat.h>
 
 #include <cstring>
 #include <mbedtls/base64.h>
@@ -58,20 +61,24 @@ bool RemoteAuth::start() {
 }
 
 void RemoteAuth::prepare() {
-  if (isInitializing || initSuccess) {
-    Logger::log("[RemoteAuth] Setup already in progress or completed");
+  if (isInitializing) {
+    Logger::log("[RemoteAuth] Setup already in progress");
     return;
   }
 
-  Logger::log("[RemoteAuth] Loading RSA keys...");
+  Logger::log("[RemoteAuth] Preparing RSA keys (Background)...");
   isInitializing = true;
   initSuccess = false;
 
-  runInit();
+  if (workerThread.joinable()) {
+    workerThread.join();
+  }
+
+  workerThread = std::thread([this]() { runInit(); });
 }
 
 void RemoteAuth::runInit() {
-  Logger::log("[RemoteAuth] Init started (Synchronous)");
+  Logger::log("[RemoteAuth] Init started (Background)");
 
   if (initRSA()) {
     Logger::log("[RemoteAuth] RSA initialization successful");
@@ -325,7 +332,7 @@ void RemoteAuth::setState(RemoteAuthState newState, const std::string &info) {
 }
 
 bool RemoteAuth::initRSA() {
-  Logger::log("[RemoteAuth] Initializing RSA-2048 (Static)");
+  Logger::log("[RemoteAuth] Initializing unique RSA-2048");
 
   rsaContext = new mbedtls_pk_context();
   ctrDrbgContext = new mbedtls_ctr_drbg_context();
@@ -341,52 +348,32 @@ bool RemoteAuth::initRSA() {
   mbedtls_entropy_init(entropy);
 
   const char *pers = "discord_remote_auth";
+  std::string dynamic_pers = pers + std::to_string(osGetTime());
+
   int ret = mbedtls_ctr_drbg_seed(ctr_drbg, mbedtls_entropy_func, entropy,
-                                  (const unsigned char *)pers, strlen(pers));
+                                  (const unsigned char *)dynamic_pers.c_str(),
+                                  dynamic_pers.length());
   if (ret != 0) {
     cleanupRSA();
     return false;
   }
 
-  // NOTE: This RSA-2048 key is hardcoded rather than dynamically generated.
-  // Initially, we tried generating keys on-the-fly, but key generation takes
-  // several seconds on 3DS hardware, resulting in poor UX and unacceptable
-  // response times. While using a static key is not ideal from a security
-  // perspective, it's an acceptable trade-off for this use case.
-  const char *key_pem =
-      "-----BEGIN PRIVATE KEY-----\n"
-      "MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQDWYlryvcsyq+R1\n"
-      "rkGZ2P3Yb0TV2BdaELaBjg5MP+limb4k/UBCRtvTPEaOIsrC4wF1+SRJUPnw2omw\n"
-      "r9BLj83WAm9Jd4mjPX/Scg0kmf1Bu4akZ9gZQRSnBl9MytEBTXCNkgK6u6nkEGRG\n"
-      "bv1AG0MGjdrUrFfT3r/Zkme4vzh9Fdeb+PO7jiX/POsILhrR3NB8PCMiwGZSsfC7\n"
-      "eHS01qxvd656wZvtR0JOSa150o0bDCdnC946XShgrLFuVLitblXFN0rHGzem2lC8\n"
-      "qvjl7PGYg2zxmllEuajTG96Gt2grshz89o8JrJwRsy6UzrqxGILYDPnS5BdFNJUU\n"
-      "+dViBOSLAgMBAAECggEACxAsTVaKA+Vm9sO1UvEluGOVk8uA+P7fzDO+fSTXMGVq\n"
-      "sJH5HPJ3KaF0qqUU/ZWlX6cpvjbVjx5X+Kw5/YxAPQkHIS1wBuKHlB6amwbvUNMS\n"
-      "ka1iM3tuS2hCxr24p26NnmCoj2Zb0A8gfZoAq6w8ezwazNrP9XkLQXkSrTABBENi\n"
-      "BWv5lXY+I1Rc38drUzQ6Mur+dGHzc1QORtgMpzZq6cDYXVY1C5NnnTxzBvdVtVjK\n"
-      "lGAX6HJMlRt6enuQOPL7nJlHO5pK0h6o4CBc0pW8HuEKuJdtqPpHtep0iDyAuvhs\n"
-      "pt7to6lAkd+r/VKsklnI2YL1jeioG5ldwZG0SyG2UQKBgQD/tZzNE6VMu2/2fS8S\n"
-      "qkG1UVp2jX1FroJ9S2hOsuL3ML5cq4zVfSeUhAHJlhbyS3BB19yfZD0yvJ/4+BRf\n"
-      "Qpdz5eeOzi88NlaEORR9EyJo6KvmFyEHa++ZwP8D+U3rhS/Yw6+Sk4+gYW+qEBSm\n"
-      "QRGIvuJrMBPFZPS/Ubmeft8ZLwKBgQDWoLiS8TIADZCvzSGd1Psh5LKjssCkZ6q2\n"
-      "SK1UPMLzdAgIhePndRXmXIS6mrxPhMjdcoVdYFP1r4z6n0ZZ++5OJcqs6wenidYU\n"
-      "XVgKDtnFWQHyN2p26BWM3FtYAIqRbkGAE3YuYBgfB0tmd876xnGdpwhp7xkjE8L8\n"
-      "wBzMsygbZQKBgAmrJkiiy4dBNxSM2zDLezyN3OvKocf2tzxhk4oWPXq3Pxtl6SdR\n"
-      "WiPFcgPbRvbWX2I99TuZoK7AbxQM3UhUzkE1mjHOHf8a1t6dAedQx+ZLleRXT4pm\n"
-      "TGL15y6RSJ71JD//9i2GotGfnYdCoGVA5JbVEN6YrMaz8IUjY+9YQLtFAoGATqPz\n"
-      "HTwtEuHlitTBpYAdSEzwu5RKi7LEVSgKAlyFHgj8zIqqd+tpy89Ifsslholjw+gr\n"
-      "P4yFFvds04O6lkv+BDpKqdMwKc4SV8Hf+Ud5uZqkYOi3JLxi8QromTURkLnyXAhF\n"
-      "fDaPgAb/NJtfhnlhtd828QG/lx+tiUinBMX8QxUCgYBKAYqLyYw/zB8dE3iHyrIN\n"
-      "eY7uzpUQ7HBhQ0YKojIfBp4H1PMW/2ZjHweOCtNxFmdXdCFgLvAIltETz4oTn9yT\n"
-      "mBV+jHnIqvel0FOqLkWUY7C9SK/eL7d/hJn4EkFc5r2vs3L2hGu4LLOBBMjtNz9O\n"
-      "Gk9NhWwAseeesAcsbSmJLA==\n"
-      "-----END PRIVATE KEY-----";
+  bool generated = false;
 
-  ret = mbedtls_pk_parse_key(pk, (const unsigned char *)key_pem,
-                             strlen(key_pem) + 1, NULL, 0);
-  if (ret != 0) {
-    Logger::log("[RemoteAuth] Failed to parse hardcoded key: -0x%x", -ret);
+  Logger::log("[RemoteAuth] Generating new RSA-2048 key...");
+  ret = mbedtls_pk_setup(pk, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA));
+  if (ret == 0) {
+    ret = mbedtls_rsa_gen_key(mbedtls_pk_rsa(*pk), mbedtls_ctr_drbg_random,
+                              ctr_drbg, 2048, 65537);
+    if (ret == 0) {
+      Logger::log("[RemoteAuth] RSA key generation successful");
+      generated = true;
+    } else {
+      Logger::log("[RemoteAuth] RSA key generation failed: -0x%x", -ret);
+    }
+  }
+
+  if (!generated) {
     cleanupRSA();
     return false;
   }

@@ -6,6 +6,7 @@
 #include <atomic>
 #include <functional>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace Discord {
@@ -81,6 +82,7 @@ private:
   std::function<void(const RemoteAuthUser &)> onUserScanned;
   std::function<void(const std::string &)> onTokenReceived;
 
+  std::thread workerThread;
   void handleMessage(std::string &message);
   void sendHeartbeat();
   void setState(RemoteAuthState newState, const std::string &info = "");
