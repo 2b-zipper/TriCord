@@ -521,11 +521,8 @@ void DiscordClient::handleReady(const rapidjson::Value &d) {
               " (0/" + std::to_string(guildsArr.Size()) + ")...");
 
     for (rapidjson::SizeType i = 0; i < guildsArr.Size(); i++) {
-      if (i % 5 == 0) {
-        setStatus(Core::I18n::getInstance().get("login.status.loading_guilds") +
-                  " (" + std::to_string(i) + "/" +
-                  std::to_string(guildsArr.Size()) + ")...");
-      }
+      setStatus(Core::I18n::getInstance().get("login.status.loading_guilds") + " (" + std::to_string(i) + "/" +
+                std::to_string(guildsArr.Size()) + ")...");
 
       const rapidjson::Value &gObj = guildsArr[i];
       Guild guild;
@@ -535,6 +532,7 @@ void DiscordClient::handleReady(const rapidjson::Value &d) {
   }
 
   std::vector<Channel> newPrivateChannels;
+  setStatus(Core::I18n::getInstance().get("login.status.loading_direct_messages"));
   if (d.HasMember("private_channels") && d["private_channels"].IsArray()) {
     const rapidjson::Value &pcs = d["private_channels"];
     Logger::log("[Gateway] Parsing %u private channels...", pcs.Size());
@@ -545,7 +543,7 @@ void DiscordClient::handleReady(const rapidjson::Value &d) {
     }
   }
 
-  setStatus("Processing user settings...");
+  setStatus(Core::I18n::getInstance().get("login.status.processing_settings"));
   if (d.HasMember("user_settings") && d["user_settings"].IsObject()) {
     const rapidjson::Value &settings = d["user_settings"];
     if (settings.HasMember("guild_folders") &&
