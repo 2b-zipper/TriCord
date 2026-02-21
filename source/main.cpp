@@ -11,14 +11,15 @@
 
 #include <malloc.h>
 
+static const size_t SOC_SHAREDMEM_SIZE = 0x200000;
 static u32 *soc_sharedmem_ptr = NULL;
 
 int main(int argc, char **argv) {
   gfxInitDefault();
 
-  soc_sharedmem_ptr = (u32 *)memalign(0x1000, 0x200000);
+  soc_sharedmem_ptr = (u32 *)memalign(0x1000, SOC_SHAREDMEM_SIZE);
   if (soc_sharedmem_ptr) {
-    socInit(soc_sharedmem_ptr, 0x200000);
+    socInit(soc_sharedmem_ptr, SOC_SHAREDMEM_SIZE);
   }
 
   C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);

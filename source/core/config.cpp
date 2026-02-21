@@ -21,7 +21,8 @@
 
 Config::Config()
     : currentAccountIndex(-1), timezoneOffset(0), language("en"), themeType(0),
-      typingIndicatorEnabled(true), fileLoggingEnabled(false) {
+      typingIndicatorEnabled(true), fileLoggingEnabled(false),
+      disclaimerAccepted(false) {
   customTheme = getDarkPreset();
   customTheme.name = "Custom Theme";
 }
@@ -207,6 +208,10 @@ void Config::loadSettings() {
       if (doc.HasMember("file_logging") && doc["file_logging"].IsBool()) {
         fileLoggingEnabled = doc["file_logging"].GetBool();
       }
+      if (doc.HasMember("disclaimer_accepted") &&
+          doc["disclaimer_accepted"].IsBool()) {
+        disclaimerAccepted = doc["disclaimer_accepted"].GetBool();
+      }
     } else {
       saveSettings();
     }
@@ -233,6 +238,8 @@ void Config::saveSettings() {
   writer.Bool(typingIndicatorEnabled);
   writer.Key("file_logging");
   writer.Bool(fileLoggingEnabled);
+  writer.Key("disclaimer_accepted");
+  writer.Bool(disclaimerAccepted);
   writer.EndObject();
 
   std::string settingsPath = std::string(CONFIG_DIR_PATH) + "/settings.json";
@@ -242,6 +249,11 @@ void Config::saveSettings() {
 void Config::setFileLoggingEnabled(bool enabled) {
   fileLoggingEnabled = enabled;
   Logger::setFileLoggingEnabled(enabled);
+  saveSettings();
+}
+
+void Config::setDisclaimerAccepted(bool accepted) {
+  disclaimerAccepted = accepted;
   saveSettings();
 }
 

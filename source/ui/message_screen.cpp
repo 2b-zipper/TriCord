@@ -2081,7 +2081,6 @@ void MessageScreen::rebuildLayoutCache() {
       }
     }
 
-    // Proactive prefetch for reactions and content emojis
     for (const auto &react : this->messages[i].reactions) {
       if (!react.emoji.id.empty()) {
         EmojiManager::getInstance().prefetchEmoji(react.emoji.id);

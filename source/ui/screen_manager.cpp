@@ -5,6 +5,7 @@
 #include "discord/discord_client.h"
 #include "log.h"
 #include "ui/about_screen.h"
+#include "ui/disclaimer_screen.h"
 #include "ui/dm_screen.h"
 #include "ui/emoji_manager.h"
 #include "ui/forum_screen.h"
@@ -49,8 +50,10 @@ void ScreenManager::init() {
 
   Logger::log("[UI] Screen manager initialized");
 
-  if (Discord::DiscordClient::getInstance().getState() ==
-      Discord::ConnectionState::READY) {
+  if (!Config::getInstance().isDisclaimerAccepted()) {
+    setScreen(ScreenType::DISCLAIMER);
+  } else if (Discord::DiscordClient::getInstance().getState() ==
+             Discord::ConnectionState::READY) {
     setScreen(ScreenType::GUILD_LIST);
   } else {
     setScreen(ScreenType::LOGIN);
@@ -85,13 +88,15 @@ void ScreenManager::setScreen(ScreenType type) {
   }
 
   if (type == ScreenType::LOGIN || type == ScreenType::GUILD_LIST ||
-      type == ScreenType::ADD_ACCOUNT || type == ScreenType::DM_LIST) {
+      type == ScreenType::ADD_ACCOUNT || type == ScreenType::DM_LIST ||
+      type == ScreenType::DISCLAIMER) {
     screenHistory.clear();
   }
 
   currentType = type;
 
-  if (type == ScreenType::LOGIN || type == ScreenType::ADD_ACCOUNT) {
+  if (type == ScreenType::LOGIN || type == ScreenType::ADD_ACCOUNT ||
+      type == ScreenType::DISCLAIMER) {
     hamburgerMenu.reset();
   }
 
@@ -159,6 +164,9 @@ void ScreenManager::setScreen(ScreenType type) {
   case ScreenType::ABOUT:
     currentScreen = std::make_unique<AboutScreen>();
     break;
+  case ScreenType::DISCLAIMER:
+    currentScreen = std::make_unique<DisclaimerScreen>();
+    break;
   }
 
   if (currentScreen) {
@@ -209,14 +217,7 @@ void ScreenManager::update() {
 
   bool shouldBlockScreen = !hamburgerMenu.isClosed();
 
-  auto &client = Discord::DiscordClient::getInstance();
-  bool isConnecting =
-      (client.getState() == Discord::ConnectionState::CONNECTING ||
-       client.getState() == Discord::ConnectionState::AUTHENTICATING);
-  bool hideMenu = (currentType == ScreenType::LOGIN) ||
-                  (currentType == ScreenType::ADD_ACCOUNT && isConnecting);
-
-  if (!hideMenu) {
+  if (!isMenuHidden()) {
     if (kDown & KEY_SELECT) {
       hamburgerMenu.toggle();
       shouldBlockScreen = true;
@@ -266,14 +267,7 @@ void ScreenManager::render() {
     currentScreen->renderTop(topTarget);
   }
 
-  auto &client = Discord::DiscordClient::getInstance();
-  bool isConnecting =
-      (client.getState() == Discord::ConnectionState::CONNECTING ||
-       client.getState() == Discord::ConnectionState::AUTHENTICATING);
-  bool hideMenu = (currentType == ScreenType::LOGIN) ||
-                  (currentType == ScreenType::ADD_ACCOUNT && isConnecting);
-
-  if (!hideMenu) {
+  if (!isMenuHidden()) {
     hamburgerMenu.render();
   }
 
@@ -288,7 +282,7 @@ void ScreenManager::render() {
     currentScreen->renderBottom(bottomTarget);
   }
 
-  if (!hideMenu) {
+  if (!isMenuHidden()) {
     drawHamburgerButton();
   }
 
@@ -340,6 +334,17 @@ void ScreenManager::drawHamburgerButton() {
 void ScreenManager::showToast(const std::string &message) {
   toastMessage = message;
   toastTimer = 90;
+}
+
+bool ScreenManager::isMenuHidden() const {
+  auto &client = Discord::DiscordClient::getInstance();
+  bool isConnecting =
+      (client.getState() == Discord::ConnectionState::CONNECTING ||
+       client.getState() == Discord::ConnectionState::AUTHENTICATING);
+
+  return (currentType == ScreenType::LOGIN) ||
+         (currentType == ScreenType::DISCLAIMER) ||
+         (currentType == ScreenType::ADD_ACCOUNT && isConnecting);
 }
 
 void ScreenManager::drawToast() {

@@ -21,7 +21,8 @@ enum class ScreenType {
   FORUM_CHANNEL,
   SETTINGS,
   DM_LIST,
-  ABOUT
+  ABOUT,
+  DISCLAIMER
 };
 
 class Screen {
@@ -57,6 +58,9 @@ public:
   void showToast(const std::string &message);
 
   bool shouldCloseApplication() const { return appExitRequested; }
+  void requestAppExit() { appExitRequested = true; }
+
+  bool isMenuHidden() const;
 
   void renderDebugOverlay();
   bool isDebugOverlayEnabled() const { return debugOverlayEnabled; }

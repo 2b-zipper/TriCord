@@ -108,6 +108,9 @@ public:
   bool isFileLoggingEnabled() const { return fileLoggingEnabled; }
   void setFileLoggingEnabled(bool enabled);
 
+  bool isDisclaimerAccepted() const { return disclaimerAccepted; }
+  void setDisclaimerAccepted(bool accepted);
+
   void loadTheme();
   void saveTheme();
 
@@ -120,6 +123,7 @@ private:
   int themeType;
   bool typingIndicatorEnabled;
   bool fileLoggingEnabled;
+  bool disclaimerAccepted;
   Theme customTheme;
 
   mutable std::recursive_mutex mutex;

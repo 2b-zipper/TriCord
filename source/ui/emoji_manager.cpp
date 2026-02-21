@@ -85,28 +85,32 @@ void EmojiManager::prefetchEmoji(const std::string &emojiId) {
 }
 
 void EmojiManager::prefetchEmojisFromText(const std::string &text) {
-  size_t cursor = 0;
-  while (cursor < text.length()) {
-    if (text[cursor] == '<') {
-      size_t start = cursor;
-      if (start + 6 < text.length()) {
-        bool isAnimated = (text[start + 1] == 'a');
-        if (text[start + 1] == ':' || isAnimated) {
-          size_t secondColon = text.find(':', start + (isAnimated ? 3 : 2));
-          if (secondColon != std::string::npos) {
-            size_t closeBracket = text.find('>', secondColon);
-            if (closeBracket != std::string::npos) {
-              std::string id =
-                  text.substr(secondColon + 1, closeBracket - secondColon - 1);
-              prefetchEmoji(id);
-              cursor = closeBracket + 1;
-              continue;
-            }
-          }
-        }
-      }
+  for (size_t cursor = 0; cursor < text.length(); ++cursor) {
+    if (text[cursor] != '<')
+      continue;
+
+    if (cursor + 6 >= text.length())
+      continue;
+
+    bool isAnimated = (text[cursor + 1] == 'a');
+    if (text[cursor + 1] != ':' && !isAnimated)
+      continue;
+
+    size_t startPos = cursor + (isAnimated ? 3 : 2);
+    size_t secondColon = text.find(':', startPos);
+    if (secondColon == std::string::npos)
+      continue;
+
+    size_t closeBracket = text.find('>', secondColon);
+    if (closeBracket == std::string::npos)
+      continue;
+
+    std::string emojiId =
+        text.substr(secondColon + 1, closeBracket - secondColon - 1);
+    if (!emojiId.empty()) {
+      prefetchEmoji(emojiId);
     }
-    cursor++;
+    cursor = closeBracket;
   }
 }
 
