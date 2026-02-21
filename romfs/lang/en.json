@@ -134,7 +134,7 @@
     "message.system.pinned": " pinned a message.",
     "message.thread": "Thread",
     "message.topic": "Topic",
-    "server.count": "Server Count",
+    "server.count": "Server Count: {0}",
     "server.description": "Server Overview",
     "server.list": "Servers",
     "server.member_count": "Members",

@@ -853,10 +853,10 @@ void ServerListScreen::renderBottom(C3D_RenderTarget *target) {
                         ScreenManager::colorSeparator());
 
       float infoY = 40.0f;
-      drawText(10.0f, infoY, 0.5f, 0.45f, 0.45f,
-               ScreenManager::colorTextMuted(), TR("server.count") + ":");
-      drawText(90.0f, infoY, 0.5f, 0.5f, 0.5f, ScreenManager::colorText(),
-               std::to_string(item.folderGuildIds.size()));
+      std::string countStr = Core::I18n::format(
+          TR("server.count"), std::to_string(item.folderGuildIds.size()));
+      drawText(10.0f, infoY, 0.5f, 0.45f, 0.45f, ScreenManager::colorText(),
+               countStr);
 
       infoY += 18.0f;
       drawText(10.0f, infoY, 0.5f, 0.45f, 0.45f,

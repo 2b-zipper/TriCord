@@ -134,7 +134,7 @@
     "message.system.pinned": " a épinglé un message.",
     "message.thread": "Fil",
     "message.topic": "Sujet",
-    "server.count": "Nombre de serveurs",
+    "server.count": "Nombre de serveurs : {0}",
     "server.description": "Aperçu du serveur",
     "server.list": "Serveurs",
     "server.member_count": "Membres ",

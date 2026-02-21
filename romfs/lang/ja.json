@@ -134,7 +134,7 @@
     "message.system.pinned": "がメッセージをピン留めしました",
     "message.thread": "スレッド",
     "message.topic": "トピック",
-    "server.count": "サーバー数",
+    "server.count": "サーバー数: {0}",
     "server.description": "サーバー概要",
     "server.list": "サーバー",
     "server.member_count": "メンバー数",
