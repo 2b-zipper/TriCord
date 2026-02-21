@@ -57,7 +57,6 @@ bool isEmoji(uint32_t cp) {
   };
 
   static const Range ranges[] = {
-      {0x0023, 0x0023},   {0x002A, 0x002A},   {0x0030, 0x0039},
       {0x00A9, 0x00A9},   {0x00AE, 0x00AE},   {0x203C, 0x203C},
       {0x2049, 0x2049},   {0x2122, 0x2122},   {0x2139, 0x2139},
       {0x231A, 0x23F3},   {0x24C2, 0x24C2},   {0x25AA, 0x25FE},
@@ -128,6 +127,10 @@ std::string sanitizeText(const std::string &text) {
 
   pos = 0;
   while ((pos = sanitized.find('$', pos)) != std::string::npos) {
+    if (pos + 1 < sanitized.length() && sanitized[pos + 1] == '$') {
+      pos += 2;
+      continue;
+    }
     sanitized.replace(pos, 1, "$$");
     pos += 2;
   }

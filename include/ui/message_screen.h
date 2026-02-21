@@ -73,16 +73,12 @@ private:
   float drawForwardHeader(const Discord::Message &msg, float x, float y);
   float drawAuthorHeader(const Discord::Message &msg, float x, float y,
                          bool showHeader);
-  float drawMessageContent(const Discord::Message &msg, float x, float y,
-                           float maxWidth);
-  float drawAttachments(const Discord::Message &msg, float x, float y,
-                        float maxWidth);
-  float drawStickers(const Discord::Message &msg, float x, float y,
-                     float maxWidth);
+  float drawMessageContent(const Discord::Message &msg, float x, float y);
+  float drawAttachments(const Discord::Message &msg, float x, float y, float maxWidth);
+  float drawStickers(const Discord::Message &msg, float x, float y, float maxWidth);
   float drawReactions(const Discord::Message &msg, float x, float y,
-                      bool isSelected, float maxWidth);
-  float calculateMessageHeight(const Discord::Message &msg, bool showHeader,
-                               float maxWidth);
+                      bool isSelected);
+  float calculateMessageHeight(const Discord::Message &msg, bool showHeader);
   float calculateMessageHeight(const Discord::Message &msg);
   float calculateEmbedHeight(const Discord::Embed &embed, float maxWidth);
   float renderEmbed(const Discord::Embed &embed, float x, float y,

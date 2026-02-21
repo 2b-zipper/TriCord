@@ -83,7 +83,7 @@ void MessageScreen::onEnter() {
 
     if (!found) {
 
-      const float SCREEN_HEIGHT = 230.0f;
+      const float SCREEN_HEIGHT = 240.0f;
       float maxScroll = std::max(0.0f, totalContentHeight - SCREEN_HEIGHT);
       bool wasAtBottom = (targetScrollY >= maxScroll - 5.0f);
 
@@ -118,7 +118,7 @@ void MessageScreen::onEnter() {
       }
     }
     if (found) {
-      const float SCREEN_HEIGHT = 230.0f;
+      const float SCREEN_HEIGHT = 240.0f;
       float oldMaxScroll = std::max(0.0f, totalContentHeight - SCREEN_HEIGHT);
       bool wasAtBottom = (targetScrollY >= oldMaxScroll - 5.0f);
 
@@ -174,7 +174,7 @@ void MessageScreen::onEnter() {
           msg.reactions.push_back(newR);
         }
 
-        const float SCREEN_HEIGHT = 230.0f;
+        const float SCREEN_HEIGHT = 240.0f;
         float oldMaxScroll = std::max(0.0f, totalContentHeight - SCREEN_HEIGHT);
         bool wasAtBottom = (targetScrollY >= oldMaxScroll - 5.0f);
 
@@ -210,7 +210,7 @@ void MessageScreen::onEnter() {
               msg.reactions.erase(it);
             }
 
-            const float SCREEN_HEIGHT = 230.0f;
+            const float SCREEN_HEIGHT = 240.0f;
             float oldMaxScroll =
                 std::max(0.0f, totalContentHeight - SCREEN_HEIGHT);
             bool wasAtBottom = (targetScrollY >= oldMaxScroll - 5.0f);
@@ -609,7 +609,7 @@ void MessageScreen::update() {
     float scrollDelta = circle.dy * 0.08f;
     targetScrollY -= scrollDelta;
 
-    const float SCREEN_HEIGHT = 230.0f;
+    const float SCREEN_HEIGHT = 240.0f;
     float maxScroll = std::max(0.0f, totalContentHeight - SCREEN_HEIGHT);
     targetScrollY = std::clamp(targetScrollY, 0.0f, maxScroll);
 
@@ -622,7 +622,7 @@ void MessageScreen::update() {
   currentScrollY += (targetScrollY - currentScrollY) * scrollSpeed;
 
   if (showNewMessageIndicator) {
-    const float SCREEN_HEIGHT = 230.0f;
+    const float SCREEN_HEIGHT = 240.0f;
     float maxScroll = std::max(0.0f, totalContentHeight - SCREEN_HEIGHT);
     if (currentScrollY >= maxScroll - 5.0f) {
       showNewMessageIndicator = false;
@@ -640,7 +640,7 @@ void MessageScreen::update() {
     if (selectedIndex >= 0 && selectedIndex < (int)messagePositions.size()) {
       float y = messagePositions[selectedIndex];
       float h = messageHeights[selectedIndex];
-      visible = (y + h > currentScrollY && y < currentScrollY + 230.0f);
+      visible = (y + h > currentScrollY && y < currentScrollY + 240.0f);
     }
 
     if (!visible && !messagePositions.empty()) {
@@ -664,13 +664,13 @@ void MessageScreen::update() {
     if (selectedIndex >= 0 && selectedIndex < (int)messagePositions.size()) {
       float y = messagePositions[selectedIndex];
       float h = messageHeights[selectedIndex];
-      visible = (y + h > currentScrollY && y < currentScrollY + 230.0f);
+      visible = (y + h > currentScrollY && y < currentScrollY + 240.0f);
     }
 
     if (!visible && !messagePositions.empty()) {
       auto it =
           std::lower_bound(messagePositions.begin(), messagePositions.end(),
-                           currentScrollY + 230.0f);
+                           currentScrollY + 240.0f);
       int snapIdx = std::distance(messagePositions.begin(), it);
       if (snapIdx > 0)
         snapIdx--;
@@ -726,9 +726,10 @@ void MessageScreen::update() {
 }
 
 float MessageScreen::calculateMessageHeight(const Discord::Message &msg,
-                                            bool showHeader, float maxWidth) {
+                                            bool showHeader) {
   float topMargin = showHeader ? 4.0f : 0.0f;
   float totalH = 0.0f;
+  float maxWidth = 400.0f;
 
   if (isForumView) {
     return 45.0f;
@@ -753,26 +754,27 @@ float MessageScreen::calculateMessageHeight(const Discord::Message &msg,
   std::string content = msg.content;
   if (!content.empty()) {
     int emojiCount = 0;
-    bool isJumbo =
-        MessageUtils::isEmojiOnly(content, emojiCount) && emojiCount <= 30;
-    float scale = isJumbo ? 1.15f : 0.4f;
+    if (MessageUtils::isEmojiOnly(content, emojiCount) && emojiCount <= 10) {
+      float lineHeight = (emojiCount <= 3) ? 34.0f : 26.0f;
+      totalH += lineHeight;
+    } else {
+      auto lines = MessageUtils::wrapText(content, 350.0f, 0.4f);
+      totalH += lines.size() * 12.0f;
+      float lastLineWidth = 0.0f;
+      if (!lines.empty()) {
+        lastLineWidth = UI::measureRichText(lines.back(), 0.4f, 0.4f);
+      }
 
-    float h = 0;
-    float lastLineWidth = 0;
-    UI::measureRichText(content, scale, scale, maxWidth - 42.0f - 10.0f, &h,
-                        &lastLineWidth);
-    totalH += h;
+      if (!msg.edited_timestamp.empty()) {
+        std::string editedText = TR("message.edited");
+        float editedScale = 0.35f;
+        float editedWidth =
+            UI::measureText(editedText, editedScale, editedScale);
+        float padding = 4.0f;
 
-    if (!msg.edited_timestamp.empty()) {
-      std::string editedText = TR("message.edited");
-      float editedScale = 0.35f;
-      float editedWidth = UI::measureText(editedText, editedScale, editedScale);
-      float padding = 4.0f;
-
-      if (!isJumbo &&
-          (lastLineWidth + padding + editedWidth <= maxWidth - 42.0f - 10.0f)) {
-      } else {
-        totalH += 10.0f;
+        if (lastLineWidth + padding + editedWidth > 350.0f) {
+          totalH += 12.0f;
+        }
       }
     }
   }
@@ -846,7 +848,7 @@ float MessageScreen::calculateMessageHeight(const Discord::Message &msg,
     float reactionX = textOffsetX;
     float rowHeight = 21.0f;
     float gap = 4.0f;
-    float wrapBound = maxWidth - textOffsetX - 10.0f;
+    float wrapBound = 320.0f;
     float currentReactionsH = rowHeight;
 
     for (const auto &react : msg.reactions) {
@@ -875,7 +877,7 @@ float MessageScreen::calculateMessageHeight(const Discord::Message &msg,
 }
 
 float MessageScreen::calculateMessageHeight(const Discord::Message &msg) {
-  return calculateMessageHeight(msg, true, 400.0f);
+  return calculateMessageHeight(msg, true);
 }
 
 float MessageScreen::drawForumMessage(const Discord::Message &msg, float y,
@@ -1167,38 +1169,45 @@ float MessageScreen::drawAuthorHeader(const Discord::Message &msg, float x,
 }
 
 float MessageScreen::drawMessageContent(const Discord::Message &msg, float x,
-                                        float y, float maxWidth) {
+                                        float y) {
   std::string content = msg.content;
   if (content.empty())
     return y;
 
   int emojiCount = 0;
-  bool isJumbo =
-      MessageUtils::isEmojiOnly(content, emojiCount) && emojiCount <= 30;
-  float scale = isJumbo ? 1.15f : 0.4f;
+  float newY = y;
+  float lastLineWidth = -1.0f;
 
-  float h = 0;
-  float lastLineWidth = 0;
-  UI::measureRichText(content, scale, scale, maxWidth, &h, &lastLineWidth);
-  UI::drawRichText(x, y, 0.5f, scale, scale, ScreenManager::colorText(),
-                   content, maxWidth);
-  float newY = y + h;
+  if (MessageUtils::isEmojiOnly(content, emojiCount) && emojiCount <= 10) {
+    float jumboScale = (emojiCount <= 3) ? 1.15f : 0.85f;
+    float lineHeight = (emojiCount <= 3) ? 34.0f : 26.0f;
+    drawRichText(x, newY, 0.5f, jumboScale, jumboScale,
+                 ScreenManager::colorText(), content);
+    newY += lineHeight;
+  } else if (!content.empty()) {
+    auto lines = MessageUtils::wrapText(content, 350.0f, 0.4f);
+    for (const auto &line : lines) {
+      drawRichText(x, newY, 0.5f, 0.4f, 0.4f, ScreenManager::colorText(), line);
+      newY += 12.0f;
+      lastLineWidth = UI::measureRichText(line, 0.4f, 0.4f);
+    }
+  }
 
   if (!msg.edited_timestamp.empty()) {
     std::string editedText = TR("message.edited");
     float editedScale = 0.35f;
     float editedWidth = UI::measureText(editedText, editedScale, editedScale);
     float padding = 4.0f;
-    float currentLineHeight = scale * 30.0f;
 
-    if (!isJumbo && (lastLineWidth + padding + editedWidth <= maxWidth)) {
-      drawText(x + lastLineWidth + padding, newY - currentLineHeight + 1.0f,
-               0.5f, editedScale, editedScale, ScreenManager::colorTextMuted(),
+    if (lastLineWidth >= 0.0f &&
+        (lastLineWidth + padding + editedWidth <= 350.0f)) {
+      drawText(x + lastLineWidth + padding, newY - 12.0f + 2.0f, 0.5f,
+               editedScale, editedScale, ScreenManager::colorTextMuted(),
                editedText);
     } else {
       drawText(x, newY, 0.5f, editedScale, editedScale,
                ScreenManager::colorTextMuted(), editedText);
-      newY += 10.0f;
+      newY += 12.0f;
     }
   }
   return newY;
@@ -1352,7 +1361,7 @@ float MessageScreen::drawStickers(const Discord::Message &msg, float x, float y,
 }
 
 float MessageScreen::drawReactions(const Discord::Message &msg, float x,
-                                   float y, bool isSelected, float maxWidth) {
+                                   float y, bool isSelected) {
   if (msg.reactions.empty())
     return y;
 
@@ -1376,7 +1385,7 @@ float MessageScreen::drawReactions(const Discord::Message &msg, float x,
     float boxPad = 6.0f;
     float boxW = emojiW + countW + boxPad + 4.0f;
 
-    if (reactionX + boxW > x + maxWidth) {
+    if (reactionX + boxW > x + 320.0f) {
       reactionX = x;
       newY += rowHeight + gap;
     }
@@ -1479,7 +1488,7 @@ float MessageScreen::drawReactions(const Discord::Message &msg, float x,
 float MessageScreen::drawMessage(const Discord::Message &msg, float y,
                                  float maxWidth, bool isSelected,
                                  bool showHeader) {
-  float height = calculateMessageHeight(msg, showHeader, maxWidth);
+  float height = calculateMessageHeight(msg, showHeader);
   float topMargin = showHeader ? 4.0f : 0.0f;
   const float textOffsetX = 42.0f;
 
@@ -1521,23 +1530,20 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y,
              ScreenManager::colorTextMuted(), time);
   }
 
-  contentY = drawMessageContent(msg, textOffsetX, contentY,
-                                maxWidth - textOffsetX - 10.0f);
+  contentY = drawMessageContent(msg, textOffsetX, contentY);
 
   if (!msg.embeds.empty()) {
     for (const auto &embed : msg.embeds) {
       contentY += renderEmbed(embed, textOffsetX, contentY,
-                              maxWidth - textOffsetX - 10.0f);
+                              400.0f - textOffsetX - 10.0f);
       contentY += 6.0f;
     }
   }
 
-  contentY = drawAttachments(msg, textOffsetX, contentY,
-                             maxWidth - textOffsetX - 10.0f);
-  contentY =
-      drawStickers(msg, textOffsetX, contentY, maxWidth - textOffsetX - 10.0f);
-  contentY = drawReactions(msg, textOffsetX, contentY, isSelected,
-                           maxWidth - textOffsetX - 10.0f);
+  float attachmentMaxWidth = 400.0f - textOffsetX - 10.0f;
+  contentY = drawAttachments(msg, textOffsetX, contentY, attachmentMaxWidth);
+  contentY = drawStickers(msg, textOffsetX, contentY, attachmentMaxWidth);
+  contentY = drawReactions(msg, textOffsetX, contentY, isSelected);
 
   if (showHeader) {
     if (contentY < avatarTopY + 28.0f)
@@ -1551,7 +1557,7 @@ void MessageScreen::renderTop(C3D_RenderTarget *target) {
   C2D_TargetClear(target, ScreenManager::colorBackground());
   C2D_SceneBegin(target);
 
-  const float SCREEN_HEIGHT = 230.0f;
+  const float SCREEN_HEIGHT = 240.0f;
 
   if (isLoading) {
     drawCenteredRichText(
@@ -1569,7 +1575,7 @@ void MessageScreen::renderTop(C3D_RenderTarget *target) {
     return;
   }
 
-  float availableHeight = 230.0f;
+  float availableHeight = 240.0f;
   float topPadding = 10.0f;
   if (isFetchingHistory) {
     drawCenteredRichText(
@@ -1770,7 +1776,7 @@ void MessageScreen::renderBottom(C3D_RenderTarget *target) {
              ScreenManager::colorSelection(), typingText);
   }
 
-  const float SCREEN_HEIGHT = 230.0f;
+  const float SCREEN_HEIGHT = 240.0f;
   float maxScroll = std::max(0.0f, totalContentHeight - SCREEN_HEIGHT);
 
   if (targetScrollY < maxScroll - 10.0f) {
@@ -2027,7 +2033,7 @@ void MessageScreen::scrollToBottom() {
 
   selectedIndex = this->messages.size() - 1;
 
-  const float SCREEN_HEIGHT = 230.0f;
+  const float SCREEN_HEIGHT = 240.0f;
   float maxScroll = std::max(0.0f, totalContentHeight - SCREEN_HEIGHT);
   targetScrollY = maxScroll;
   currentScrollY = maxScroll;
@@ -2063,7 +2069,7 @@ void MessageScreen::rebuildLayoutCache() {
     }
 
     messagePositions.push_back(y);
-    float h = calculateMessageHeight(this->messages[i], showHeader, 400.0f);
+    float h = calculateMessageHeight(this->messages[i], showHeader);
     messageHeights.push_back(h);
 
     y += h;
@@ -2071,7 +2077,7 @@ void MessageScreen::rebuildLayoutCache() {
 
   totalContentHeight = y + 2.0f;
 
-  const float SCREEN_HEIGHT = 230.0f;
+  const float SCREEN_HEIGHT = 240.0f;
   float maxScroll = std::max(0.0f, totalContentHeight - SCREEN_HEIGHT);
 
   if (targetScrollY > maxScroll) {
@@ -2089,7 +2095,7 @@ void MessageScreen::ensureSelectionVisible() {
   if (messagePositions.empty())
     return;
 
-  const float SCREEN_HEIGHT = 230.0f;
+  const float SCREEN_HEIGHT = 240.0f;
   const float TOP_MARGIN = 20.0f;
   const float BOTTOM_MARGIN = 20.0f;
 
@@ -2480,7 +2486,7 @@ void MessageScreen::catchUpMessages() {
         if (addedAny) {
           Logger::log("[UI] Merged %d new messages from catch-up", addedAny);
 
-          const float SCREEN_HEIGHT = 230.0f;
+          const float SCREEN_HEIGHT = 240.0f;
           float oldMaxScroll =
               std::max(0.0f, totalContentHeight - SCREEN_HEIGHT);
           bool wasAtBottom = (targetScrollY >= oldMaxScroll - 5.0f);
