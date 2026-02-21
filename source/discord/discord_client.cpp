@@ -2421,23 +2421,16 @@ void DiscordClient::parseGuildObject(const rapidjson::Value &gObj, Guild &guild,
       if (memberObj.HasMember("user") && memberObj["user"].IsObject()) {
         std::string memberId = Utils::Json::getString(memberObj["user"], "id");
 
-        Member member;
-        member.user_id = memberId;
-        member.nickname = Utils::Json::getString(memberObj, "nick");
-
-        if (memberObj.HasMember("roles") && memberObj["roles"].IsArray()) {
-          const rapidjson::Value &roleIds = memberObj["roles"];
-          for (rapidjson::SizeType r = 0; r < roleIds.Size(); r++) {
-            if (roleIds[r].IsString()) {
-              member.role_ids.push_back(roleIds[r].GetString());
+        if (memberId == userId) {
+          if (memberObj.HasMember("roles") && memberObj["roles"].IsArray()) {
+            const rapidjson::Value &roleIds = memberObj["roles"];
+            for (rapidjson::SizeType r = 0; r < roleIds.Size(); r++) {
+              if (roleIds[r].IsString()) {
+                guild.myRoles.push_back(roleIds[r].GetString());
+              }
             }
           }
-        }
-
-        guild.members.push_back(std::move(member));
-
-        if (memberId == userId) {
-          guild.myRoles = member.role_ids;
+          break;
         }
       }
     }

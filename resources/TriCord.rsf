@@ -59,7 +59,7 @@ AccessControlInfo:
 
   # Process Settings
   MemoryType                    : Application # Application/System/Base
-  SystemMode                    : $(APP_SYSTEM_MODE) # 64MB(Default)/96MB/80MB/72MB/32MB
+  SystemMode                    : 96MB # 64MB(Default)/96MB/80MB/72MB/32MB
   IdealProcessor                : 0
   AffinityMask                  : 1
   Priority                      : 16

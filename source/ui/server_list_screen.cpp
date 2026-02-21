@@ -8,6 +8,7 @@
 #include <3ds.h>
 #include <algorithm>
 #include <cstdio>
+#include <unordered_set>
 
 namespace UI {
 
@@ -98,7 +99,7 @@ void ServerListScreen::rebuildList() {
   std::lock_guard<std::recursive_mutex> lock(client.getMutex());
 
   const auto &folders = client.getGuildFolders();
-  std::vector<std::string> visitedGuilds;
+  std::unordered_set<std::string> visitedGuilds;
 
   if (folders.empty()) {
     const auto &guilds = client.getGuilds();
@@ -112,7 +113,7 @@ void ServerListScreen::rebuildList() {
           const auto *g = getGuild(gid);
           if (g) {
             listItems.push_back(createGuildItem(g, 0));
-            visitedGuilds.push_back(g->id);
+            visitedGuilds.insert(g->id);
           }
         }
       } else {
@@ -124,12 +125,12 @@ void ServerListScreen::rebuildList() {
             const auto *g = getGuild(gid);
             if (g) {
               listItems.push_back(createGuildItem(g, 1));
-              visitedGuilds.push_back(g->id);
+              visitedGuilds.insert(g->id);
             }
           }
         } else {
           for (const auto &gid : f.guildIds) {
-            visitedGuilds.push_back(gid);
+            visitedGuilds.insert(gid);
           }
         }
       }
@@ -138,15 +139,7 @@ void ServerListScreen::rebuildList() {
     const auto &allGuilds = client.getGuilds();
     std::vector<ListItem> orphans;
     for (const auto &g : allGuilds) {
-      bool alreadyAdded = false;
-      for (const auto &vid : visitedGuilds) {
-        if (vid == g.id) {
-          alreadyAdded = true;
-          break;
-        }
-      }
-
-      if (!alreadyAdded) {
+      if (visitedGuilds.find(g.id) == visitedGuilds.end()) {
         orphans.push_back(createGuildItem(&g, 0));
       }
     }
