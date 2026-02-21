@@ -521,7 +521,8 @@ void DiscordClient::handleReady(const rapidjson::Value &d) {
               " (0/" + std::to_string(guildsArr.Size()) + ")...");
 
     for (rapidjson::SizeType i = 0; i < guildsArr.Size(); i++) {
-      setStatus(Core::I18n::getInstance().get("login.status.loading_guilds") + " (" + std::to_string(i) + "/" +
+      setStatus(Core::I18n::getInstance().get("login.status.loading_guilds") +
+                " (" + std::to_string(i) + "/" +
                 std::to_string(guildsArr.Size()) + ")...");
 
       const rapidjson::Value &gObj = guildsArr[i];
@@ -532,7 +533,8 @@ void DiscordClient::handleReady(const rapidjson::Value &d) {
   }
 
   std::vector<Channel> newPrivateChannels;
-  setStatus(Core::I18n::getInstance().get("login.status.loading_direct_messages"));
+  setStatus(
+      Core::I18n::getInstance().get("login.status.loading_direct_messages"));
   if (d.HasMember("private_channels") && d["private_channels"].IsArray()) {
     const rapidjson::Value &pcs = d["private_channels"];
     Logger::log("[Gateway] Parsing %u private channels...", pcs.Size());
@@ -2387,6 +2389,7 @@ void DiscordClient::parseGuildObject(const rapidjson::Value &gObj, Guild &guild,
   guild.name = Utils::Json::getString(gObj, "name");
   guild.icon = Utils::Json::getString(gObj, "icon");
   guild.ownerId = Utils::Json::getString(gObj, "owner_id");
+  guild.rules_channel_id = Utils::Json::getString(gObj, "rules_channel_id");
   guild.description = Utils::Json::getString(gObj, "description");
   guild.approximateMemberCount =
       Utils::Json::getInt(gObj, "approximate_member_count");

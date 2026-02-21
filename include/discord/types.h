@@ -80,6 +80,7 @@ struct Guild {
   std::string name;
   std::string icon;
   std::string ownerId;
+  std::string rules_channel_id;
   std::string description;
   int approximateMemberCount = 0;
   int approximatePresenceCount = 0;

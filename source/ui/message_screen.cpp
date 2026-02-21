@@ -20,8 +20,9 @@ namespace UI {
 
 MessageScreen::MessageScreen(const std::string &channelId,
                              const std::string &channelName)
-    : channelId(channelId), channelName(channelName), selectedIndex(0),
-      isLoading(true), isFetchingHistory(false), requestHistoryFetch(false),
+    : channelId(channelId), channelName(channelName), channelType(0),
+      rulesChannelId(""), selectedIndex(0), isLoading(true),
+      isFetchingHistory(false), requestHistoryFetch(false),
       scrollInitialized(false), showNewMessageIndicator(false),
       newMessageCount(0), isForumView(false), hasMoreHistory(true),
       lastImageGeneration(0), keyRepeatTimer(0), targetScrollY(0.0f),
@@ -52,6 +53,16 @@ void MessageScreen::onEnter() {
   this->channelType = channel.type;
   this->channelTopic = channel.topic;
   this->guildId = client.getGuildIdFromChannel(channelId);
+
+  if (!this->guildId.empty() && this->guildId != "DM") {
+    const auto &guilds = client.getGuilds();
+    for (const auto &g : guilds) {
+      if (g.id == this->guildId) {
+        this->rulesChannelId = g.rules_channel_id;
+        break;
+      }
+    }
+  }
 
   this->truncatedChannelName =
       getTruncatedRichText(this->channelName, 310.0f - 56.0f, 0.55f, 0.55f);
@@ -1680,7 +1691,9 @@ void MessageScreen::renderBottom(C3D_RenderTarget *target) {
   float headerX = 35.0f;
 
   std::string iconPath;
-  if (channelType == 5) {
+  if (!rulesChannelId.empty() && channelId == rulesChannelId) {
+    iconPath = "romfs:/discord-icons/bookcheck.png";
+  } else if (channelType == 5) {
     iconPath = "romfs:/discord-icons/announcement.png";
   } else if (channelType == 10 || channelType == 11 || channelType == 12 ||
              channelType == 1 || channelType == 3) {

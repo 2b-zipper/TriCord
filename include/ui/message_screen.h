@@ -27,6 +27,7 @@ private:
   std::string channelName;
   std::string truncatedChannelName;
   int channelType;
+  std::string rulesChannelId;
   std::string channelTopic;
   std::string guildId;
   std::vector<Discord::Message> messages;
@@ -74,8 +75,10 @@ private:
   float drawAuthorHeader(const Discord::Message &msg, float x, float y,
                          bool showHeader);
   float drawMessageContent(const Discord::Message &msg, float x, float y);
-  float drawAttachments(const Discord::Message &msg, float x, float y, float maxWidth);
-  float drawStickers(const Discord::Message &msg, float x, float y, float maxWidth);
+  float drawAttachments(const Discord::Message &msg, float x, float y,
+                        float maxWidth);
+  float drawStickers(const Discord::Message &msg, float x, float y,
+                     float maxWidth);
   float drawReactions(const Discord::Message &msg, float x, float y,
                       bool isSelected);
   float calculateMessageHeight(const Discord::Message &msg, bool showHeader);

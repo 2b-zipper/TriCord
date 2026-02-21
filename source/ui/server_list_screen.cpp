@@ -554,8 +554,20 @@ void ServerListScreen::drawChannelList(float x, float y, float alpha) {
     if (isCategory) {
       drawRichText(currentX, currentY + 4.0f, 0.5f, 0.45f, 0.45f, color, name);
     } else {
+      std::string rulesId;
+      if (selectedIndex >= 0 && selectedIndex < (int)listItems.size()) {
+        const auto &item = listItems[selectedIndex];
+        if (!item.isFolder) {
+          const auto *guild = getGuild(item.id);
+          if (guild)
+            rulesId = guild->rules_channel_id;
+        }
+      }
+
       std::string iconPath = "romfs:/discord-icons/text.png";
-      if (ch.type == 2)
+      if (!rulesId.empty() && ch.id == rulesId)
+        iconPath = "romfs:/discord-icons/bookcheck.png";
+      else if (ch.type == 2)
         iconPath = "romfs:/discord-icons/voice.png";
       else if (ch.type == 5)
         iconPath = "romfs:/discord-icons/announcement.png";
