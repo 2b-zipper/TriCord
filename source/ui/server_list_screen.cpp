@@ -838,6 +838,40 @@ void ServerListScreen::renderBottom(C3D_RenderTarget *target) {
                item.name);
       C2D_DrawRectSolid(10, 32, 0.5f, 320 - 20, 1,
                         ScreenManager::colorSeparator());
+
+      float infoY = 40.0f;
+      drawText(10.0f, infoY, 0.5f, 0.45f, 0.45f,
+               ScreenManager::colorTextMuted(), TR("server.count") + ":");
+      drawText(90.0f, infoY, 0.5f, 0.5f, 0.5f, ScreenManager::colorText(),
+               std::to_string(item.folderGuildIds.size()));
+
+      infoY += 18.0f;
+      drawText(10.0f, infoY, 0.5f, 0.45f, 0.45f,
+               ScreenManager::colorSelection(), TR("server.list") + ":");
+      infoY += 14.0f;
+
+      int displayCount = 0;
+      for (const auto &guildId : item.folderGuildIds) {
+        if (displayCount >= 9)
+          break;
+        const Discord::Guild *g = getGuild(guildId);
+        if (g) {
+          std::string guildName =
+              getTruncatedRichText(g->name, 300.0f, 0.4f, 0.4f);
+          drawRichText(15.0f, infoY, 0.5f, 0.4f, 0.4f,
+                       ScreenManager::colorText(), guildName);
+          infoY += 13.0f;
+          displayCount++;
+        }
+      }
+
+      if (item.folderGuildIds.size() > 9) {
+        int remaining = item.folderGuildIds.size() - 9;
+        drawRichText(15.0f, infoY, 0.5f, 0.4f, 0.4f,
+                     ScreenManager::colorTextMuted(),
+                     "+" + std::to_string(remaining) + " more");
+      }
+
       infoDrawn = true;
     }
   }
