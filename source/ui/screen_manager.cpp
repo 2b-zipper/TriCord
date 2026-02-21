@@ -119,6 +119,12 @@ void ScreenManager::setScreen(ScreenType type) {
     for (const auto &ch : client.getPrivateChannels()) {
       if (ch.id == channelId) {
         channelName = ch.name;
+        if (channelName.empty() && ch.type == 1 && !ch.recipients.empty()) {
+          channelName = ch.recipients[0].global_name;
+          if (channelName.empty()) {
+            channelName = ch.recipients[0].username;
+          }
+        }
         break;
       }
     }

@@ -137,6 +137,12 @@ void DmScreen::renderBottom(C3D_RenderTarget *target) {
   if (selectedIndex >= 0 && selectedIndex < (int)dms.size()) {
     const auto &dm = dms[selectedIndex];
     std::string dispNameBottom = dm.name;
+    if (dispNameBottom.empty() && dm.type == 1 && !dm.recipients.empty()) {
+      dispNameBottom = dm.recipients[0].global_name;
+      if (dispNameBottom.empty()) {
+        dispNameBottom = dm.recipients[0].username;
+      }
+    }
     float maxBottomW = 310.0f - 10.0f;
     if (measureRichText(dispNameBottom, 0.6f, 0.6f) > maxBottomW) {
       while (!dispNameBottom.empty() &&
@@ -209,6 +215,12 @@ void DmScreen::drawDmItem(int index, const Discord::Channel &dm, float y) {
   }
 
   std::string dispName = dm.name;
+  if (dispName.empty() && dm.type == 1 && !dm.recipients.empty()) {
+    dispName = dm.recipients[0].global_name;
+    if (dispName.empty()) {
+      dispName = dm.recipients[0].username;
+    }
+  }
   float maxW = 390.0f - 60.0f - 10.0f;
   if (measureRichText(dispName, 0.55f, 0.55f) > maxW) {
     while (!dispName.empty() &&
