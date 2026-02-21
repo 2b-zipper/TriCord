@@ -846,8 +846,9 @@ void ServerListScreen::renderBottom(C3D_RenderTarget *target) {
         infoDrawn = true;
       }
     } else {
-      drawText(35.0f, 10.0f, 0.5f, 0.6f, 0.6f, ScreenManager::colorText(),
-               item.name);
+      drawRichText(
+          35.0f, 8.5f, 0.5f, 0.55f, 0.55f, ScreenManager::colorPrimary(),
+          getTruncatedRichText(item.name, 305.0f - 35.0f, 0.55f, 0.55f));
       C2D_DrawRectSolid(10, 32, 0.5f, 320 - 20, 1,
                         ScreenManager::colorSeparator());
 
@@ -892,7 +893,8 @@ void ServerListScreen::renderBottom(C3D_RenderTarget *target) {
     std::string title = (state == State::SELECTING_SERVER)
                             ? TR("server.select")
                             : TR("channel.select");
-    drawText(35.0f, 10.0f, 0.5f, 0.5f, 0.5f, ScreenManager::colorText(), title);
+    drawText(35.0f, 8.5f, 0.5f, 0.55f, 0.55f, ScreenManager::colorText(),
+             title);
   }
 
   if (state == State::SELECTING_SERVER) {
