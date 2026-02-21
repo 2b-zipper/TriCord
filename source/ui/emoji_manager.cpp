@@ -63,7 +63,7 @@ void EmojiManager::prefetchEmoji(const std::string &emojiId) {
   }
 
   std::string url =
-      "https://media.discordapp.net/emojis/" + emojiId + ".png?size=48";
+      "https://media.discordapp.net/emojis/" + emojiId + ".png?size=32";
 
   Network::NetworkManager::getInstance().enqueue(
       url, "GET", "", Network::RequestPriority::INTERACTIVE,
@@ -82,6 +82,32 @@ void EmojiManager::prefetchEmoji(const std::string &emojiId) {
           }
         }
       });
+}
+
+void EmojiManager::prefetchEmojisFromText(const std::string &text) {
+  size_t cursor = 0;
+  while (cursor < text.length()) {
+    if (text[cursor] == '<') {
+      size_t start = cursor;
+      if (start + 6 < text.length()) {
+        bool isAnimated = (text[start + 1] == 'a');
+        if (text[start + 1] == ':' || isAnimated) {
+          size_t secondColon = text.find(':', start + (isAnimated ? 3 : 2));
+          if (secondColon != std::string::npos) {
+            size_t closeBracket = text.find('>', secondColon);
+            if (closeBracket != std::string::npos) {
+              std::string id =
+                  text.substr(secondColon + 1, closeBracket - secondColon - 1);
+              prefetchEmoji(id);
+              cursor = closeBracket + 1;
+              continue;
+            }
+          }
+        }
+      }
+    }
+    cursor++;
+  }
 }
 
 EmojiManager::EmojiInfo

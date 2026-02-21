@@ -16,9 +16,9 @@ static u32 *soc_sharedmem_ptr = NULL;
 int main(int argc, char **argv) {
   gfxInitDefault();
 
-  soc_sharedmem_ptr = (u32 *)memalign(0x1000, 0x100000);
+  soc_sharedmem_ptr = (u32 *)memalign(0x1000, 0x200000);
   if (soc_sharedmem_ptr) {
-    socInit(soc_sharedmem_ptr, 0x100000);
+    socInit(soc_sharedmem_ptr, 0x200000);
   }
 
   C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
@@ -30,7 +30,7 @@ int main(int argc, char **argv) {
   Logger::init();
   Logger::log("TriCord - Discord for 3DS starting...");
   Config::getInstance().load();
-  Network::NetworkManager::getInstance().init();
+  Network::NetworkManager::getInstance().init(3, 2);
   UI::ImageManager::getInstance().init();
   Discord::DiscordClient::getInstance().init();
   UI::ScreenManager::getInstance().init();

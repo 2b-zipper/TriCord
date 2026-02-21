@@ -2081,6 +2081,15 @@ void MessageScreen::rebuildLayoutCache() {
       }
     }
 
+    // Proactive prefetch for reactions and content emojis
+    for (const auto &react : this->messages[i].reactions) {
+      if (!react.emoji.id.empty()) {
+        EmojiManager::getInstance().prefetchEmoji(react.emoji.id);
+      }
+    }
+    EmojiManager::getInstance().prefetchEmojisFromText(
+        this->messages[i].content);
+
     messagePositions.push_back(y);
     float h = calculateMessageHeight(this->messages[i], showHeader);
     messageHeights.push_back(h);

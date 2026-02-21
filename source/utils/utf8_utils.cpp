@@ -59,13 +59,14 @@ bool isEmoji(uint32_t cp) {
   static const Range ranges[] = {
       {0x00A9, 0x00A9},   {0x00AE, 0x00AE},   {0x203C, 0x203C},
       {0x2049, 0x2049},   {0x2122, 0x2122},   {0x2139, 0x2139},
-      {0x231A, 0x23F3},   {0x24C2, 0x24C2},   {0x25AA, 0x25FE},
+      {0x231A, 0x23F3},   {0x24B6, 0x24CF},   {0x25AA, 0x25FE},
       {0x2600, 0x26FF},   {0x2700, 0x27BF},   {0x2934, 0x2935},
       {0x2B05, 0x2B07},   {0x2B1B, 0x2B1C},   {0x2B50, 0x2B50},
       {0x2B55, 0x2B55},   {0x3030, 0x3030},   {0x303D, 0x303D},
-      {0x3297, 0x3297},   {0x3299, 0x3299},   {0x1F1E6, 0x1F1FF},
-      {0x1F300, 0x1F5FF}, {0x1F600, 0x1F64F}, {0x1F680, 0x1F6FF},
-      {0x1F7E0, 0x1F7EB}, {0x1F900, 0x1F9FF}, {0x1FA70, 0x1FAFF}};
+      {0x3297, 0x3297},   {0x3299, 0x3299},   {0x1F004, 0x1F0CF},
+      {0x1F100, 0x1F2FF}, {0x1F300, 0x1F5FF}, {0x1F600, 0x1F64F},
+      {0x1F680, 0x1F6FF}, {0x1F7E0, 0x1F7EB}, {0x1F900, 0x1F9FF},
+      {0x1FA70, 0x1FAFF}};
 
   for (const auto &range : ranges) {
     if (cp >= range.start && cp <= range.end) {
@@ -115,27 +116,35 @@ std::string getEmojiSequence(const std::string &text, size_t &cursor) {
 }
 
 std::string sanitizeText(const std::string &text) {
-  std::string sanitized = text;
+  std::string result;
+  result.reserve(text.length());
 
-  size_t pos = 0;
+  size_t cursor = 0;
+  while (cursor < text.length()) {
+    size_t start = cursor;
+    uint32_t cp = decodeNext(text, cursor);
 
-  // Replace Wave Dash (U+301C) with Fullwidth Tilde (U+FF5E) for 3DS fonts
-  while ((pos = sanitized.find("\xE3\x80\x9C", pos)) != std::string::npos) {
-    sanitized.replace(pos, 3, "\xEF\xBD\x9E");
-    pos += 3;
-  }
-
-  pos = 0;
-  while ((pos = sanitized.find('$', pos)) != std::string::npos) {
-    if (pos + 1 < sanitized.length() && sanitized[pos + 1] == '$') {
-      pos += 2;
+    // Skip Variation Selectors (U+FE00-U+FE0F, U+E0100-U+E01EF)
+    if ((cp >= 0xFE00 && cp <= 0xFE0F) || (cp >= 0xE0100 && cp <= 0xE01EF)) {
       continue;
     }
-    sanitized.replace(pos, 1, "$$");
-    pos += 2;
+
+    // Wave Dash (U+301C) -> Fullwidth Tilde (U+FF5E)
+    if (cp == 0x301C) {
+      result += "\xEF\xBD\x9E";
+      continue;
+    }
+
+    // Escape '$' for C2D_TextParse
+    if (cp == '$') {
+      result += "$$";
+      continue;
+    }
+
+    result += text.substr(start, cursor - start);
   }
 
-  return sanitized;
+  return result;
 }
 
 } // namespace Utf8

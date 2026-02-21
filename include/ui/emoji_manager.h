@@ -28,6 +28,7 @@ public:
   EmojiInfo getTwemojiInfo(const std::string &codepointHex);
 
   void prefetchEmoji(const std::string &emojiId);
+  void prefetchEmojisFromText(const std::string &text);
 
 private:
   EmojiManager() = default;
