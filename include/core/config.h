@@ -43,6 +43,14 @@ struct Theme {
   u32 embedMedia;
   u32 reaction;
   u32 reactionMe;
+  u32 input;
+  u32 boost;
+  u32 link;
+  u32 separator;
+  u32 headerBorder;
+  u32 selection;
+  u32 overlay;
+  u32 white;
   std::string name;
 };
 

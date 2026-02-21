@@ -845,18 +845,16 @@ u32 ScreenManager::colorError() {
 }
 
 u32 ScreenManager::colorInput() {
-  int type = Config::getInstance().getThemeType();
-  if (type == 1) {
-    return C2D_Color32(230, 230, 230, 255);
-  } else if (type == 2) {
-    return C2D_Color32(10, 10, 10, 255);
-  }
-  return C2D_Color32(32, 34, 37, 255);
+  return Config::getInstance().getTheme().input;
 }
-u32 ScreenManager::colorBoost() { return C2D_Color32(255, 115, 250, 255); }
-u32 ScreenManager::colorLink() { return C2D_Color32(73, 182, 254, 255); }
+u32 ScreenManager::colorBoost() {
+  return Config::getInstance().getTheme().boost;
+}
+u32 ScreenManager::colorLink() { return Config::getInstance().getTheme().link; }
 
-u32 ScreenManager::colorSeparator() { return colorTextMuted(); }
+u32 ScreenManager::colorSeparator() {
+  return Config::getInstance().getTheme().separator;
+}
 
 u32 ScreenManager::colorHeaderGlass() {
   u32 bg = colorBackgroundDark();
@@ -867,14 +865,20 @@ u32 ScreenManager::colorHeaderGlass() {
 }
 
 u32 ScreenManager::colorHeaderBorder() {
-  return C2D_Color32(255, 255, 255, 30);
+  return Config::getInstance().getTheme().headerBorder;
 }
 
-u32 ScreenManager::colorSelection() { return colorPrimary(); }
+u32 ScreenManager::colorSelection() {
+  return Config::getInstance().getTheme().selection;
+}
 
-u32 ScreenManager::colorOverlay() { return C2D_Color32(0, 0, 0, 150); }
+u32 ScreenManager::colorOverlay() {
+  return Config::getInstance().getTheme().overlay;
+}
 
-u32 ScreenManager::colorWhite() { return C2D_Color32(255, 255, 255, 255); }
+u32 ScreenManager::colorWhite() {
+  return Config::getInstance().getTheme().white;
+}
 
 u32 ScreenManager::colorEmbed() {
   return Config::getInstance().getTheme().embed;

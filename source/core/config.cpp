@@ -41,6 +41,14 @@ Theme Config::getDarkPreset() {
   t.embedMedia = 0xFF383331;
   t.reaction = 0xFF494240;
   t.reactionMe = 0xFF8B6447;
+  t.input = 0xFF252220;
+  t.boost = 0xFFF273FF;
+  t.link = 0xFFFEBA49;
+  t.separator = 0xFFA49B94;
+  t.headerBorder = 0x1EFFFFFF;
+  t.selection = 0xFFF26558;
+  t.overlay = 0x96000000;
+  t.white = 0xFFFFFFFF;
   return t;
 }
 
@@ -59,6 +67,14 @@ Theme Config::getLightPreset() {
   t.embedMedia = 0xFFF5F3F2;
   t.reaction = 0xFFE0E2E5;
   t.reactionMe = 0xFFFAEAED;
+  t.input = 0xFFE5E2E0;
+  t.boost = 0xFFF273FF;
+  t.link = 0xFFFEBA49;
+  t.separator = 0xFF58504E;
+  t.headerBorder = 0x1EFFFFFF;
+  t.selection = 0xFFF26558;
+  t.overlay = 0x96000000;
+  t.white = 0xFFFFFFFF;
   return t;
 }
 
@@ -191,11 +207,14 @@ void Config::loadSettings() {
       if (doc.HasMember("file_logging") && doc["file_logging"].IsBool()) {
         fileLoggingEnabled = doc["file_logging"].GetBool();
       }
+    } else {
+      saveSettings();
     }
+  } else {
+    saveSettings();
   }
 
   Core::I18n::getInstance().loadLanguage(language.empty() ? "en" : language);
-
   Logger::setFileLoggingEnabled(fileLoggingEnabled);
 }
 
@@ -292,38 +311,50 @@ void Config::updateCurrentAccountName(const std::string &name) {
 void Config::loadTheme() {
   std::string themePath = std::string(CONFIG_DIR_PATH) + "/theme.json";
   std::vector<char> buffer = Utils::File::readFile(themePath);
-  if (buffer.empty())
-    return;
 
-  rapidjson::Document doc;
-  doc.Parse(buffer.data());
+  if (!buffer.empty()) {
+    rapidjson::Document doc;
+    doc.Parse(buffer.data());
 
-  if (!doc.HasParseError() && doc.IsObject()) {
-    if (doc.HasMember("name") && doc["name"].IsString())
-      customTheme.name = doc["name"].GetString();
+    if (!doc.HasParseError() && doc.IsObject()) {
+      if (doc.HasMember("name") && doc["name"].IsString())
+        customTheme.name = doc["name"].GetString();
 
-    auto loadCol = [&](const char *key, u32 &target) {
-      if (doc.HasMember(key)) {
-        if (doc[key].IsString()) {
-          target = Utils::Color::hexToColor(doc[key].GetString());
-        } else if (doc[key].IsUint()) {
-          target = doc[key].GetUint();
+      auto loadCol = [&](const char *key, u32 &target) {
+        if (doc.HasMember(key)) {
+          if (doc[key].IsString()) {
+            target = Utils::Color::hexToColor(doc[key].GetString());
+          } else if (doc[key].IsUint()) {
+            target = doc[key].GetUint();
+          }
         }
-      }
-    };
+      };
 
-    loadCol("background", customTheme.background);
-    loadCol("backgroundDark", customTheme.backgroundDark);
-    loadCol("backgroundLight", customTheme.backgroundLight);
-    loadCol("primary", customTheme.primary);
-    loadCol("text", customTheme.text);
-    loadCol("textMuted", customTheme.textMuted);
-    loadCol("success", customTheme.success);
-    loadCol("error", customTheme.error);
-    loadCol("embed", customTheme.embed);
-    loadCol("embedMedia", customTheme.embedMedia);
-    loadCol("reaction", customTheme.reaction);
-    loadCol("reactionMe", customTheme.reactionMe);
+      loadCol("background", customTheme.background);
+      loadCol("backgroundDark", customTheme.backgroundDark);
+      loadCol("backgroundLight", customTheme.backgroundLight);
+      loadCol("primary", customTheme.primary);
+      loadCol("text", customTheme.text);
+      loadCol("textMuted", customTheme.textMuted);
+      loadCol("success", customTheme.success);
+      loadCol("error", customTheme.error);
+      loadCol("embed", customTheme.embed);
+      loadCol("embedMedia", customTheme.embedMedia);
+      loadCol("reaction", customTheme.reaction);
+      loadCol("reactionMe", customTheme.reactionMe);
+      loadCol("input", customTheme.input);
+      loadCol("boost", customTheme.boost);
+      loadCol("link", customTheme.link);
+      loadCol("separator", customTheme.separator);
+      loadCol("headerBorder", customTheme.headerBorder);
+      loadCol("selection", customTheme.selection);
+      loadCol("overlay", customTheme.overlay);
+      loadCol("white", customTheme.white);
+    } else {
+      saveTheme();
+    }
+  } else {
+    saveTheme();
   }
 }
 
@@ -352,6 +383,14 @@ void Config::saveTheme() {
   saveCol("embedMedia", customTheme.embedMedia);
   saveCol("reaction", customTheme.reaction);
   saveCol("reactionMe", customTheme.reactionMe);
+  saveCol("input", customTheme.input);
+  saveCol("boost", customTheme.boost);
+  saveCol("link", customTheme.link);
+  saveCol("separator", customTheme.separator);
+  saveCol("headerBorder", customTheme.headerBorder);
+  saveCol("selection", customTheme.selection);
+  saveCol("overlay", customTheme.overlay);
+  saveCol("white", customTheme.white);
 
   writer.EndObject();
 
