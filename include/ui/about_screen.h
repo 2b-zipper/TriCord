@@ -19,6 +19,8 @@ public:
 private:
   float animTimer;
   float logoBounce;
+  float scrollOffset;
+  float maxScroll;
 };
 
 } // namespace UI

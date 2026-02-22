@@ -3,16 +3,19 @@
 #include "core/i18n.h"
 #include "ui/image_manager.h"
 #include "ui/screen_manager.h"
+#include "utils/message_utils.h"
 #include <3ds.h>
 #include <cmath>
 
 namespace UI {
 
-AboutScreen::AboutScreen() : animTimer(0.0f), logoBounce(0.0f) {}
+AboutScreen::AboutScreen()
+    : animTimer(0.0f), logoBounce(0.0f), scrollOffset(0.0f), maxScroll(0.0f) {}
 
 void AboutScreen::onEnter() {
   animTimer = 0.0f;
   logoBounce = 0.0f;
+  scrollOffset = 0.0f;
 }
 
 void AboutScreen::update() {
@@ -20,9 +23,46 @@ void AboutScreen::update() {
   logoBounce = std::sin(animTimer) * 5.0f;
 
   u32 kDown = hidKeysDown();
+  u32 kHeld = hidKeysHeld();
+
   if (kDown & (KEY_B | KEY_SELECT)) {
     ScreenManager::getInstance().returnToPreviousScreen();
   }
+
+  float scrollSpeed = 2.0f;
+  if (kHeld & KEY_DOWN)
+    scrollOffset += scrollSpeed;
+  if (kHeld & KEY_UP)
+    scrollOffset -= scrollSpeed;
+
+  touchPosition touch;
+  hidTouchRead(&touch);
+  static touchPosition lastTouch = {0, 0};
+  static bool isTouching = false;
+
+  if (kDown & KEY_TOUCH) {
+    isTouching = true;
+    lastTouch = touch;
+  } else if (kHeld & KEY_TOUCH) {
+    if (isTouching) {
+      float dy = (float)lastTouch.py - touch.py;
+      scrollOffset += dy;
+      lastTouch = touch;
+    }
+  } else {
+    isTouching = false;
+  }
+
+  circlePosition pos;
+  hidCircleRead(&pos);
+  if (std::abs(pos.dy) > 20) {
+    scrollOffset -= (float)pos.dy / 10.0f;
+  }
+
+  if (scrollOffset < 0.0f)
+    scrollOffset = 0.0f;
+  if (scrollOffset > maxScroll)
+    scrollOffset = maxScroll;
 }
 
 void AboutScreen::renderTop(C3D_RenderTarget *target) {
@@ -70,57 +110,107 @@ void AboutScreen::renderBottom(C3D_RenderTarget *target) {
   C2D_SceneBegin(target);
   C2D_TargetClear(target, ScreenManager::colorBackgroundDark());
 
-  drawText(35.0f, 10.0f, 0.6f, 0.5f, 0.5f, ScreenManager::colorText(),
-           "About TriCord");
+  float x = 20.0f;
+  float y = 40.0f - scrollOffset;
 
-  C2D_DrawRectSolid(10.0f, 32.0f, 0.5f, 320.0f - 20.0f, 1.0f,
-                    ScreenManager::colorSeparator());
+  auto drawSectionTitle = [&](const std::string &title, bool first = false) {
+    if (!first)
+      y += 12.0f;
+    float scale = 0.42f;
+    drawText(x, y, 0.5f, scale, scale, ScreenManager::colorText(), title);
+    float w = measureText(title, scale, scale);
+    y += 13.0f;
+    C2D_DrawRectSolid(x, y - 2.0f, 0.5f, w, 1.0f,
+                      ScreenManager::colorSeparator());
+    y += 5.0f;
+  };
 
-  float x = 15.0f;
-  float y = 44.0f;
-
-  auto drawInfo = [&](const std::string &label, const std::string &val) {
-    drawText(x, y, 0.5f, 0.4f, 0.4f, ScreenManager::colorTextMuted(), label);
-    drawRichText(x + 70.0f, y, 0.5f, 0.4f, 0.4f, ScreenManager::colorWhite(),
-                 val);
+  auto drawEntry = [&](const std::string &name, const std::string &desc) {
+    drawText(x + 8.0f, y, 0.5f, 0.38f, 0.38f, ScreenManager::colorWhite(),
+             name);
+    float w = measureText(name, 0.38f, 0.38f);
+    drawText(x + 12.0f + w, y + 1.0f, 0.5f, 0.35f, 0.35f,
+             ScreenManager::colorTextMuted(), " - " + desc);
     y += 14.0f;
   };
 
-  drawText(x, y, 0.5f, 0.45f, 0.45f, ScreenManager::colorTextMuted(),
-           "Credits:");
-  y += 14.0f;
+  drawSectionTitle("Credits", true);
+  drawEntry("2b-zipper", "Lead Developer");
+  drawEntry("Str4ky", "French Translation");
+  drawEntry("AverageJohtonian", "Spanish Translation");
+  drawEntry("Discord Userdoccers", "API Research");
 
-  float subX = x + 10.0f;
-  drawText(subX, y, 0.5f, 0.38f, 0.38f, ScreenManager::colorText(),
-           "2b-zipper (Main Development)");
+  y += 2.0f;
+  drawText(x + 8.0f, y, 0.5f, 0.35f, 0.35f, ScreenManager::colorTextMuted(),
+           "And all other contributors!");
   y += 12.0f;
-  drawText(subX, y, 0.5f, 0.38f, 0.38f, ScreenManager::colorText(),
-           "Str4ky (French Translation)");
-  y += 12.0f;
-  drawText(subX, y, 0.5f, 0.38f, 0.38f, ScreenManager::colorText(),
-           "Discord Userdoccers (API Docs)");
 
-  y += 16.0f;
-  drawInfo("Libraries:", "libctru, citro3d, citro2d, libcurl, mbedtls, zlib");
-  drawRichText(x + 70.0f, y, 0.5f, 0.4f, 0.4f, ScreenManager::colorWhite(),
-               "RapidJSON, stb_image, qrcodegen, Twemoji");
-  y += 14.0f;
-  drawInfo("License:", "GNU GPL v3.0");
+  drawSectionTitle("Built With");
+  auto drawLib = [&](const std::string &name) {
+    drawText(x + 8.0f, y, 0.5f, 0.36f, 0.36f, ScreenManager::colorWhite(),
+             "\u2022 " + name);
+    y += 13.0f;
+  };
+  drawLib("libctru, citro3d, citro2d");
+  drawLib("libcurl, mbedtls, RapidJSON");
+  drawLib("stb_image, qrcodegen, zlib");
+  drawLib("Twemoji Assets");
 
-  y += 18.0f;
-  drawText(x, y, 0.5f, 0.45f, 0.45f, ScreenManager::colorTextMuted(),
-           "GitHub Repo:");
-  y += 14.0f;
-  drawRichText(x + 10.0f, y, 0.5f, 0.4f, 0.4f, ScreenManager::colorLink(),
+  drawSectionTitle("Source Code");
+  drawText(x + 8.0f, y, 0.5f, 0.36f, 0.36f, ScreenManager::colorTextMuted(),
+           "Licensed under GPL v3.0");
+  y += 13.0f;
+  drawRichText(x + 8.0f, y, 0.5f, 0.36f, 0.36f, ScreenManager::colorLink(),
                "https://github.com/2b-zipper/TriCord");
 
-  y += 18.0f;
-  drawText(x, y, 0.5f, 0.35f, 0.35f, ScreenManager::colorTextMuted(),
-           "This is an unofficial client not affiliated with Discord Inc.");
+  y += 25.0f;
+  C2D_DrawRectSolid(x, y, 0.5f, 280.0f, 1.0f, ScreenManager::colorSeparator());
+  y += 8.0f;
+
+  auto drawLegalText = [&](const std::string &text, float scale = 0.32f) {
+    auto lines = MessageUtils::wrapText(text, 280.0f, scale);
+    for (const auto &line : lines) {
+      drawText(x, y, 0.5f, scale, scale, ScreenManager::colorTextMuted(), line);
+      y += (scale * 35.0f);
+    }
+  };
+
+  drawLegalText("Disclaimer:", 0.36f);
+  y += 2.0f;
+  drawLegalText("This project is developed for educational purposes only. This "
+                "is an unofficial Discord client and is not affiliated with or "
+                "endorsed by Discord Inc.");
+  y += 5.0f;
+  drawLegalText("This software is provided \"as is\", and you use it at your "
+                "own risk. The use of this application is entirely the user's "
+                "own responsibility. The developers assume no responsibility "
+                "for any damages, data loss, or violations of Discord's ToS.");
+  y += 30.0f;
+
+  maxScroll =
+      std::max(0.0f, (y + scrollOffset) - (BOTTOM_SCREEN_HEIGHT - 35.0f));
+
+  C2D_DrawRectSolid(0.0f, 0.0f, 0.8f, 320.0f, 35.0f,
+                    ScreenManager::colorBackgroundDark());
+  drawText(35.0f, 10.0f, 0.85f, 0.5f, 0.5f, ScreenManager::colorText(),
+           "About TriCord");
+  C2D_DrawRectSolid(10.0f, 32.0f, 0.85f, 300.0f, 1.0f,
+                    ScreenManager::colorSeparator());
 
   drawCenteredText(
-      240.0f - 25.0f, 0.5f, 0.4f, 0.4f, ScreenManager::colorTextMuted(),
+      240.0f - 22.0f, 0.9f, 0.4f, 0.4f, ScreenManager::colorTextMuted(),
       "\uE001: " + Core::I18n::getInstance().get("common.back"), 320.0f);
+  if (maxScroll > 0) {
+    float areaH = (240.0f - 35.0f - 30.0f) - 10.0f;
+    float barX = 320.0f - 8.0f;
+    float barY = 35.0f + 5.0f;
+    C2D_DrawRectSolid(barX, barY, 0.85f, 4.0f, areaH,
+                      C2D_Color32(255, 255, 255, 20));
+    float thumbH = std::max(20.0f, areaH * (areaH / (areaH + maxScroll)));
+    float thumbY = barY + (scrollOffset / maxScroll) * (areaH - thumbH);
+    drawRoundedRect(barX, thumbY, 0.9f, 4.0f, thumbH, 2.0f,
+                    ScreenManager::colorSelection());
+  }
 }
 
 } // namespace UI
