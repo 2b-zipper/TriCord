@@ -15,6 +15,7 @@ static const size_t SOC_SHAREDMEM_SIZE = 0x200000;
 static u32 *soc_sharedmem_ptr = NULL;
 
 int main(int argc, char **argv) {
+  osSetSpeedupEnable(true);
   gfxInitDefault();
 
   soc_sharedmem_ptr = (u32 *)memalign(0x1000, SOC_SHAREDMEM_SIZE);
