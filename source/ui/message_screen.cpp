@@ -1514,22 +1514,14 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y,
     return drawSystemMessage(msg, y, topMargin, height);
   }
 
-  if (msg.isForwarded) {
-    float barX = 38.0f;
-    float barY = y + topMargin + 1.0f;
-    float barW = 2.0f;
-    float barH = height - topMargin - 2.0f;
-    C2D_DrawRectSolid(barX, barY, 0.45f, barW, barH,
-                      ScreenManager::colorTextMuted());
-  }
-
   float contentY = y + topMargin + 1.0f;
-
   contentY = drawReplyPreview(msg, textOffsetX, contentY);
-  contentY = drawForwardHeader(msg, textOffsetX, contentY);
 
   float avatarTopY = contentY;
   contentY = drawAuthorHeader(msg, textOffsetX, contentY, showHeader);
+
+  float forwardedBarStartY = contentY;
+  contentY = drawForwardHeader(msg, textOffsetX, contentY);
 
   if (!showHeader && isSelected) {
     std::string time = MessageUtils::formatTimeOnly(msg.timestamp);
@@ -1550,6 +1542,15 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y,
   float attachmentMaxWidth = 400.0f - textOffsetX - 10.0f;
   contentY = drawAttachments(msg, textOffsetX, contentY, attachmentMaxWidth);
   contentY = drawStickers(msg, textOffsetX, contentY, attachmentMaxWidth);
+
+  if (msg.isForwarded) {
+    float barX = 38.0f;
+    float barW = 2.0f;
+    float barH = contentY - forwardedBarStartY;
+    C2D_DrawRectSolid(barX, forwardedBarStartY, 0.45f, barW, barH,
+                      ScreenManager::colorTextMuted());
+  }
+
   contentY = drawReactions(msg, textOffsetX, contentY, isSelected);
 
   if (showHeader) {

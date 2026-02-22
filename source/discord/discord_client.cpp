@@ -1072,6 +1072,84 @@ Message DiscordClient::parseSingleMessage(const rapidjson::Value &d) {
         msg.originalAuthorAvatar =
             Utils::Json::getString(innerAuthor, "avatar");
       }
+
+      if (innerMsg.HasMember("embeds") && innerMsg["embeds"].IsArray()) {
+        const rapidjson::Value &innerEmbeds = innerMsg["embeds"];
+        for (rapidjson::SizeType e = 0; e < innerEmbeds.Size(); e++) {
+          const rapidjson::Value &eObj = innerEmbeds[e];
+          Embed embed;
+          embed.title = Utils::Json::getString(eObj, "title");
+          embed.description = Utils::Json::getString(eObj, "description");
+          embed.url = Utils::Json::getString(eObj, "url");
+          embed.type = Utils::Json::getString(eObj, "type");
+          embed.color = Utils::Json::getInt(eObj, "color");
+          embed.timestamp = Utils::Json::getString(eObj, "timestamp");
+
+          if (eObj.HasMember("author") && eObj["author"].IsObject()) {
+            embed.author_name = Utils::Json::getString(eObj["author"], "name");
+            embed.author_icon_url =
+                Utils::Json::getString(eObj["author"], "icon_url");
+          }
+          if (eObj.HasMember("footer") && eObj["footer"].IsObject()) {
+            embed.footer_text = Utils::Json::getString(eObj["footer"], "text");
+            embed.footer_icon_url =
+                Utils::Json::getString(eObj["footer"], "icon_url");
+          }
+          if (eObj.HasMember("provider") && eObj["provider"].IsObject()) {
+            embed.provider_name =
+                Utils::Json::getString(eObj["provider"], "name");
+          }
+          if (eObj.HasMember("image") && eObj["image"].IsObject()) {
+            const rapidjson::Value &img = eObj["image"];
+            embed.image_url = Utils::Json::getString(img, "url");
+            embed.image_proxy_url = Utils::Json::getString(img, "proxy_url");
+            embed.image_width = Utils::Json::getInt(img, "width");
+            embed.image_height = Utils::Json::getInt(img, "height");
+          }
+          if (eObj.HasMember("thumbnail") && eObj["thumbnail"].IsObject()) {
+            const rapidjson::Value &thumb = eObj["thumbnail"];
+            embed.thumbnail_url = Utils::Json::getString(thumb, "url");
+            embed.thumbnail_proxy_url =
+                Utils::Json::getString(thumb, "proxy_url");
+            embed.thumbnail_width = Utils::Json::getInt(thumb, "width");
+            embed.thumbnail_height = Utils::Json::getInt(thumb, "height");
+          }
+          if (eObj.HasMember("fields") && eObj["fields"].IsArray()) {
+            const rapidjson::Value &fields = eObj["fields"];
+            for (rapidjson::SizeType f = 0; f < fields.Size() && f < 10; f++) {
+              const rapidjson::Value &fObj = fields[f];
+              EmbedField field;
+              field.name = Utils::Json::getString(fObj, "name");
+              field.value = Utils::Json::getString(fObj, "value");
+              field.isInline =
+                  fObj.HasMember("inline") && fObj["inline"].IsBool()
+                      ? fObj["inline"].GetBool()
+                      : false;
+              embed.fields.push_back(field);
+            }
+          }
+          msg.embeds.push_back(embed);
+        }
+      }
+
+      if (innerMsg.HasMember("attachments") &&
+          innerMsg["attachments"].IsArray()) {
+        const rapidjson::Value &innerAtts = innerMsg["attachments"];
+        for (rapidjson::SizeType a = 0; a < innerAtts.Size(); a++) {
+          const rapidjson::Value &aObj = innerAtts[a];
+          Attachment attachment;
+          attachment.id = Utils::Json::getString(aObj, "id");
+          attachment.filename = Utils::Json::getString(aObj, "filename");
+          attachment.url = Utils::Json::getString(aObj, "url");
+          attachment.proxy_url = Utils::Json::getString(aObj, "proxy_url");
+          attachment.size = Utils::Json::getInt(aObj, "size");
+          attachment.width = Utils::Json::getInt(aObj, "width");
+          attachment.height = Utils::Json::getInt(aObj, "height");
+          attachment.content_type =
+              Utils::Json::getString(aObj, "content_type");
+          msg.attachments.push_back(attachment);
+        }
+      }
     }
   }
 
