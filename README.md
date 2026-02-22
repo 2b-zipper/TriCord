@@ -88,7 +88,9 @@ This project is licensed under the GNU General Public License v3.0 - see the [LI
 ## Credits
 - [2b-zipper](https://github.com/2b-zipper) for the main development
 - [Str4ky](https://github.com/Str4ky) for the French translation
+- [AverageJohtonian](https://github.com/AverageJohtonian) for the Spanish translation
 - [Discord Userdoccers](https://github.com/discord-userdoccers/discord-userdoccers) for the documentation of the Discord API
+- And all other contributors!
 
 ## Support
 If you encounter any issues or have questions:
