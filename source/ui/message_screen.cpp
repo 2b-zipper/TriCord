@@ -1293,9 +1293,7 @@ float MessageScreen::drawAttachments(const Discord::Message &msg, float x,
             imageUrl, attach.width, attach.height,
             Network::RequestPriority::INTERACTIVE);
 
-        u32 placeholderBg = (Config::getInstance().getThemeType() == 1)
-                                ? ScreenManager::colorBackgroundDark()
-                                : ScreenManager::colorBackgroundDark();
+        u32 placeholderBg = ScreenManager::colorBackgroundDark();
         C2D_DrawRectSolid(x, newY, 0.5f, drawW, drawH, placeholderBg);
         drawText(x + 5, newY + (drawH / 2) - 6, 0.5f, 0.3f, 0.3f,
                  ScreenManager::colorTextMuted(), TR("common.loading"));
@@ -1359,9 +1357,7 @@ float MessageScreen::drawStickers(const Discord::Message &msg, float x, float y,
     } else {
       UI::ImageManager::getInstance().prefetch(
           stickerUrl, 160, 160, Network::RequestPriority::INTERACTIVE);
-      u32 stickerBg = (Config::getInstance().getThemeType() == 1)
-                          ? ScreenManager::colorBackgroundDark()
-                          : ScreenManager::colorBackgroundDark();
+      u32 stickerBg = ScreenManager::colorBackgroundDark();
       C2D_DrawRectSolid(x, newY, 0.5f, stickerSize, stickerSize, stickerBg);
       drawText(x + 5, newY + (stickerSize / 2) - 6, 0.55f, 0.3f, 0.3f,
                ScreenManager::colorTextMuted(), TR("common.loading"));
@@ -2434,7 +2430,8 @@ float MessageScreen::renderEmbed(const Discord::Embed &embed, float x, float y,
       ImageManager::getInstance().prefetch(
           mediaUrl, imgW, imgH, Network::RequestPriority::INTERACTIVE);
       C2D_DrawRectSolid(textX, currentY, 0.49f, drawW, drawH,
-                        ScreenManager::colorEmbedMedia());
+                        isSimpleMedia ? ScreenManager::colorBackgroundDark()
+                                      : ScreenManager::colorEmbedMedia());
       drawText(textX + 5, currentY + (drawH / 2) - 6, 0.5f, 0.35f, 0.35f,
                ScreenManager::colorTextMuted(), TR("common.loading"));
     }
