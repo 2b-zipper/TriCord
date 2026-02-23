@@ -28,6 +28,7 @@ int main(int argc, char **argv) {
   C2D_Prepare();
 
   romfsInit();
+  psInit();
 
   Logger::init();
   Logger::log("TriCord - Discord for 3DS starting...");
@@ -52,6 +53,7 @@ int main(int argc, char **argv) {
 
   UI::ScreenManager::getInstance().shutdown();
   Network::NetworkManager::getInstance().shutdown();
+  psExit();
   romfsExit();
   C2D_Fini();
   C3D_Fini();
