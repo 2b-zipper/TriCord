@@ -48,6 +48,7 @@ void ImageManager::clear() {
   lruList.clear();
   fetchingUrls.clear();
   pendingTextures.clear();
+  currentCacheBytes = 0;
   {
     std::lock_guard<std::mutex> lock(decodeMutex);
     decodeQueue.clear();
@@ -72,6 +73,7 @@ void ImageManager::evictOldest() {
 
   auto it = textureCache.find(url);
   if (it != textureCache.end()) {
+    currentCacheBytes -= it->second.vramSize;
     if (it->second.tex) {
       C3D_TexDelete(it->second.tex);
       free(it->second.tex);
@@ -94,6 +96,7 @@ void ImageManager::clearRemote() {
   std::lock_guard<std::mutex> lock(cacheMutex);
   for (auto it = textureCache.begin(); it != textureCache.end();) {
     if (it->first.find("http") == 0) {
+      currentCacheBytes -= it->second.vramSize;
       if (it->second.tex) {
         C3D_TexDelete(it->second.tex);
         free(it->second.tex);
@@ -336,7 +339,8 @@ void ImageManager::update() {
 
   if (p.success) {
     if (p.tiled.pixels) {
-      while (lruList.size() >= MAX_TEXTURES) {
+      while (currentCacheBytes + p.tiled.vramSize > MAX_CACHE_BYTES &&
+             lruList.size() > MIN_CACHE_ENTRIES) {
         evictOldest();
       }
 
@@ -350,10 +354,12 @@ void ImageManager::update() {
         info.tex = tex;
         info.originalW = p.width;
         info.originalH = p.height;
+        info.vramSize = p.tiled.vramSize;
         info.failed = false;
 
         std::lock_guard<std::mutex> lock(cacheMutex);
         textureCache[p.url] = info;
+        currentCacheBytes += p.tiled.vramSize;
         touchImage(p.url);
         generation++;
       } else {

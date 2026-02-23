@@ -26,6 +26,7 @@ public:
     C3D_Tex *tex = nullptr;
     int originalW = 0;
     int originalH = 0;
+    size_t vramSize = 0;
     bool failed = false;
   };
 
@@ -82,7 +83,9 @@ private:
   std::atomic<int> currentSessionId{0};
   std::atomic<uint32_t> generation{0};
 
-  static constexpr size_t MAX_TEXTURES = 15;
+  static constexpr size_t MAX_CACHE_BYTES = 8 * 1024 * 1024; // 8MB
+  static constexpr size_t MIN_CACHE_ENTRIES = 8;
+  size_t currentCacheBytes = 0;
   void touchImage(const std::string &url);
   void evictOldest();
   void decoderWorker();
