@@ -50,6 +50,7 @@ struct Channel {
 
 namespace Permissions {
 const uint64_t ADMINISTRATOR = 1ULL << 3;
+const uint64_t MANAGE_MESSAGES = 1ULL << 13;
 const uint64_t VIEW_CHANNEL = 1ULL << 10;
 const uint64_t SEND_MESSAGES = 1ULL << 11;
 } // namespace Permissions

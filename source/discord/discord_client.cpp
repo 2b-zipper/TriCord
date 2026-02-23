@@ -2461,6 +2461,34 @@ bool DiscordClient::canSendMessage(const std::string &channelId) {
   return false;
 }
 
+bool DiscordClient::canManageMessages(const std::string &channelId) {
+  std::lock_guard<std::recursive_mutex> lock(clientMutex);
+
+  std::string guildId = getGuildIdFromChannel(channelId);
+  if (guildId == "DM") {
+    return false;
+  }
+  if (guildId.empty()) {
+    return false;
+  }
+
+  for (const auto &guild : guilds) {
+    if (guild.id == guildId) {
+      for (const auto &channel : guild.channels) {
+        if (channel.id == channelId) {
+          uint64_t perms = computeChannelPermissions(
+              guild, channel, currentUser.id, guild.myRoles);
+          return (perms & Permissions::MANAGE_MESSAGES) != 0 ||
+                 (perms & Permissions::ADMINISTRATOR) != 0;
+        }
+      }
+      return false;
+    }
+  }
+
+  return false;
+}
+
 void DiscordClient::parseGuildObject(const rapidjson::Value &gObj, Guild &guild,
                                      const std::string &userId) {
   guild.id = Utils::Json::getString(gObj, "id");

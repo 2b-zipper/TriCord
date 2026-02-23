@@ -1980,7 +1980,7 @@ void MessageScreen::showMessageOptions() {
     addOption("Edit", "message.menu.edit");
   }
 
-  if (isMine) {
+  if (isMine || client.canManageMessages(channelId)) {
     addOption("Delete", "message.menu.delete");
   }
 

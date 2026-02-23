@@ -160,6 +160,7 @@ public:
                        const std::string &channelId);
 
   bool canSendMessage(const std::string &channelId);
+  bool canManageMessages(const std::string &channelId);
   void updatePresence(UserStatus status);
 
   Channel getChannel(const std::string &channelId);
