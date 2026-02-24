@@ -25,9 +25,10 @@ void SettingsScreen::onEnter() {
   language.value = (langCode == "ja")   ? 1
                    : (langCode == "fr") ? 2
                    : (langCode == "es") ? 3
+                   : (langCode == "it") ? 4
                                         : 0;
   language.min = 0;
-  language.max = 3;
+  language.max = 4;
   language.valueFormatter = [](int val) {
     if (val == 0)
       return "English";
@@ -37,12 +38,15 @@ void SettingsScreen::onEnter() {
       return "Français";
     if (val == 3)
       return "Español";
+    if (val == 4)
+      return "Italiano";
     return "English";
   };
   language.onUpdate = [this](int val) {
     std::string newLang = (val == 1)   ? "ja"
                           : (val == 2) ? "fr"
                           : (val == 3) ? "es"
+                          : (val == 4) ? "it"
                                        : "en";
     Config::getInstance().setLanguage(newLang);
     Config::getInstance().saveSettings();
