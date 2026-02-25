@@ -139,6 +139,7 @@ void AboutScreen::renderBottom(C3D_RenderTarget *target) {
   drawEntry("Str4ky", "French Translation");
   drawEntry("AverageJohtonian", "Spanish Translation");
   drawEntry("RossoDev", "Italian Translation");
+  drawEntry("MorrisTheGamer", "German Translation");
   drawEntry("Discord Userdoccers", "API Research");
 
   y += 2.0f;
