@@ -52,7 +52,7 @@
     "login.field.password": "Senha",
     "login.field.password_hint": "Pressione para inserir a senha",
     "login.generating": "Gerando...",
-    "login.loading.many_servers_warning": "If you are in many servers, it may crash (especially on Old 3DS).\nIf it crashes, delete sdmc:/3ds/TriCord/accounts\nand re-login with an account in fewer servers.",
+    "login.loading.many_servers_warning": "Se você estiver em muitos servidores, o aplicativo pode crashar (especialmente no 3DS Original).\nSe crashar, delete o arquivo sdmc:/3ds/TriCord/accounts\ne entre novamente por uma conta com menos servidores.",
     "login.mfa.cancel": "Pressione \uE001 para cancelar.",
     "login.mfa.desc": "Insira o código de verificação de 6 dígitos",
     "login.mfa.hint": "Pressione para inserir o código",
