@@ -395,7 +395,6 @@ void Config::loadTheme() {
 	}
 }
 
-
 void Config::setCustomThemeEnabled(bool enabled) {
 	customThemeEnabled = enabled;
 	saveSettings();

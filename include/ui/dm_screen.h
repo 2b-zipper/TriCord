@@ -3,7 +3,6 @@
 
 #include "discord/types.h"
 #include "ui/screen_manager.h"
-#include <string>
 #include <vector>
 
 namespace UI {

@@ -1,7 +1,6 @@
 #ifndef FORUM_SCREEN_H
 #define FORUM_SCREEN_H
 
-#include "discord/discord_client.h"
 #include "discord/types.h"
 #include "ui/screen_manager.h"
 #include <string>

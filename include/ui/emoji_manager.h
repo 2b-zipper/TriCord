@@ -4,7 +4,6 @@
 #include <citro2d.h>
 #include <deque>
 #include <map>
-#include <mutex>
 #include <shared_mutex>
 #include <string>
 #include <unordered_set>

@@ -70,6 +70,16 @@ class DiscordClient {
 	bool wasAuthFailed() const { return authFailed.load(); }
 	void clearAuthFailed() { authFailed.store(false); }
 
+	std::string consumeReadStateDirty() {
+		if (!readStateDirty.exchange(false)) {
+			return "";
+		}
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		return readStateDirtyChannelId;
+	}
+
+	bool consumeGuildDataDirty() { return guildDataDirty.exchange(false); }
+
 	std::recursive_mutex &getMutex() { return clientMutex; }
 	std::string getStatusMessage() {
 		std::lock_guard<std::mutex> lock(statusMutex);
@@ -106,10 +116,13 @@ class DiscordClient {
 		return currentUser;
 	}
 
-	const User &getSelf() const { return self; }
 	const std::vector<Guild> &getGuilds() { return guilds; }
 	const std::vector<GuildFolder> &getGuildFolders() { return folders; }
 	const std::vector<Channel> &getPrivateChannels() { return privateChannels; }
+	const std::map<std::string, ReadState> &getReadStates() const { return readStates; }
+	const std::map<std::string, GuildNotificationSettings> &getNotificationSettings() const {
+		return notificationSettings;
+	}
 
 	void setSelectedGuildId(const std::string &id) { selectedGuildId = id; }
 	std::string getSelectedGuildId() const { return selectedGuildId; }
@@ -150,7 +163,16 @@ class DiscordClient {
 
 	bool canSendMessage(const std::string &channelId);
 	bool canManageMessages(const std::string &channelId);
+
+	void markChannelRead(const std::string &channelId, const std::string &messageId);
+	void markChannelReadLatest(const std::string &channelId);
+	void markGuildRead(const std::string &guildId);
 	void updatePresence(UserStatus status);
+	void setGuildMuted(const std::string &guildId, bool muted, int timeWindowMinutes);
+	void setChannelMuted(const std::string &channelId, bool muted, int timeWindowMinutes);
+	// messageNotifications: 0=all, 1=mentions, 2=none (3=inherit, channel only)
+	void setGuildNotificationLevel(const std::string &guildId, int messageNotifications);
+	void setChannelNotificationLevel(const std::string &channelId, int messageNotifications);
 
 	Channel getChannel(const std::string &channelId);
 	Guild getGuild(const std::string &guildId);
@@ -159,19 +181,6 @@ class DiscordClient {
 	int getRoleColor(const std::string &guildId, const std::string &userId);
 	std::string getMemberDisplayName(const std::string &guildId, const std::string &userId, const User &user);
 	std::string getGuildIdFromChannel(const std::string &channelId);
-
-	std::vector<Message> parseMessages(const std::string &json);
-	Message parseSingleMessage(const rapidjson::Value &d);
-	Message parseSingleMessage(const std::string &json);
-
-	uint64_t calcBasePermissions(const Guild &guild, const std::string &userId,
-	                             const std::vector<std::string> &memberRoleIds);
-	uint64_t computeChannelPermissions(const Guild &guild, const Channel &channel, const std::string &userId,
-	                                   const std::vector<std::string> &memberRoleIds);
-	uint64_t computeOverwrites(uint64_t base, const std::string &guildId, const std::string &userId,
-	                           const std::vector<std::string> &memberRoleIds, const rapidjson::Value &overwrites);
-	uint64_t computeOverwrites(uint64_t base, const std::string &guildId, const std::string &userId,
-	                           const std::vector<std::string> &memberRoleIds, const std::vector<Overwrite> &overwrites);
 
   private:
 	DiscordClient();
@@ -200,17 +209,39 @@ class DiscordClient {
 	void handleMessageCreate(const rapidjson::Value &d);
 	void handleMessageUpdate(const rapidjson::Value &d);
 	void handleMessageDelete(const rapidjson::Value &d);
+	void handleMessageAck(const rapidjson::Value &d);
 	void handleReactionAdd(const rapidjson::Value &d);
 	void handleReactionRemove(const rapidjson::Value &d);
 	void handlePresenceUpdate(const rapidjson::Value &d);
 	void handleUserSettingsUpdate(const rapidjson::Value &d);
+	void handleUserGuildSettingsUpdate(const rapidjson::Value &d);
 	void handleSessionsReplace(const rapidjson::Value &d);
+	void parseUserGuildSettings(const rapidjson::Value &arr, std::map<std::string, GuildNotificationSettings> &out);
 	void parseGuildObject(const rapidjson::Value &gObj, Guild &guild, const std::string &userId);
 	void parseChannelObject(const rapidjson::Value &cObj, Channel &channel);
 	void parseOverwrites(const rapidjson::Value &ows, std::vector<Overwrite> &overwrites);
 
+	static User parseUserObject(const rapidjson::Value &uObj);
+	static Member parseMemberObject(const rapidjson::Value &mObj, const std::string &userId);
+	static Embed parseEmbedObject(const rapidjson::Value &eObj);
+	static Attachment parseAttachmentObject(const rapidjson::Value &aObj);
+	static Emoji parseEmojiObject(const rapidjson::Value &eObj);
+
 	void postMessage(const std::string &channelId, const std::string &content, const std::string &nonce,
 	                 const std::string &replyId, SendMessageCallback cb);
+
+	std::vector<Message> parseMessages(const std::string &json);
+	Message parseSingleMessage(const rapidjson::Value &d);
+	Message parseSingleMessage(const std::string &json);
+
+	uint64_t calcBasePermissions(const Guild &guild, const std::string &userId,
+	                             const std::vector<std::string> &memberRoleIds);
+	uint64_t computeChannelPermissions(const Guild &guild, const Channel &channel, const std::string &userId,
+	                                   const std::vector<std::string> &memberRoleIds);
+	uint64_t computeOverwrites(uint64_t base, const std::string &guildId, const std::string &userId,
+	                           const std::vector<std::string> &memberRoleIds, const rapidjson::Value &overwrites);
+	uint64_t computeOverwrites(uint64_t base, const std::string &guildId, const std::string &userId,
+	                           const std::vector<std::string> &memberRoleIds, const std::vector<Overwrite> &overwrites);
 
 	void setState(ConnectionState newState, const std::string &message = "");
 	void setStatus(const std::string &message);
@@ -221,6 +252,8 @@ class DiscordClient {
 	std::vector<Channel> privateChannels;
 	std::vector<GuildFolder> folders;
 	std::map<std::string, std::string> channelToGuildCache;
+	std::map<std::string, ReadState> readStates;
+	std::map<std::string, GuildNotificationSettings> notificationSettings;
 
 	std::string token;
 	ConnectionState state;
@@ -235,6 +268,9 @@ class DiscordClient {
 	bool isConnecting;
 	bool stopWorker;
 	std::atomic<bool> authFailed{false};
+	std::atomic<bool> readStateDirty{false};
+	std::string readStateDirtyChannelId;
+	std::atomic<bool> guildDataDirty{false};
 	std::thread workerThread;
 	std::thread networkThread;
 

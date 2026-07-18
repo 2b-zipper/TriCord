@@ -13,7 +13,6 @@
 #include <algorithm>
 #include <citro2d.h>
 #include <ctime>
-#include <sstream>
 
 #include <mutex>
 #include <set>
@@ -56,6 +55,10 @@ MessageScreen::~MessageScreen() {
 	Discord::DiscordClient::getInstance().setMessageUpdateCallback(nullptr);
 	Discord::DiscordClient::getInstance().setMessageDeleteCallback(nullptr);
 	Discord::DiscordClient::getInstance().setConnectionCallback(nullptr);
+	// Guarded so a screen that has already opened another channel keeps its id.
+	if (Discord::DiscordClient::getInstance().getSelectedChannelId() == channelId) {
+		Discord::DiscordClient::getInstance().setSelectedChannelId("");
+	}
 
 	embedHeightCache.clear();
 	ImageManager::getInstance().clearRemote();
@@ -86,6 +89,8 @@ void MessageScreen::onEnter() {
 	this->channelName = MessageUtils::getChannelDisplayName(channel);
 
 	this->truncatedChannelName = getTruncatedRichText(this->channelName, 310.0f - 56.0f, 0.55f, 0.55f);
+
+	client.setSelectedChannelId(channelId);
 
 	if (!this->guildId.empty()) {
 		client.sendLazyRequest(this->guildId, channelId);
@@ -118,20 +123,10 @@ void MessageScreen::onEnter() {
 		}
 		if (!found) {
 			this->messages.push_back(msg);
-			float oldMaxScroll = std::max(0.0f, totalContentHeight - 240.0f);
-			bool wasAtBottom = (targetScrollY >= oldMaxScroll - 5.0f);
-
+			bool atBottom = isAtBottom();
 			rebuildLayoutCache();
-			if (wasAtBottom) {
-				if (bottomMode != BottomScreenMode::EMOJI_PICKER) {
-					selectedIndex = this->messages.size() - 1;
-					scrollToBottom();
-				} else {
-					float maxScroll = std::max(0.0f, totalContentHeight - 240.0f);
-					targetScrollY = maxScroll;
-					currentScrollY = maxScroll;
-				}
-			} else {
+			syncScrollAfterRebuild(atBottom, true);
+			if (!atBottom) {
 				showNewMessageIndicator = true;
 				newMessageCount++;
 			}
@@ -147,20 +142,10 @@ void MessageScreen::onEnter() {
 		std::lock_guard<std::recursive_mutex> lock(messageMutex);
 		for (auto &m : this->messages) {
 			if (m.id == msg.id) {
-				float oldMaxScroll = std::max(0.0f, totalContentHeight - 240.0f);
-				bool wasAtBottom = (targetScrollY >= oldMaxScroll - 5.0f);
-
+				bool atBottom = isAtBottom();
 				m = msg;
 				rebuildLayoutCache();
-
-				if (wasAtBottom) {
-					if (bottomMode != BottomScreenMode::EMOJI_PICKER) {
-						scrollToBottom();
-					} else {
-						targetScrollY = std::max(0.0f, totalContentHeight - 240.0f);
-						currentScrollY = targetScrollY;
-					}
-				}
+				syncScrollAfterRebuild(atBottom);
 				break;
 			}
 		}
@@ -185,9 +170,7 @@ void MessageScreen::onEnter() {
 		std::lock_guard<std::recursive_mutex> lock(messageMutex);
 		for (auto &msg : this->messages) {
 			if (msg.id == messageId) {
-				float oldMaxScroll = std::max(0.0f, totalContentHeight - 240.0f);
-				bool wasAtBottom = (targetScrollY >= oldMaxScroll - 5.0f);
-
+				bool atBottom = isAtBottom();
 				bool found = false;
 				bool isMe = (userId == Discord::DiscordClient::getInstance().getCurrentUser().id);
 				for (auto &r : msg.reactions) {
@@ -208,15 +191,7 @@ void MessageScreen::onEnter() {
 					msg.reactions.push_back(newR);
 				}
 				rebuildLayoutCache();
-
-				if (wasAtBottom) {
-					if (bottomMode != BottomScreenMode::EMOJI_PICKER) {
-						scrollToBottom();
-					} else {
-						targetScrollY = std::max(0.0f, totalContentHeight - 240.0f);
-						currentScrollY = targetScrollY;
-					}
-				}
+				syncScrollAfterRebuild(atBottom);
 				break;
 			}
 		}
@@ -230,9 +205,7 @@ void MessageScreen::onEnter() {
 		std::lock_guard<std::recursive_mutex> lock(messageMutex);
 		for (auto &msg : this->messages) {
 			if (msg.id == messageId) {
-				float oldMaxScroll = std::max(0.0f, totalContentHeight - 240.0f);
-				bool wasAtBottom = (targetScrollY >= oldMaxScroll - 5.0f);
-
+				bool atBottom = isAtBottom();
 				bool isMe = (userId == Discord::DiscordClient::getInstance().getCurrentUser().id);
 				for (auto it = msg.reactions.begin(); it != msg.reactions.end(); ++it) {
 					if (it->emoji.id == emoji.id && it->emoji.name == emoji.name) {
@@ -244,15 +217,7 @@ void MessageScreen::onEnter() {
 							msg.reactions.erase(it);
 						}
 						rebuildLayoutCache();
-
-						if (wasAtBottom) {
-							if (bottomMode != BottomScreenMode::EMOJI_PICKER) {
-								scrollToBottom();
-							} else {
-								targetScrollY = std::max(0.0f, totalContentHeight - 240.0f);
-								currentScrollY = targetScrollY;
-							}
-						}
+						syncScrollAfterRebuild(atBottom);
 						break;
 					}
 				}
@@ -300,20 +265,23 @@ void MessageScreen::onEnter() {
 			isLoading = false;
 		});
 	} else {
-		client.fetchMessagesAsync(channelId, 50,
-		                          [this, token = aliveToken](const std::vector<Discord::Message> &fetched) {
-			                          if (!*token) {
-				                          return;
-			                          }
-			                          {
-				                          std::lock_guard<std::recursive_mutex> lock(messageMutex);
-				                          this->messages = fetched;
-				                          std::reverse(this->messages.begin(), this->messages.end());
-				                          rebuildLayoutCache();
-				                          scrollToBottom();
-			                          }
-			                          isLoading = false;
-		                          });
+		client.fetchMessagesAsync(
+		    channelId, 50, [this, token = aliveToken](const std::vector<Discord::Message> &fetched) {
+			    if (!*token) {
+				    return;
+			    }
+			    {
+				    std::lock_guard<std::recursive_mutex> lock(messageMutex);
+				    this->messages = fetched;
+				    std::reverse(this->messages.begin(), this->messages.end());
+				    rebuildLayoutCache();
+				    scrollToBottom();
+			    }
+			    isLoading = false;
+			    if (!fetched.empty()) {
+				    Discord::DiscordClient::getInstance().markChannelRead(this->channelId, fetched.front().id);
+			    }
+		    });
 	}
 
 	if (!this->guildId.empty()) {
@@ -684,6 +652,9 @@ void MessageScreen::update() {
 		}
 
 		if (kDown & KEY_B) {
+			if (wasAtBottom && !isLoading && !isForumView && !messages.empty()) {
+				Discord::DiscordClient::getInstance().markChannelRead(channelId, messages.back().id);
+			}
 			Discord::DiscordClient::getInstance().setMessageCallback(nullptr);
 			Discord::DiscordClient::getInstance().setMessageUpdateCallback(nullptr);
 			Discord::DiscordClient::getInstance().setMessageDeleteCallback(nullptr);
@@ -715,6 +686,16 @@ void MessageScreen::update() {
 	if (currentScrollY < 40.0f && !isFetchingHistory && hasMoreHistory && !this->messages.empty()) {
 		isFetchingHistory = true;
 		fetchOlderMessages();
+	}
+
+	if (!isLoading && !isForumView && !messages.empty()) {
+		const float SCREEN_HEIGHT = 240.0f;
+		float maxScroll = std::max(0.0f, totalContentHeight - SCREEN_HEIGHT);
+		bool atBottom = (targetScrollY >= maxScroll - 5.0f);
+		if (atBottom && !wasAtBottom) {
+			Discord::DiscordClient::getInstance().markChannelRead(channelId, messages.back().id);
+		}
+		wasAtBottom = atBottom;
 	}
 }
 
@@ -1529,13 +1510,9 @@ void MessageScreen::renderTop(C3D_RenderTarget *target) {
 		return;
 	}
 
-	float availableHeight = 240.0f;
-	float topPadding = 10.0f;
 	if (isFetchingHistory) {
 		drawCenteredRichText(5.0f, 0.55f, 0.4f, 0.4f, ScreenManager::colorTextMuted(),
 		                     Core::I18n::getInstance().get("message.loading_history"), 400.0f);
-		topPadding += 15.0f;
-		availableHeight -= 15.0f;
 	}
 
 	float yOffset = std::max(0.0f, SCREEN_HEIGHT - totalContentHeight);
@@ -1981,6 +1958,27 @@ void MessageScreen::showMessageOptions() {
 
 	isMenuOpen = true;
 	menuIndex = 0;
+}
+
+bool MessageScreen::isAtBottom() const {
+	float maxScroll = std::max(0.0f, totalContentHeight - 240.0f);
+	return targetScrollY >= maxScroll - 5.0f;
+}
+
+void MessageScreen::syncScrollAfterRebuild(bool wasAtBottom, bool updateSelection) {
+	if (!wasAtBottom) {
+		return;
+	}
+	if (bottomMode != BottomScreenMode::EMOJI_PICKER) {
+		if (updateSelection && !messages.empty()) {
+			selectedIndex = (int)messages.size() - 1;
+		}
+		scrollToBottom();
+	} else {
+		float maxScroll = std::max(0.0f, totalContentHeight - 240.0f);
+		targetScrollY = maxScroll;
+		currentScrollY = maxScroll;
+	}
 }
 
 void MessageScreen::scrollToBottom() {
@@ -2500,22 +2498,10 @@ void MessageScreen::catchUpMessages() {
 
 		    if (addedAny) {
 			    Logger::log("[UI] Merged %d new messages from catch-up", addedAny);
-
-			    const float SCREEN_HEIGHT = 240.0f;
-			    float oldMaxScroll = std::max(0.0f, totalContentHeight - SCREEN_HEIGHT);
-			    bool wasAtBottom = (targetScrollY >= oldMaxScroll - 5.0f);
-
+			    bool atBottom = isAtBottom();
 			    rebuildLayoutCache();
-
-			    if (wasAtBottom) {
-				    if (bottomMode != BottomScreenMode::EMOJI_PICKER) {
-					    selectedIndex = this->messages.size() - 1;
-					    scrollToBottom();
-				    } else {
-					    targetScrollY = std::max(0.0f, totalContentHeight - 240.0f);
-					    currentScrollY = targetScrollY;
-				    }
-			    } else {
+			    syncScrollAfterRebuild(atBottom, true);
+			    if (!atBottom) {
 				    showNewMessageIndicator = true;
 				    newMessageCount += addedAny;
 			    }

@@ -1,14 +1,12 @@
 #ifndef MESSAGE_SCREEN_H
 #define MESSAGE_SCREEN_H
 
-#include "discord/discord_client.h"
 #include "discord/types.h"
 #include "ui/screen_manager.h"
 #include "ui/emoji_picker.h"
 #include <memory>
 #include <mutex>
 #include <string>
-#include <thread>
 #include <unordered_set>
 #include <vector>
 
@@ -59,6 +57,7 @@ class MessageScreen : public Screen {
 
 	bool isMenuOpen;
 	int menuIndex;
+	bool wasAtBottom = false;
 	std::vector<std::string> menuOptions;
 	std::vector<std::string> menuActions;
 	std::set<std::string> pendingMemberFetches;
@@ -94,6 +93,8 @@ class MessageScreen : public Screen {
 	void rebuildLayoutCache();
 	void ensureSelectionVisible();
 	void catchUpMessages();
+	bool isAtBottom() const;
+	void syncScrollAfterRebuild(bool wasAtBottom, bool updateSelection = false);
 
 	struct KeyboardResult {
 		int button;

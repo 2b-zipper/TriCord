@@ -1,5 +1,6 @@
 #include "ui/forum_screen.h"
 #include "core/i18n.h"
+#include "discord/discord_client.h"
 #include "log.h"
 #include "ui/image_manager.h"
 #include "ui/screen_manager.h"
@@ -120,15 +121,6 @@ void ForumScreen::update() {
 			selectedIndex++;
 
 			float fullItemHeight = CARD_HEIGHT + 5.0f;
-			float sepHeight = 25.0f;
-
-			float selectedY = 5.0f;
-			for (int i = 0; i < selectedIndex; ++i) {
-				if (i == activeThreadCount && activeThreadCount > 0 && activeThreadCount < (int)threads.size()) {
-					selectedY += sepHeight;
-				}
-				selectedY += fullItemHeight;
-			}
 
 			int visibleItems = (int)(240.0f / fullItemHeight);
 			if (selectedIndex >= scrollOffset + visibleItems) {

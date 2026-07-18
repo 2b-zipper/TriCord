@@ -2,7 +2,6 @@
 #include "stb_image.h"
 
 #include "utils/image_utils.h"
-#include <cmath>
 #include <malloc.h>
 #include <string.h>
 

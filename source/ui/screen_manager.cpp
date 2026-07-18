@@ -16,7 +16,6 @@
 #include "ui/settings_screen.h"
 #include "ui/text_measure_cache.h"
 #include "ui/theme_manager_screen.h"
-#include "utils/message_utils.h"
 #include "utils/utf8_utils.h"
 #include <cmath>
 

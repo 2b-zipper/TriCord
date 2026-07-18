@@ -1,6 +1,5 @@
 #include "discord/avatar_cache.h"
 #include "network/network_manager.h"
-#include "ui/emoji_manager.h"
 #include "core/config.h"
 
 #include "utils/image_utils.h"

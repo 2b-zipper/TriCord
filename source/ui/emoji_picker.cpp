@@ -279,8 +279,10 @@ void EmojiPicker::render(C3D_RenderTarget *target, const Discord::Message *activ
 
 	for (size_t i = startIndex; i < endIndex; i++) {
 		size_t globalIdx = currentCat.emojiIndices[i];
-		float x = xOffset + (i % emojisPerRow) * CELL_SIZE;
-		float y = HEADER_H + (i / emojisPerRow) * CELL_SIZE - emojiScrollY;
+		size_t row = i / (size_t)emojisPerRow;
+		size_t col = i % (size_t)emojisPerRow;
+		float x = xOffset + (float)col * CELL_SIZE;
+		float y = HEADER_H + (float)row * CELL_SIZE - emojiScrollY;
 
 		if (y + CELL_SIZE < HEADER_H || y > 240) {
 			continue;

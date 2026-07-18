@@ -2,6 +2,7 @@
 #define DISCORD_TYPES_H
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -89,6 +90,34 @@ struct Guild {
 	std::vector<std::string> myRoles;
 	std::vector<Role> roles;
 	std::vector<Member> members;
+};
+
+struct ReadState {
+	std::string channelId;
+	std::string lastReadMessageId;
+	int mentionCount = 0;
+	std::string ackToken;
+};
+
+struct ChannelNotificationOverride {
+	std::string channelId;
+	bool muted = false;
+	std::string muteEndTime;
+	int messageNotifications = 3; // 3=inherit, 0=all, 1=mentions, 2=none
+	int flags = 0;
+	// flags: 1<<9=ONLY_MENTIONS, 1<<10=ALL_MESSAGES (precedes notification settings)
+};
+
+struct GuildNotificationSettings {
+	std::string guildId;
+	bool muted = false;
+	std::string muteEndTime;
+	int messageNotifications = 3;
+	int flags = 0;
+	bool suppressEveryone = false;
+	bool suppressRoles = false;
+	// flags: 1<<11=ALL_MESSAGES, 1<<12=ONLY_MENTIONS
+	std::map<std::string, ChannelNotificationOverride> channelOverrides;
 };
 
 struct EmbedField {
