@@ -119,6 +119,8 @@ class Config {
 	void setShowAvatarsEnabled(bool enabled);
 	bool isShowServerIconsEnabled() const { return showServerIcons; }
 	void setShowServerIconsEnabled(bool enabled);
+	bool isShowHiddenChannelsEnabled() const { return showHiddenChannels; }
+	void setShowHiddenChannelsEnabled(bool enabled);
 
 	bool isDisclaimerAccepted() const { return disclaimerAccepted; }
 	void setDisclaimerAccepted(bool accepted);
@@ -145,6 +147,7 @@ class Config {
 	bool sslVerificationDisabled;
 	bool showAvatars;
 	bool showServerIcons;
+	bool showHiddenChannels;
 
 	bool customThemeEnabled;
 	std::string selectedThemeName;

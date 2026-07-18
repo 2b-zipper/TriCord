@@ -238,8 +238,12 @@ void MessageScreen::onEnter() {
 	totalContentHeight = 0.0f;
 	rebuildLayoutCache();
 	isForumView = (channel.type == 15);
+	isHiddenChannel =
+	    !channel.viewable && (guildId.empty() || client.getGuild(guildId).ownerId != client.getCurrentUser().id);
 
-	if (isForumView) {
+	if (isHiddenChannel) {
+		isLoading = false;
+	} else if (isForumView) {
 		client.fetchForumThreads(channelId, [this, token = aliveToken](const std::vector<Discord::Channel> &threads) {
 			if (!*token) {
 				return;
@@ -1503,6 +1507,12 @@ void MessageScreen::renderTop(C3D_RenderTarget *target) {
 	}
 
 	std::lock_guard<std::recursive_mutex> lock(messageMutex);
+
+	if (isHiddenChannel) {
+		drawCenteredRichText(110.0f, 0.5f, 0.6f, 0.6f, ScreenManager::colorTextMuted(),
+		                     Core::I18n::getInstance().get("message.no_view_permission"), 400.0f);
+		return;
+	}
 
 	if (this->messages.empty() && !isLoading) {
 		drawCenteredRichText(110.0f, 0.5f, 0.6f, 0.6f, ScreenManager::colorTextMuted(),

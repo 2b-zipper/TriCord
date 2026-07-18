@@ -178,10 +178,11 @@ void ServerListScreen::refreshChannels() {
 	const auto &currentUser = client.getCurrentUser();
 	bool isOwner = (guild->ownerId == currentUser.id);
 
+	bool showHidden = Config::getInstance().isShowHiddenChannelsEnabled();
 	for (const auto &ch : guild->channels) {
 		if (ch.type == 4) {
 			categories.push_back(ch);
-		} else if (ch.viewable || isOwner) {
+		} else if (ch.viewable || isOwner || showHidden) {
 			viewableChannels.push_back(ch);
 		}
 	}
@@ -1256,8 +1257,10 @@ void ServerListScreen::drawChannelList(float x, float y, float alpha) {
 				}
 			}
 
-			std::string iconPath = "romfs:/discord-icons/text.png";
-			if (!rulesId.empty() && ch.id == rulesId) {
+			std::string iconPath;
+			if (!ch.viewable) {
+				iconPath = "romfs:/discord-icons/lock.png";
+			} else if (!rulesId.empty() && ch.id == rulesId) {
 				iconPath = "romfs:/discord-icons/bookcheck.png";
 			} else if (ch.type == 2) {
 				iconPath = "romfs:/discord-icons/voice.png";
@@ -1269,6 +1272,8 @@ void ServerListScreen::drawChannelList(float x, float y, float alpha) {
 				iconPath = "romfs:/discord-icons/forum.png";
 			} else if (ch.type == 1 || ch.type == 3) {
 				iconPath = "romfs:/discord-icons/chat.png";
+			} else {
+				iconPath = "romfs:/discord-icons/text.png";
 			}
 
 			float iconOffset = 0.0f;

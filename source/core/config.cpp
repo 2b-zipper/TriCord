@@ -23,7 +23,7 @@
 Config::Config()
     : currentAccountIndex(-1), timezoneOffset(0), language("en_US"), themeType(0), typingIndicatorEnabled(true),
       fileLoggingEnabled(false), disclaimerAccepted(false), sslVerificationDisabled(false), showAvatars(true),
-      showServerIcons(true), customThemeEnabled(false), selectedThemeName("") {
+      showServerIcons(true), showHiddenChannels(false), customThemeEnabled(false), selectedThemeName("") {
 	customTheme = getDarkPreset();
 	customTheme.name = "Custom Theme";
 }
@@ -237,6 +237,9 @@ void Config::loadSettings() {
 			if (doc.HasMember("show_server_icons") && doc["show_server_icons"].IsBool()) {
 				showServerIcons = doc["show_server_icons"].GetBool();
 			}
+			if (doc.HasMember("show_hidden_channels") && doc["show_hidden_channels"].IsBool()) {
+				showHiddenChannels = doc["show_hidden_channels"].GetBool();
+			}
 		} else {
 			saveSettings();
 		}
@@ -277,6 +280,8 @@ void Config::saveSettings() {
 	writer.Bool(showAvatars);
 	writer.Key("show_server_icons");
 	writer.Bool(showServerIcons);
+	writer.Key("show_hidden_channels");
+	writer.Bool(showHiddenChannels);
 	writer.EndObject();
 
 	std::string settingsPath = std::string(CONFIG_DIR_PATH) + "/settings.json";
@@ -324,6 +329,11 @@ void Config::setShowAvatarsEnabled(bool enabled) {
 
 void Config::setShowServerIconsEnabled(bool enabled) {
 	showServerIcons = enabled;
+	saveSettings();
+}
+
+void Config::setShowHiddenChannelsEnabled(bool enabled) {
+	showHiddenChannels = enabled;
 	saveSettings();
 }
 

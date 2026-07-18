@@ -41,6 +41,7 @@ class MessageScreen : public Screen {
 	bool showNewMessageIndicator;
 	int newMessageCount;
 	bool isForumView;
+	bool isHiddenChannel = false;
 	bool hasMoreHistory;
 	uint32_t lastImageGeneration;
 
