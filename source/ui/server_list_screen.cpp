@@ -1423,18 +1423,7 @@ void ServerListScreen::drawListItem(int index, const ListItem &item, float x, fl
 
 				C3D_Tex *tex = nullptr;
 				if (!g->icon.empty()) {
-					std::string iconKey = g->id + "_" + g->icon;
-					auto it = iconCache.find(iconKey);
-					if (it != iconCache.end()) {
-						tex = it->second;
-					} else {
-						tex = Discord::AvatarCache::getInstance().getGuildIcon(g->id, g->icon);
-						if (tex) {
-							iconCache[iconKey] = tex;
-						} else {
-							Discord::AvatarCache::getInstance().prefetchGuildIcon(g->id, g->icon);
-						}
-					}
+					tex = Discord::AvatarCache::getInstance().getGuildIcon(g->id, g->icon);
 				}
 
 				if (tex) {
@@ -1455,21 +1444,10 @@ void ServerListScreen::drawListItem(int index, const ListItem &item, float x, fl
 			                        item.hasUnread, isSelected);
 		}
 	} else {
-		std::string iconKey = item.id + "_" + item.icon;
 		C3D_Tex *tex = nullptr;
 
 		if (!item.icon.empty()) {
-			auto it = iconCache.find(iconKey);
-			if (it != iconCache.end()) {
-				tex = it->second;
-			} else {
-				tex = Discord::AvatarCache::getInstance().getGuildIcon(item.id, item.icon);
-				if (tex) {
-					iconCache[iconKey] = tex;
-				} else {
-					Discord::AvatarCache::getInstance().prefetchGuildIcon(item.id, item.icon);
-				}
-			}
+			tex = Discord::AvatarCache::getInstance().getGuildIcon(item.id, item.icon);
 		}
 
 		if (tex) {
@@ -1507,11 +1485,9 @@ void ServerListScreen::renderBottom(C3D_RenderTarget *target) {
 			const Discord::Guild *guild = getGuild(item.id);
 			if (guild) {
 				float headerX = 35.0f;
-				std::string iconKey = guild->id + "_" + guild->icon;
 				C3D_Tex *tex = nullptr;
-				auto it = iconCache.find(iconKey);
-				if (it != iconCache.end()) {
-					tex = it->second;
+				if (!guild->icon.empty()) {
+					tex = Discord::AvatarCache::getInstance().getGuildIcon(guild->id, guild->icon);
 				}
 
 				if (tex) {

@@ -68,8 +68,6 @@ class ServerListScreen : public Screen {
 	void updateUnreadCache();
 	void drawChannelList(float x, float y, float alpha);
 
-	std::map<std::string, C3D_Tex *> iconCache;
-
 	enum class State { SELECTING_SERVER, TRANSITION_TO_CHANNEL, SELECTING_CHANNEL, TRANSITION_TO_SERVER };
 	State state;
 	float animationProgress;

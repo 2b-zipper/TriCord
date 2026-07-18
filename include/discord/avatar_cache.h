@@ -1,6 +1,7 @@
 #ifndef AVATAR_CACHE_H
 #define AVATAR_CACHE_H
 
+#include "utils/image_utils.h"
 #include <citro2d.h>
 #include <map>
 #include <mutex>
@@ -13,6 +14,8 @@ struct AvatarInfo {
 	C3D_Tex *tex = nullptr;
 	std::string url;
 	bool loading = false;
+	int attempts = 0;
+	u64 retryAt = 0;
 };
 
 class AvatarCache {
@@ -41,9 +44,18 @@ class AvatarCache {
 
 	struct PendingAvatar {
 		std::string id;
-		C3D_Tex *tex = nullptr;
+		Utils::Image::TiledData tiled;
 	};
 	std::vector<PendingAvatar> pendingAvatars;
+
+	static constexpr int AVATAR_SIZE = 64;
+	static constexpr int GUILD_ICON_SIZE = 64;
+	static constexpr size_t MAX_UPLOADS_PER_FRAME = 4;
+	static constexpr int MAX_ATTEMPTS = 3;
+
+	bool shouldFetchLocked(const std::string &key);
+	void startFetchLocked(const std::string &key, const std::string &url);
+	void freePendingLocked();
 };
 
 } // namespace Discord
