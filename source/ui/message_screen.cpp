@@ -6,6 +6,7 @@
 #include "log.h"
 #include "ui/emoji_manager.h"
 #include "ui/image_manager.h"
+#include "ui/markdown_renderer.h"
 #include "ui/screen_manager.h"
 #include "utils/message_utils.h"
 #include "utils/utf8_utils.h"
@@ -61,6 +62,7 @@ MessageScreen::~MessageScreen() {
 	}
 
 	embedHeightCache.clear();
+	revealedSpoilers.clear();
 	ImageManager::getInstance().clearRemote();
 }
 
@@ -398,6 +400,13 @@ void MessageScreen::update() {
 					std::string emoji = action.substr(15);
 					Discord::DiscordClient::getInstance().removeReaction(channelId, messages[selectedIndex].id, emoji);
 				}
+			} else if (action == "ToggleSpoiler") {
+				if (selectedIndex >= 0 && selectedIndex < (int)messages.size()) {
+					const std::string &id = messages[selectedIndex].id;
+					if (!revealedSpoilers.erase(id)) {
+						revealedSpoilers.insert(id);
+					}
+				}
 			} else if (action == "Reply") {
 				if (selectedIndex >= 0 && selectedIndex < (int)messages.size()) {
 					std::string targetMsgId = messages[selectedIndex].id;
@@ -703,6 +712,14 @@ void MessageScreen::update() {
 	}
 }
 
+static bool editedFitsOnLastLine(const UI::MarkdownRenderer::Layout &layout, float maxWidth) {
+	if (layout.lastLineType == Utils::Markdown::BlockType::CODE_BLOCK) {
+		return false;
+	}
+	float editedWidth = UI::measureText(TR("message.edited"), 0.35f, 0.35f);
+	return layout.lastLineEndX + 4.0f + editedWidth <= maxWidth;
+}
+
 float MessageScreen::calculateMessageHeight(const Discord::Message &msg, bool showHeader) {
 	float topMargin = showHeader ? 4.0f : 0.0f;
 	float totalH = 0.0f;
@@ -734,22 +751,11 @@ float MessageScreen::calculateMessageHeight(const Discord::Message &msg, bool sh
 				float lineHeight = (emojiCount <= 3) ? 34.0f : 26.0f;
 				totalH += lineHeight;
 			} else {
-				auto lines = MessageUtils::wrapText(content, 350.0f, 0.4f);
-				totalH += lines.size() * 12.0f;
-				float lastLineWidth = 0.0f;
-				if (!lines.empty()) {
-					lastLineWidth = UI::measureRichText(lines.back(), 0.4f, 0.4f);
-				}
+				const auto &layout = UI::MarkdownRenderer::get(content, 350.0f, 0.4f);
+				totalH += layout.height;
 
-				if (!msg.edited_timestamp.empty()) {
-					std::string editedText = TR("message.edited");
-					float editedScale = 0.35f;
-					float editedWidth = UI::measureText(editedText, editedScale, editedScale);
-					float padding = 4.0f;
-
-					if (lastLineWidth + padding + editedWidth > 350.0f) {
-						totalH += 12.0f;
-					}
+				if (!msg.edited_timestamp.empty() && !editedFitsOnLastLine(layout, 350.0f)) {
+					totalH += 12.0f;
 				}
 			}
 		}
@@ -1022,7 +1028,7 @@ float MessageScreen::drawReplyPreview(const Discord::Message &msg, float x, floa
 
 	float maxWidthRef = 310.0f - x - (prefixW + authorW + colonW);
 
-	std::string cleanedContent = msg.referencedContent;
+	std::string cleanedContent = Utils::Markdown::stripFormatting(msg.referencedContent);
 	std::replace(cleanedContent.begin(), cleanedContent.end(), '\n', ' ');
 	std::replace(cleanedContent.begin(), cleanedContent.end(), '\r', ' ');
 
@@ -1178,7 +1184,9 @@ float MessageScreen::drawMessageContent(const Discord::Message &msg, float x, fl
 
 	int emojiCount = 0;
 	float newY = y;
-	float lastLineWidth = -1.0f;
+	float lastLineEndX = -1.0f;
+	float lastLineHeight = 12.0f;
+	bool appendEdited = false;
 
 	if (MessageUtils::isEmojiOnly(content, emojiCount) && emojiCount <= 10) {
 		float jumboScale = (emojiCount <= 3) ? 1.15f : 0.85f;
@@ -1186,22 +1194,22 @@ float MessageScreen::drawMessageContent(const Discord::Message &msg, float x, fl
 		drawRichText(x, newY, 0.5f, jumboScale, jumboScale, ScreenManager::colorText(), content);
 		newY += lineHeight;
 	} else if (!content.empty()) {
-		auto lines = MessageUtils::wrapText(content, 350.0f, 0.4f);
-		for (const auto &line : lines) {
-			drawRichText(x, newY, 0.5f, 0.4f, 0.4f, ScreenManager::colorText(), line);
-			newY += 12.0f;
-			lastLineWidth = UI::measureRichText(line, 0.4f, 0.4f);
-		}
+		const auto &layout = UI::MarkdownRenderer::get(content, 350.0f, 0.4f);
+		bool reveal = revealedSpoilers.count(msg.id) > 0;
+		UI::MarkdownRenderer::draw(layout, x, newY, 0.5f, ScreenManager::colorText(), (size_t)-1, reveal);
+		newY += layout.height;
+		lastLineEndX = layout.lastLineEndX;
+		lastLineHeight = layout.lastLineHeight;
+		appendEdited = editedFitsOnLastLine(layout, 350.0f);
 	}
 
 	if (!msg.edited_timestamp.empty()) {
 		std::string editedText = TR("message.edited");
 		float editedScale = 0.35f;
-		float editedWidth = UI::measureText(editedText, editedScale, editedScale);
 		float padding = 4.0f;
 
-		if (lastLineWidth >= 0.0f && (lastLineWidth + padding + editedWidth <= 350.0f)) {
-			drawText(x + lastLineWidth + padding, newY - 12.0f + 2.0f, 0.5f, editedScale, editedScale,
+		if (appendEdited) {
+			drawText(x + lastLineEndX + padding, newY - lastLineHeight + 2.0f, 0.5f, editedScale, editedScale,
 			         ScreenManager::colorTextMuted(), editedText);
 		} else {
 			drawText(x, newY, 0.5f, editedScale, editedScale, ScreenManager::colorTextMuted(), editedText);
@@ -1691,18 +1699,9 @@ void MessageScreen::renderBottom(C3D_RenderTarget *target) {
 	         Core::I18n::getInstance().get("message.topic"));
 	topicY += 15.0f;
 
-	auto lines = MessageUtils::wrapText(displayTopic, 300.0f, 0.4f);
-	int lineCount = 0;
-
-	for (const auto &line : lines) {
-		if (lineCount >= 10) {
-			break;
-		}
-
-		drawRichText(10.0f, topicY, 0.5f, 0.4f, 0.4f, ScreenManager::colorText(), line);
-		topicY += 13.0f;
-		lineCount++;
-	}
+	const auto &topicLayout = UI::MarkdownRenderer::get(displayTopic, 300.0f, 0.4f, 13.0f / 0.4f);
+	UI::MarkdownRenderer::draw(topicLayout, 10.0f, topicY, 0.5f, ScreenManager::colorText(), 10);
+	topicY += UI::MarkdownRenderer::heightOf(topicLayout, 10);
 
 	bool canSend = Discord::DiscordClient::getInstance().canSendMessage(channelId);
 
@@ -1912,6 +1911,11 @@ void MessageScreen::showMessageOptions() {
 	};
 
 	bool canSend = client.canSendMessage(channelId);
+
+	if (!msg.content.empty() && UI::MarkdownRenderer::get(msg.content, 350.0f, 0.4f).hasSpoiler) {
+		addOption("ToggleSpoiler",
+		          revealedSpoilers.count(msg.id) ? "message.menu.hide_spoiler" : "message.menu.reveal_spoiler");
+	}
 
 	if (canSend) {
 		addOption("Reply", "message.menu.reply");
@@ -2147,20 +2151,17 @@ float MessageScreen::calculateEmbedHeight(const Discord::Embed &embed, float max
 		auto lines = MessageUtils::wrapText(embed.author_name, pixelWidth, 0.38f, false);
 		h += lines.size() * 11.0f;
 	}
+	using UI::MarkdownRenderer::EMBED_STYLES;
 	if (!embed.title.empty()) {
-		auto lines = MessageUtils::wrapText(embed.title, pixelWidth, 0.42f, false);
-		h += lines.size() * 14.0f;
+		h += UI::MarkdownRenderer::get(embed.title, pixelWidth, 0.42f, 14.0f / 0.42f, EMBED_STYLES, false).height;
 	}
 	if (!embed.description.empty()) {
-		auto lines = MessageUtils::wrapText(embed.description, pixelWidth, 0.36f, false);
-		h += lines.size() * 11.0f;
+		h += UI::MarkdownRenderer::get(embed.description, pixelWidth, 0.36f, 11.0f / 0.36f, EMBED_STYLES, false).height;
 	}
 
 	for (const auto &field : embed.fields) {
-		auto nLines = MessageUtils::wrapText(field.name, pixelWidth, 0.35f, false);
-		h += nLines.size() * 11.0f;
-		auto vLines = MessageUtils::wrapText(field.value, pixelWidth, 0.34f, false);
-		h += vLines.size() * 11.0f;
+		h += UI::MarkdownRenderer::get(field.name, pixelWidth, 0.35f, 11.0f / 0.35f, EMBED_STYLES, false).height;
+		h += UI::MarkdownRenderer::get(field.value, pixelWidth, 0.34f, 11.0f / 0.34f, EMBED_STYLES, false).height;
 		h += 2.0f;
 	}
 
@@ -2245,31 +2246,26 @@ float MessageScreen::renderEmbed(const Discord::Embed &embed, float x, float y, 
 			currentY += 11.0f;
 		}
 	}
+	using UI::MarkdownRenderer::EMBED_STYLES;
 	if (!embed.title.empty()) {
-		auto lines = MessageUtils::wrapText(embed.title, pixelWidth, 0.42f, false);
-		for (const auto &line : lines) {
-			drawRichText(textX, currentY, 0.5f, 0.42f, 0.42f, ScreenManager::colorText(), line);
-			currentY += 14.0f;
-		}
+		const auto &l = UI::MarkdownRenderer::get(embed.title, pixelWidth, 0.42f, 14.0f / 0.42f, EMBED_STYLES, false);
+		UI::MarkdownRenderer::draw(l, textX, currentY, 0.5f, ScreenManager::colorText());
+		currentY += l.height;
 	}
 	if (!embed.description.empty()) {
-		auto lines = MessageUtils::wrapText(embed.description, pixelWidth, 0.36f, false);
-		for (const auto &line : lines) {
-			drawRichText(textX, currentY, 0.5f, 0.36f, 0.36f, ScreenManager::colorText(), line);
-			currentY += 11.0f;
-		}
+		const auto &l =
+		    UI::MarkdownRenderer::get(embed.description, pixelWidth, 0.36f, 11.0f / 0.36f, EMBED_STYLES, false);
+		UI::MarkdownRenderer::draw(l, textX, currentY, 0.5f, ScreenManager::colorText());
+		currentY += l.height;
 	}
 	for (const auto &field : embed.fields) {
-		auto nLines = MessageUtils::wrapText(field.name, pixelWidth, 0.35f, false);
-		for (const auto &line : nLines) {
-			drawRichText(textX, currentY, 0.5f, 0.35f, 0.35f, ScreenManager::colorText(), line);
-			currentY += 11.0f;
-		}
-		auto vLines = MessageUtils::wrapText(field.value, pixelWidth, 0.34f, false);
-		for (const auto &line : vLines) {
-			drawRichText(textX, currentY, 0.5f, 0.34f, 0.34f, ScreenManager::colorTextMuted(), line);
-			currentY += 11.0f;
-		}
+		const auto &n = UI::MarkdownRenderer::get(field.name, pixelWidth, 0.35f, 11.0f / 0.35f, EMBED_STYLES, false);
+		UI::MarkdownRenderer::draw(n, textX, currentY, 0.5f, ScreenManager::colorText());
+		currentY += n.height;
+
+		const auto &v = UI::MarkdownRenderer::get(field.value, pixelWidth, 0.34f, 11.0f / 0.34f, EMBED_STYLES, false);
+		UI::MarkdownRenderer::draw(v, textX, currentY, 0.5f, ScreenManager::colorTextMuted());
+		currentY += v.height;
 		currentY += 2.0f;
 	}
 	if (!embed.footer_text.empty()) {

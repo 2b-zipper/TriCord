@@ -6,6 +6,7 @@
 #include "ui/emoji_picker.h"
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -52,6 +53,7 @@ class MessageScreen : public Screen {
 	std::vector<float> messagePositions;
 	std::vector<float> messageHeights;
 	std::unordered_map<size_t, float> embedHeightCache;
+	std::set<std::string> revealedSpoilers;
 	float targetScrollY;
 	float currentScrollY;
 	float totalContentHeight;

@@ -3,6 +3,7 @@
 #include "discord/discord_client.h"
 #include "log.h"
 #include "ui/image_manager.h"
+#include "ui/markdown_renderer.h"
 #include "ui/screen_manager.h"
 #include "utils/message_utils.h"
 #include <algorithm>
@@ -236,18 +237,9 @@ void ForumScreen::renderBottom(C3D_RenderTarget *target) {
 	drawText(10.0f, topicY, 0.5f, 0.45f, 0.45f, ScreenManager::colorSelection(), TR("forum.topic_label"));
 	topicY += 15.0f;
 
-	auto lines = MessageUtils::wrapText(displayTopic, 300.0f, 0.4f);
-	int lineCount = 0;
-
-	for (const auto &line : lines) {
-		if (lineCount >= 12) {
-			break;
-		}
-
-		drawRichText(10.0f, topicY, 0.5f, 0.4f, 0.4f, ScreenManager::colorText(), line);
-		topicY += 13.0f;
-		lineCount++;
-	}
+	const auto &topicLayout = UI::MarkdownRenderer::get(displayTopic, 300.0f, 0.4f, 13.0f / 0.4f);
+	UI::MarkdownRenderer::draw(topicLayout, 10.0f, topicY, 0.5f, ScreenManager::colorText(), 12);
+	topicY += UI::MarkdownRenderer::heightOf(topicLayout, 12);
 
 	float controlsY = 240.0f - 25.0f;
 
