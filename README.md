@@ -76,7 +76,7 @@ Output: `TriCord.3dsx`, `TriCord.cia`, `TriCord.elf`
 - [citro2d](https://github.com/devkitPro/citro2d) (zlib License)
 - [libcurl](https://curl.se/libcurl/) (curl License)
 - [mbedtls](https://github.com/Mbed-TLS/mbedtls) (Apache-2.0 OR GPL-2.0-or-later)
-- [opus](https://opus-codec.org/) (BSD 3-Clause License)
+- [libopus](https://opus-codec.org/) (BSD 3-Clause License)
 - [zlib](https://zlib.net/) (zlib License)
 
 ### Bundled Libraries (included in `library/`)
