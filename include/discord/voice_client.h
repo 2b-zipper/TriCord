@@ -110,6 +110,7 @@ class VoiceClient {
 	mbedtls_gcm_context *gcm = nullptr;
 	std::map<uint32_t, std::string> ssrcToUser;
 	std::set<std::string> roster;
+	std::atomic<bool> rosterPrimed{false};
 	// Discord clients stop sending audio instead of reliably sending a
 	// speaking:0, so activity is tracked by packet arrival and expires.
 	std::map<std::string, uint64_t> speakingUntil;

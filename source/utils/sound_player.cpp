@@ -12,9 +12,10 @@ constexpr int NDSP_CHANNEL = 1;
 constexpr int WAVE_BUF_COUNT = 4;
 
 const char *const SOUND_PATHS[(size_t)Sound::COUNT] = {
-    "romfs:/discord-sounds/join.pcm",         "romfs:/discord-sounds/left.pcm",
-    "romfs:/discord-sounds/mic_on.pcm",       "romfs:/discord-sounds/mic_off.pcm",
-    "romfs:/discord-sounds/headphone_on.pcm", "romfs:/discord-sounds/headphone_off.pcm",
+    "romfs:/discord-sounds/join.pcm",          "romfs:/discord-sounds/left.pcm",
+    "romfs:/discord-sounds/left2.pcm",         "romfs:/discord-sounds/mic_on.pcm",
+    "romfs:/discord-sounds/mic_off.pcm",       "romfs:/discord-sounds/headphone_on.pcm",
+    "romfs:/discord-sounds/headphone_off.pcm",
 };
 } // namespace
 

@@ -75,6 +75,7 @@ VoiceClient::~VoiceClient() { disconnect(); }
 void VoiceClient::setState(VoiceState s) {
 	if (s == VoiceState::ESTABLISHED && state != VoiceState::ESTABLISHED) {
 		Utils::SoundPlayer::getInstance().play(Utils::Sound::VOICE_JOIN);
+		rosterPrimed = true;
 	}
 	state = s;
 	if (stateCallback) {
@@ -99,6 +100,7 @@ void VoiceClient::connect(const std::string &guild, const std::string &channel) 
 	serverMuted = false;
 	serverDeafened = false;
 	mutedBeforeDeafen = false;
+	rosterPrimed = false;
 	audio.setDeafened(false);
 	lastSequence = -1;
 
@@ -997,10 +999,14 @@ void VoiceClient::handlePayload(const std::string &message) {
 		const rapidjson::Value &d = doc["d"];
 		if (d.HasMember("user_ids") && d["user_ids"].IsArray()) {
 			std::lock_guard<std::mutex> lock(mutex);
+			bool joined = false;
 			for (const auto &u : d["user_ids"].GetArray()) {
-				if (u.IsString()) {
-					roster.insert(u.GetString());
+				if (u.IsString() && roster.insert(u.GetString()).second) {
+					joined = true;
 				}
+			}
+			if (joined && rosterPrimed) {
+				Utils::SoundPlayer::getInstance().play(Utils::Sound::VOICE_JOIN);
 			}
 			Logger::log("[Voice] Roster now %zu members", roster.size());
 			logMemory("roster change");
@@ -1013,7 +1019,9 @@ void VoiceClient::handlePayload(const std::string &message) {
 		}
 		std::string userId = Utils::Json::getString(doc["d"], "user_id");
 		std::lock_guard<std::mutex> lock(mutex);
-		roster.erase(userId);
+		if (roster.erase(userId) > 0) {
+			Utils::SoundPlayer::getInstance().play(Utils::Sound::VOICE_PEER_LEFT);
+		}
 		for (auto it = ssrcToUser.begin(); it != ssrcToUser.end();) {
 			if (it->second == userId) {
 				audio.dropSpeaker(it->first);

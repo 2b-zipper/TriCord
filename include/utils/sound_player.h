@@ -12,6 +12,7 @@ namespace Utils {
 enum class Sound {
 	VOICE_JOIN,
 	VOICE_LEFT,
+	VOICE_PEER_LEFT,
 	MIC_ON,
 	MIC_OFF,
 	HEADPHONE_ON,
