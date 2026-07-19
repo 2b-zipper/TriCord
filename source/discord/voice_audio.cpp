@@ -17,11 +17,6 @@ bool VoiceAudio::start() {
 		return true;
 	}
 
-	if (R_FAILED(ndspInit())) {
-		Logger::log("[VoiceAudio] ndspInit failed (is dspfirm.cdc dumped?)");
-		return false;
-	}
-
 	ring = (int16_t *)calloc((size_t)RING_FRAMES * FRAME_SAMPLES, sizeof(int16_t));
 	waveData = (int16_t *)linearAlloc(sizeof(waveBufs) / sizeof(waveBufs[0]) * FRAME_SAMPLES * sizeof(int16_t));
 	if (!ring || !waveData) {
@@ -32,11 +27,10 @@ bool VoiceAudio::start() {
 			linearFree(waveData);
 			waveData = nullptr;
 		}
-		ndspExit();
 		return false;
 	}
 
-	ndspSetOutputMode(NDSP_OUTPUT_MONO);
+	ndspChnReset(NDSP_CHANNEL);
 	ndspChnSetInterp(NDSP_CHANNEL, NDSP_INTERP_NONE);
 	ndspChnSetRate(NDSP_CHANNEL, (float)SAMPLE_RATE);
 	ndspChnSetFormat(NDSP_CHANNEL, NDSP_FORMAT_MONO_PCM16);
@@ -69,7 +63,6 @@ void VoiceAudio::stop() {
 	}
 
 	ndspChnWaveBufClear(NDSP_CHANNEL);
-	ndspExit();
 
 	for (auto &pair : speakers) {
 		if (pair.second.decoder) {
@@ -101,7 +94,7 @@ void VoiceAudio::mixFrame(size_t frameIndex, const int16_t *samples) {
 
 void VoiceAudio::pushOpus(uint32_t ssrc, const uint8_t *data, size_t len) {
 	std::lock_guard<std::mutex> lock(mutex);
-	if (!running) {
+	if (!running || deafened) {
 		return;
 	}
 
@@ -141,6 +134,25 @@ void VoiceAudio::pushOpus(uint32_t ssrc, const uint8_t *data, size_t len) {
 		writtenFrames = speaker.writeFrame + 1;
 	}
 	speaker.writeFrame++;
+}
+
+void VoiceAudio::setDeafened(bool d) {
+	std::lock_guard<std::mutex> lock(mutex);
+	if (deafened == d) {
+		return;
+	}
+	deafened = d;
+	if (!d) {
+		return;
+	}
+
+	if (ring) {
+		memset(ring, 0, RING_FRAMES * FRAME_SAMPLES * sizeof(int16_t));
+	}
+	writtenFrames = playFrame;
+	for (auto &pair : speakers) {
+		pair.second.primed = false;
+	}
 }
 
 void VoiceAudio::dropSpeaker(uint32_t ssrc) {

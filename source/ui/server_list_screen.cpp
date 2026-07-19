@@ -6,6 +6,7 @@
 #include "discord/voice_client.h"
 #include "log.h"
 #include "ui/image_manager.h"
+#include "ui/voice_controls.h"
 #include "utils/message_utils.h"
 #include "utils/utf8_utils.h"
 #include <3ds.h>
@@ -17,6 +18,11 @@
 #include <unordered_set>
 
 namespace UI {
+
+namespace {
+constexpr float VOICE_BTN_Y = BOTTOM_SCREEN_HEIGHT - VoiceControls::BUTTON_SIZE - 10.0f;
+constexpr float VOICE_BTN_X = 320.0f - VoiceControls::WIDTH - 10.0f;
+} // namespace
 
 ServerListScreen::ServerListScreen()
     : repeatTimer(0), lastKey(0), animationProgress(0.0f), loadingAngle(0.0f), animTimer(0.0f) {
@@ -848,8 +854,24 @@ void ServerListScreen::update() {
 		return;
 	}
 
+	if (selectedIndex >= 0 && selectedIndex < (int)listItems.size()) {
+		const auto &highlighted = listItems[selectedIndex];
+		if (!highlighted.isFolder && highlighted.id != voiceNamesResolvedFor) {
+			voiceNamesResolvedFor = highlighted.id;
+			client.resolveVoiceNames(highlighted.id);
+		}
+	}
+
 	u32 kDown = hidKeysDown();
 	u32 kHeld = hidKeysHeld();
+
+	if (kDown & KEY_TOUCH) {
+		touchPosition touch;
+		hidTouchRead(&touch);
+		if (VoiceControls::handleTouch(touch, VOICE_BTN_X, VOICE_BTN_Y)) {
+			return;
+		}
+	}
 
 	if (state == State::TRANSITION_TO_CHANNEL) {
 		animationProgress += 0.1f;
@@ -1044,9 +1066,7 @@ void ServerListScreen::update() {
 					}
 					if (nextIndex < (int)sortedChannels.size()) {
 						selectedChannelIndex = nextIndex;
-						if (selectedChannelIndex >= channelScrollOffset + 9) {
-							channelScrollOffset = selectedChannelIndex - 8;
-						}
+						ensureChannelVisible();
 					}
 				}
 			} else if (moveDir & KEY_UP) {
@@ -1057,9 +1077,7 @@ void ServerListScreen::update() {
 					}
 					if (prevIndex >= 0) {
 						selectedChannelIndex = prevIndex;
-						if (selectedChannelIndex < channelScrollOffset) {
-							channelScrollOffset = selectedChannelIndex;
-						}
+						ensureChannelVisible();
 					}
 				}
 			}
@@ -1072,7 +1090,7 @@ void ServerListScreen::update() {
 
 		if (kDown & KEY_Y) {
 			Discord::VoiceClient &voice = Discord::VoiceClient::getInstance();
-			if (voice.getState() == Discord::VoiceState::ESTABLISHED) {
+			if (voice.getState() == Discord::VoiceState::ESTABLISHED && !voice.isServerMuted()) {
 				voice.setMuted(!voice.isMuted());
 			}
 		} else if (kDown & KEY_X) {
@@ -1204,7 +1222,7 @@ void ServerListScreen::drawChannelList(float x, float y, float alpha) {
 		return;
 	}
 
-	int itemsPerPage = 9;
+	int itemsPerPage = CHANNEL_ROWS_PER_PAGE;
 	float rowHeight = 22.0f;
 
 	int startIdx = (state == State::SELECTING_CHANNEL) ? channelScrollOffset : 0;
@@ -1319,6 +1337,73 @@ void ServerListScreen::drawChannelList(float x, float y, float alpha) {
 			}
 		}
 		rendered++;
+
+		if (ch.type == 2 || ch.type == 13) {
+			auto participants = Discord::DiscordClient::getInstance().getVoiceParticipants(ch.id);
+			for (const auto &p : participants) {
+				if (rendered >= itemsPerPage) {
+					break;
+				}
+
+				float pY = startY + (rendered * rowHeight);
+				float pX = currentX + 14.0f;
+
+				float avatarSize = 14.0f;
+				float avatarY = pY + (rowHeight - avatarSize) / 2.0f;
+
+				if (Discord::VoiceClient::getInstance().isSpeaking(p.userId)) {
+					drawCircle(pX + avatarSize / 2.0f, avatarY + avatarSize / 2.0f, 0.49f, avatarSize / 2.0f + 1.5f,
+					           C2D_Color32(35, 165, 90, 255));
+				}
+
+				C3D_Tex *avatar = Discord::AvatarCache::getInstance().getAvatar(p.userId, p.avatar, "0");
+				if (avatar) {
+					Tex3DS_SubTexture sub = {(u16)avatar->width, (u16)avatar->height, 0.0f, 1.0f, 1.0f, 0.0f};
+					C2D_Image img = {avatar, &sub};
+					C2D_DrawImageAt(img, pX, avatarY, 0.5f, nullptr, avatarSize / avatar->width,
+					                avatarSize / avatar->height);
+				}
+
+				u32 nameColor = ScreenManager::colorTextMuted();
+				float nameX = pX + avatarSize + 5.0f;
+				int stateIconCount = (p.mute || p.selfMute ? 1 : 0) + (p.deaf || p.selfDeaf ? 1 : 0);
+				float nameLimit = 400.0f - nameX - 10.0f - stateIconCount * 14.0f;
+				drawRichText(nameX, pY + 4.0f, 0.5f, 0.42f, 0.42f, nameColor,
+				             getTruncatedRichText(p.name, nameLimit, 0.42f, 0.42f));
+
+				const char *micIcon = p.mute       ? "romfs:/discord-icons/mic-denied.png"
+				                      : p.selfMute ? "romfs:/discord-icons/mic-muted.png"
+				                                   : nullptr;
+				const char *deafIcon = p.deaf       ? "romfs:/discord-icons/headphones-denied.png"
+				                       : p.selfDeaf ? "romfs:/discord-icons/headphones-muted.png"
+				                                    : nullptr;
+
+				const float stateSize = 11.0f;
+				float stateX = 400.0f - stateSize - 8.0f;
+				const struct {
+					const char *path;
+					bool byServer;
+				} stateIcons[] = {{deafIcon, p.deaf}, {micIcon, p.mute}};
+
+				for (const auto &entry : stateIcons) {
+					if (!entry.path) {
+						continue;
+					}
+					C3D_Tex *st = UI::ImageManager::getInstance().getLocalImage(entry.path);
+					if (st) {
+						Tex3DS_SubTexture sub = {(u16)st->width, (u16)st->height, 0.0f, 1.0f, 1.0f, 0.0f};
+						C2D_Image img = {st, &sub};
+						C2D_ImageTint tint;
+						C2D_PlainImageTint(&tint, entry.byServer ? ScreenManager::colorError() : nameColor, 1.0f);
+						C2D_DrawImageAt(img, stateX, pY + (rowHeight - stateSize) / 2.0f, 0.5f, &tint,
+						                stateSize / st->width, stateSize / st->height);
+					}
+					stateX -= stateSize + 3.0f;
+				}
+
+				rendered++;
+			}
+		}
 	}
 }
 
@@ -1483,6 +1568,73 @@ void ServerListScreen::drawListItem(int index, const ListItem &item, float x, fl
 	}
 }
 
+int ServerListScreen::channelRowSpan(int index) const {
+	if (index < 0 || index >= (int)sortedChannels.size()) {
+		return 1;
+	}
+	const auto &ch = sortedChannels[index];
+	if (ch.type != 2 && ch.type != 13) {
+		return 1;
+	}
+	return 1 + (int)Discord::DiscordClient::getInstance().getVoiceParticipants(ch.id).size();
+}
+
+void ServerListScreen::ensureChannelVisible() {
+	if (selectedChannelIndex < channelScrollOffset) {
+		channelScrollOffset = selectedChannelIndex;
+		return;
+	}
+
+	int rows = 0;
+	for (int i = channelScrollOffset; i <= selectedChannelIndex; i++) {
+		rows += channelRowSpan(i);
+	}
+
+	while (rows > CHANNEL_ROWS_PER_PAGE && channelScrollOffset < selectedChannelIndex) {
+		rows -= channelRowSpan(channelScrollOffset);
+		channelScrollOffset++;
+	}
+}
+
+void ServerListScreen::drawVoiceStatus() {
+	Discord::VoiceState vs = Discord::VoiceClient::getInstance().getState();
+	if (vs == Discord::VoiceState::DISCONNECTED) {
+		return;
+	}
+
+	std::string label = "Voice: ";
+	u32 color = ScreenManager::colorTextMuted();
+	switch (vs) {
+	case Discord::VoiceState::AWAITING_SERVER:
+		label += "waiting for server";
+		break;
+	case Discord::VoiceState::CONNECTING:
+		label += "connecting";
+		break;
+	case Discord::VoiceState::IDENTIFYING:
+		label += "identifying";
+		break;
+	case Discord::VoiceState::READY:
+		label += "ready";
+		break;
+	case Discord::VoiceState::SELECTING_PROTOCOL:
+		label += "negotiating";
+		break;
+	case Discord::VoiceState::ESTABLISHED:
+		label += "connected";
+		color = ScreenManager::colorAccent();
+		break;
+	case Discord::VoiceState::FAILED:
+		label += "failed";
+		color = ScreenManager::colorError();
+		break;
+	default:
+		break;
+	}
+
+	drawText(10.0f, BOTTOM_SCREEN_HEIGHT - 38.0f, 0.5f, 0.4f, 0.4f, color, label);
+}
+
 void ServerListScreen::renderBottom(C3D_RenderTarget *target) {
 	C2D_SceneBegin(target);
 	C2D_TargetClear(target, ScreenManager::colorBackgroundDark());
@@ -1602,47 +1754,10 @@ void ServerListScreen::renderBottom(C3D_RenderTarget *target) {
 		drawText(10.0f, BOTTOM_SCREEN_HEIGHT - 25.0f, 0.5f, 0.4f, 0.4f, ScreenManager::colorTextMuted(),
 		         "\uE079\uE07A: " + TR("common.navigate") + "  \uE001: " + TR("common.back") +
 		             "  \uE000: " + TR("common.enter"));
-
-		Discord::VoiceClient &voice = Discord::VoiceClient::getInstance();
-		Discord::VoiceState vs = voice.getState();
-		if (vs != Discord::VoiceState::DISCONNECTED) {
-			std::string label = "Voice: ";
-			u32 color = ScreenManager::colorTextMuted();
-			switch (vs) {
-			case Discord::VoiceState::AWAITING_SERVER:
-				label += "waiting for server";
-				break;
-			case Discord::VoiceState::CONNECTING:
-				label += "connecting";
-				break;
-			case Discord::VoiceState::IDENTIFYING:
-				label += "identifying";
-				break;
-			case Discord::VoiceState::READY:
-				label += "ready";
-				break;
-			case Discord::VoiceState::SELECTING_PROTOCOL:
-				label += "negotiating";
-				break;
-			case Discord::VoiceState::ESTABLISHED:
-				label += voice.isMuted() ? "connected (muted,  to talk)" : "connected (MIC LIVE,  to mute)";
-				color = ScreenManager::colorAccent();
-				break;
-			case Discord::VoiceState::FAILED: {
-				Discord::VoiceFailure f = voice.getLastFailure();
-				label += "closed " + std::to_string(f.closeCode);
-				if (voice.requiresDave()) {
-					label += " (DAVE required)";
-				}
-				color = ScreenManager::colorError();
-				break;
-			}
-			default:
-				break;
-			}
-			drawText(10.0f, BOTTOM_SCREEN_HEIGHT - 38.0f, 0.5f, 0.4f, 0.4f, color, label);
-		}
 	}
+
+	drawVoiceStatus();
+	VoiceControls::draw(VOICE_BTN_X, VOICE_BTN_Y);
 }
 
 } // namespace UI

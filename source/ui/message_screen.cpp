@@ -6,6 +6,7 @@
 #include "log.h"
 #include "ui/emoji_manager.h"
 #include "ui/image_manager.h"
+#include "ui/voice_controls.h"
 #include "ui/markdown_renderer.h"
 #include "ui/screen_manager.h"
 #include "utils/message_utils.h"
@@ -19,6 +20,15 @@
 #include <set>
 
 namespace UI {
+
+namespace {
+constexpr float VOICE_BTN_X = 320.0f - VoiceControls::WIDTH - 10.0f;
+constexpr float VOICE_BTN_Y = 240.0f - VoiceControls::BUTTON_SIZE - 10.0f;
+
+float bottomButtonY() {
+	return VoiceControls::visible() ? VOICE_BTN_Y - VoiceControls::BUTTON_SIZE - 8.0f : VOICE_BTN_Y;
+}
+} // namespace
 
 MessageScreen::MessageScreen(const std::string &channelId, const std::string &channelName)
     : channelId(channelId), channelName(channelName), channelType(0), rulesChannelId(""), selectedIndex(0),
@@ -316,10 +326,14 @@ void MessageScreen::update() {
 		touchPosition touch;
 		hidTouchRead(&touch);
 
+		if (VoiceControls::handleTouch(touch, VOICE_BTN_X, VOICE_BTN_Y)) {
+			return;
+		}
+
 		float btnW = 30.0f;
 		float btnH = 30.0f;
 		float btnX = 320.0f - btnW - 10.0f;
-		float btnY = 240.0f - btnH - 10.0f;
+		float btnY = bottomButtonY();
 
 		const float SCREEN_HEIGHT = 240.0f;
 		float maxScroll = std::max(0.0f, totalContentHeight - SCREEN_HEIGHT);
@@ -1746,7 +1760,7 @@ void MessageScreen::renderBottom(C3D_RenderTarget *target) {
 		float btnW = 30.0f;
 		float btnH = 30.0f;
 		float btnX = 320.0f - btnW - 10.0f;
-		float btnY = 240.0f - btnH - 10.0f;
+		float btnY = bottomButtonY();
 
 		drawRoundedRect(btnX, btnY, 0.54f, btnW, btnH, 8.0f, ScreenManager::colorBackgroundLight());
 
@@ -1759,6 +1773,7 @@ void MessageScreen::renderBottom(C3D_RenderTarget *target) {
 	}
 
 	renderReactionIcon();
+	VoiceControls::draw(VOICE_BTN_X, VOICE_BTN_Y);
 }
 
 void MessageScreen::fetchOlderMessages() {
@@ -2384,7 +2399,7 @@ void MessageScreen::renderReactionIcon() {
 	float btnW = 30.0f;
 	float btnH = 30.0f;
 	float btnX = 320.0f - btnW - 10.0f;
-	float btnY = 240.0f - btnH - 10.0f;
+	float btnY = bottomButtonY();
 
 	const float SCREEN_HEIGHT = 240.0f;
 	float maxScroll = std::max(0.0f, totalContentHeight - SCREEN_HEIGHT);

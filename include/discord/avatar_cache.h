@@ -13,6 +13,7 @@ namespace Discord {
 struct AvatarInfo {
 	C3D_Tex *tex = nullptr;
 	std::string url;
+	std::string hash;
 	bool loading = false;
 	int attempts = 0;
 	u64 retryAt = 0;
@@ -53,8 +54,9 @@ class AvatarCache {
 	static constexpr size_t MAX_UPLOADS_PER_FRAME = 4;
 	static constexpr int MAX_ATTEMPTS = 3;
 
-	bool shouldFetchLocked(const std::string &key);
-	void startFetchLocked(const std::string &key, const std::string &url);
+	bool shouldFetchLocked(const std::string &key, const std::string &hash);
+	void startFetchLocked(const std::string &key, const std::string &url, const std::string &hash,
+	                      bool circular = false);
 	void freePendingLocked();
 };
 

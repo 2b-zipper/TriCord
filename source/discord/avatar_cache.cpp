@@ -34,6 +34,10 @@ void AvatarCache::update() {
 				C3D_TexSetFilter(tex, GPU_LINEAR, GPU_LINEAR);
 				memcpy(tex->data, pa.tiled.pixels, pa.tiled.vramSize);
 				GSPGPU_FlushDataCache(tex->data, pa.tiled.vramSize);
+				if (it->second.tex) {
+					C3D_TexDelete(it->second.tex);
+					free(it->second.tex);
+				}
 				it->second.tex = tex;
 			} else {
 				free(tex);
@@ -79,12 +83,13 @@ C3D_Tex *AvatarCache::getAvatar(const std::string &userId, const std::string &av
 
 	std::lock_guard<std::recursive_mutex> lock(cacheMutex);
 	auto it = cache.find(userId);
-	if (it != cache.end() && it->second.tex) {
-		return it->second.tex;
+	C3D_Tex *current = (it != cache.end()) ? it->second.tex : nullptr;
+	if (current && it->second.hash == avatarHash) {
+		return current;
 	}
 
 	prefetchAvatar(userId, avatarHash, discriminator);
-	return nullptr;
+	return current;
 }
 
 C3D_Tex *AvatarCache::getGuildIcon(const std::string &guildId, const std::string &iconHash) {
@@ -94,12 +99,13 @@ C3D_Tex *AvatarCache::getGuildIcon(const std::string &guildId, const std::string
 
 	std::lock_guard<std::recursive_mutex> lock(cacheMutex);
 	auto it = cache.find(guildId);
-	if (it != cache.end() && it->second.tex) {
-		return it->second.tex;
+	C3D_Tex *current = (it != cache.end()) ? it->second.tex : nullptr;
+	if (current && it->second.hash == iconHash) {
+		return current;
 	}
 
 	prefetchGuildIcon(guildId, iconHash);
-	return nullptr;
+	return current;
 }
 
 C3D_Tex *AvatarCache::getChannelIcon(const std::string &channelId, const std::string &iconHash) {
@@ -109,20 +115,27 @@ C3D_Tex *AvatarCache::getChannelIcon(const std::string &channelId, const std::st
 
 	std::lock_guard<std::recursive_mutex> lock(cacheMutex);
 	auto it = cache.find(channelId);
-	if (it != cache.end() && it->second.tex) {
-		return it->second.tex;
+	C3D_Tex *current = (it != cache.end()) ? it->second.tex : nullptr;
+	if (current && it->second.hash == iconHash) {
+		return current;
 	}
 
 	prefetchChannelIcon(channelId, iconHash);
-	return nullptr;
+	return current;
 }
 
-bool AvatarCache::shouldFetchLocked(const std::string &key) {
+bool AvatarCache::shouldFetchLocked(const std::string &key, const std::string &hash) {
 	auto it = cache.find(key);
 	if (it == cache.end()) {
 		return true;
 	}
-	if (it->second.tex || it->second.loading) {
+	if (it->second.loading) {
+		return false;
+	}
+	if (it->second.hash != hash) {
+		return true;
+	}
+	if (it->second.tex) {
 		return false;
 	}
 	if (it->second.attempts >= MAX_ATTEMPTS || osGetTime() < it->second.retryAt) {
@@ -131,25 +144,32 @@ bool AvatarCache::shouldFetchLocked(const std::string &key) {
 	return true;
 }
 
-void AvatarCache::startFetchLocked(const std::string &key, const std::string &url) {
+void AvatarCache::startFetchLocked(const std::string &key, const std::string &url, const std::string &hash,
+                                   bool circular) {
 	int attempts = 0;
+	C3D_Tex *current = nullptr;
 	auto existing = cache.find(key);
 	if (existing != cache.end()) {
-		attempts = existing->second.attempts;
+		current = existing->second.tex;
+		if (existing->second.hash == hash) {
+			attempts = existing->second.attempts;
+		}
 	}
 
 	AvatarInfo info;
 	info.url = url;
+	info.hash = hash;
 	info.loading = true;
 	info.attempts = attempts;
+	info.tex = current;
 	cache[key] = info;
 
 	Network::NetworkManager::getInstance().enqueue(
-	    url, "GET", "", Network::RequestPriority::BACKGROUND, [this, key](const Network::HttpResponse &resp) {
+	    url, "GET", "", Network::RequestPriority::BACKGROUND, [this, key, circular](const Network::HttpResponse &resp) {
 		    if (resp.statusCode == 200 && !resp.body.empty()) {
-			    Utils::Image::TiledData tiled =
-			        Utils::Image::decodeToTiled((const unsigned char *)resp.body.data(), resp.body.size(),
-			                                    Utils::Image::MAX_REMOTE_DIM, Utils::Image::MAX_REMOTE_DIM, true);
+			    Utils::Image::TiledData tiled = Utils::Image::decodeToTiled(
+			        (const unsigned char *)resp.body.data(), resp.body.size(), Utils::Image::MAX_REMOTE_DIM,
+			        Utils::Image::MAX_REMOTE_DIM, true, circular);
 			    if (tiled.pixels) {
 				    std::lock_guard<std::recursive_mutex> lock(this->cacheMutex);
 				    PendingAvatar pa;
@@ -177,7 +197,7 @@ void AvatarCache::prefetchAvatar(const std::string &userId, const std::string &a
 	}
 
 	std::lock_guard<std::recursive_mutex> lock(cacheMutex);
-	if (!shouldFetchLocked(userId)) {
+	if (!shouldFetchLocked(userId, avatarHash)) {
 		return;
 	}
 
@@ -202,7 +222,7 @@ void AvatarCache::prefetchAvatar(const std::string &userId, const std::string &a
 		      ".png?size=" + std::to_string(AVATAR_SIZE);
 	}
 
-	startFetchLocked(userId, url);
+	startFetchLocked(userId, url, avatarHash, true);
 }
 
 void AvatarCache::prefetchGuildIcon(const std::string &guildId, const std::string &iconHash) {
@@ -211,12 +231,14 @@ void AvatarCache::prefetchGuildIcon(const std::string &guildId, const std::strin
 	}
 
 	std::lock_guard<std::recursive_mutex> lock(cacheMutex);
-	if (!shouldFetchLocked(guildId)) {
+	if (!shouldFetchLocked(guildId, iconHash)) {
 		return;
 	}
 
-	startFetchLocked(guildId, "https://cdn.discordapp.com/icons/" + guildId + "/" + iconHash +
-	                              ".png?size=" + std::to_string(GUILD_ICON_SIZE));
+	startFetchLocked(guildId,
+	                 "https://cdn.discordapp.com/icons/" + guildId + "/" + iconHash +
+	                     ".png?size=" + std::to_string(GUILD_ICON_SIZE),
+	                 iconHash);
 }
 
 void AvatarCache::prefetchChannelIcon(const std::string &channelId, const std::string &iconHash) {
@@ -225,12 +247,14 @@ void AvatarCache::prefetchChannelIcon(const std::string &channelId, const std::s
 	}
 
 	std::lock_guard<std::recursive_mutex> lock(cacheMutex);
-	if (!shouldFetchLocked(channelId)) {
+	if (!shouldFetchLocked(channelId, iconHash)) {
 		return;
 	}
 
-	startFetchLocked(channelId, "https://cdn.discordapp.com/channel-icons/" + channelId + "/" + iconHash +
-	                                ".png?size=" + std::to_string(AVATAR_SIZE));
+	startFetchLocked(channelId,
+	                 "https://cdn.discordapp.com/channel-icons/" + channelId + "/" + iconHash +
+	                     ".png?size=" + std::to_string(AVATAR_SIZE),
+	                 iconHash);
 }
 
 } // namespace Discord

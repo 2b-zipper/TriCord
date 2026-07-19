@@ -53,6 +53,14 @@ class ServerListScreen : public Screen {
 
 	void drawListItem(int index, const ListItem &item, float x, float y);
 
+	static const int CHANNEL_ROWS_PER_PAGE = 9;
+	int channelRowSpan(int index) const;
+	void ensureChannelVisible();
+
+	void drawVoiceStatus();
+
+	std::string voiceNamesResolvedFor;
+
 	int repeatTimer;
 	u32 lastKey;
 	static const int REPEAT_DELAY_INITIAL = 30;

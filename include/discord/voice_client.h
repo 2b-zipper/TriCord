@@ -29,11 +29,6 @@ enum class VoiceState {
 	FAILED,
 };
 
-struct VoiceFailure {
-	int closeCode = 0;
-	std::string reason;
-};
-
 class VoiceClient {
   public:
 	static VoiceClient &getInstance();
@@ -42,8 +37,6 @@ class VoiceClient {
 	void disconnect();
 
 	VoiceState getState() const { return state; }
-	VoiceFailure getLastFailure();
-	bool requiresDave() const { return daveRequired; }
 
 	void setStateCallback(std::function<void(VoiceState)> cb) { stateCallback = cb; }
 
@@ -54,7 +47,8 @@ class VoiceClient {
 	VoiceClient(const VoiceClient &) = delete;
 	VoiceClient &operator=(const VoiceClient &) = delete;
 
-	void onVoiceState(const std::string &session);
+	void onVoiceState(const std::string &session, bool srvMute, bool srvDeaf);
+	void publishVoiceState();
 	void onVoiceServer(const std::string &token, const std::string &endpoint, const std::string &serverId);
 	void tryStartSession();
 	void socketThread();
@@ -86,7 +80,9 @@ class VoiceClient {
 	VoiceAudio audio;
 	VoiceCapture capture;
 	std::atomic<VoiceState> state{VoiceState::DISCONNECTED};
-	std::atomic<bool> daveRequired{false};
+	std::atomic<bool> serverMuted{false};
+	std::atomic<bool> serverDeafened{false};
+	bool mutedBeforeDeafen = false;
 
 	mutable std::mutex mutex;
 	std::string guildId;
@@ -97,8 +93,6 @@ class VoiceClient {
 	std::string serverId;
 	bool haveState = false;
 	bool haveServer = false;
-
-	VoiceFailure lastFailure;
 
 	uint64_t heartbeatInterval = 0;
 	uint64_t lastHeartbeat = 0;
@@ -116,6 +110,12 @@ class VoiceClient {
 	mbedtls_gcm_context *gcm = nullptr;
 	std::map<uint32_t, std::string> ssrcToUser;
 	std::set<std::string> roster;
+	// Discord clients stop sending audio instead of reliably sending a
+	// speaking:0, so activity is tracked by packet arrival and expires.
+	std::map<std::string, uint64_t> speakingUntil;
+	static constexpr uint64_t SPEAKING_HOLD_MS = 400;
+	static constexpr int SPEAKING_PEAK_THRESHOLD = 1200;
+	void markSpeaking(const std::string &userId);
 	std::vector<uint8_t> externalSenderPackage;
 	uint32_t packetsDecoded = 0;
 	uint32_t decryptFailures = 0;
@@ -138,8 +138,13 @@ class VoiceClient {
 	bool speakingSent = false;
 
   public:
-	void setMuted(bool m) { capture.setMuted(m); }
+	void setMuted(bool m);
 	bool isMuted() const { return capture.isMuted(); }
+	void setDeafened(bool d);
+	bool isDeafened() const { return audio.isDeafened(); }
+	bool isSpeaking(const std::string &userId) const;
+	bool isServerMuted() const { return serverMuted; }
+	bool isServerDeafened() const { return serverDeafened; }
 
 	std::function<void(VoiceState)> stateCallback;
 };

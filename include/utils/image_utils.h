@@ -15,7 +15,7 @@ struct TiledData {
 static constexpr int MAX_REMOTE_DIM = 512;
 
 TiledData decodeToTiled(const unsigned char *data, size_t size, int maxWidth = MAX_REMOTE_DIM,
-                        int maxHeight = MAX_REMOTE_DIM, bool noResize = false);
+                        int maxHeight = MAX_REMOTE_DIM, bool noResize = false, bool circleMask = false);
 
 C3D_Tex *loadTextureFromMemory(const unsigned char *data, size_t size, int &outW, int &outH, bool noResize = false);
 

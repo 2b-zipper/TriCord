@@ -14,7 +14,8 @@ static const int mortonTable[] = {0,  1,  4,  5,  16, 17, 20, 21, 2,  3,  6,  7,
                                   32, 33, 36, 37, 48, 49, 52, 53, 34, 35, 38, 39, 50, 51, 54, 55,
                                   40, 41, 44, 45, 56, 57, 60, 61, 42, 43, 46, 47, 58, 59, 62, 63};
 
-TiledData decodeToTiled(const unsigned char *data, size_t size, int maxWidth, int maxHeight, bool noResize) {
+TiledData decodeToTiled(const unsigned char *data, size_t size, int maxWidth, int maxHeight, bool noResize,
+                        bool circleMask) {
 	TiledData result;
 	int w, h, c;
 
@@ -99,6 +100,34 @@ TiledData decodeToTiled(const unsigned char *data, size_t size, int maxWidth, in
 	}
 
 	stbi_image_free(img);
+
+	// Bytes are already swapped to RRGGBBAA, so alpha is the low byte.
+	if (circleMask) {
+		const float cx = (targetW - 1) * 0.5f;
+		const float cy = (targetH - 1) * 0.5f;
+		const float radius = (cx < cy ? cx : cy) + 0.5f;
+
+		for (int y = 0; y < targetH; y++) {
+			const int *morton = &mortonTable[(y & 7) << 3];
+			u32 *tileRow = tiledBuf + ((size_t)(y >> 3) * tilesPerRow << 6);
+			const float dy = y - cy;
+
+			for (int x = 0; x < targetW; x++) {
+				const float dx = x - cx;
+				float coverage = radius - sqrtf(dx * dx + dy * dy);
+				if (coverage >= 1.0f) {
+					continue;
+				}
+
+				u32 *px = &tileRow[((x >> 3) << 6) + morton[x & 7]];
+				if (coverage <= 0.0f) {
+					*px &= 0xFFFFFF00u;
+					continue;
+				}
+				*px = (*px & 0xFFFFFF00u) | (u32)((*px & 0xFFu) * coverage);
+			}
+		}
+	}
 
 	result.pixels = tiledBuf;
 	result.w = targetW;

@@ -138,6 +138,15 @@ int VoiceCapture::poll(uint8_t *out, size_t outSize) {
 	resamplePos = pos - (float)consumed;
 	readOffset = (readOffset + consumed * sampleBytes) % micBufferSize;
 
+	int peak = 0;
+	for (int i = 0; i < FRAME_SAMPLES; i++) {
+		int magnitude = pcm[i] < 0 ? -pcm[i] : pcm[i];
+		if (magnitude > peak) {
+			peak = magnitude;
+		}
+	}
+	peakLevel = peak;
+
 	if (muted) {
 		return 0;
 	}

@@ -2,6 +2,7 @@
 #include "discord/discord_client.h"
 #include "log.h"
 #include "utils/json_utils.h"
+#include "utils/sound_player.h"
 
 #include <3ds.h>
 #include <arpa/inet.h>
@@ -19,6 +20,7 @@ namespace Discord {
 
 namespace {
 constexpr int VOICE_GATEWAY_VERSION = 8;
+constexpr int CLOSE_NORMAL = 1000;
 constexpr int CLOSE_DAVE_REQUIRED = 4017;
 constexpr int OPUS_PAYLOAD_TYPE = 120;
 constexpr size_t IP_DISCOVERY_SIZE = 74;
@@ -71,15 +73,13 @@ VoiceClient &VoiceClient::getInstance() {
 VoiceClient::~VoiceClient() { disconnect(); }
 
 void VoiceClient::setState(VoiceState s) {
+	if (s == VoiceState::ESTABLISHED && state != VoiceState::ESTABLISHED) {
+		Utils::SoundPlayer::getInstance().play(Utils::Sound::VOICE_JOIN);
+	}
 	state = s;
 	if (stateCallback) {
 		stateCallback(s);
 	}
-}
-
-VoiceFailure VoiceClient::getLastFailure() {
-	std::lock_guard<std::mutex> lock(mutex);
-	return lastFailure;
 }
 
 void VoiceClient::connect(const std::string &guild, const std::string &channel) {
@@ -95,13 +95,16 @@ void VoiceClient::connect(const std::string &guild, const std::string &channel) 
 		token.clear();
 		endpoint.clear();
 		serverId.clear();
-		lastFailure = VoiceFailure();
 	}
-	daveRequired = false;
+	serverMuted = false;
+	serverDeafened = false;
+	mutedBeforeDeafen = false;
+	audio.setDeafened(false);
 	lastSequence = -1;
 
 	DiscordClient &client = DiscordClient::getInstance();
-	client.setVoiceStateCallback([this](const std::string &s) { onVoiceState(s); });
+	client.setVoiceStateCallback(
+	    [this](const std::string &s, bool srvMute, bool srvDeaf) { onVoiceState(s, srvMute, srvDeaf); });
 	client.setVoiceServerCallback(
 	    [this](const std::string &t, const std::string &e, const std::string &s) { onVoiceServer(t, e, s); });
 
@@ -109,9 +112,65 @@ void VoiceClient::connect(const std::string &guild, const std::string &channel) 
 	client.updateVoiceState(guild, channel, false, false);
 }
 
-void VoiceClient::onVoiceState(const std::string &session) {
+void VoiceClient::markSpeaking(const std::string &userId) {
+	std::lock_guard<std::mutex> lock(mutex);
+	speakingUntil[userId] = osGetTime() + SPEAKING_HOLD_MS;
+}
+
+bool VoiceClient::isSpeaking(const std::string &userId) const {
+	std::lock_guard<std::mutex> lock(mutex);
+	auto it = speakingUntil.find(userId);
+	return it != speakingUntil.end() && osGetTime() < it->second;
+}
+
+void VoiceClient::setMuted(bool m) {
+	if (capture.isMuted() == m) {
+		return;
+	}
+	capture.setMuted(m);
+	Utils::SoundPlayer::getInstance().play(m ? Utils::Sound::MIC_OFF : Utils::Sound::MIC_ON);
+	publishVoiceState();
+}
+
+void VoiceClient::setDeafened(bool d) {
+	if (audio.isDeafened() == d) {
+		return;
+	}
+
+	if (d) {
+		mutedBeforeDeafen = capture.isMuted();
+		capture.setMuted(true);
+	} else {
+		capture.setMuted(mutedBeforeDeafen);
+	}
+
+	audio.setDeafened(d);
+	Utils::SoundPlayer::getInstance().play(d ? Utils::Sound::HEADPHONE_OFF : Utils::Sound::HEADPHONE_ON);
+	publishVoiceState();
+}
+
+void VoiceClient::publishVoiceState() {
+	std::string guild, channel;
+	{
+		std::lock_guard<std::mutex> lock(mutex);
+		guild = guildId;
+		channel = channelId;
+	}
+	if (channel.empty()) {
+		return;
+	}
+	DiscordClient::getInstance().updateVoiceState(guild, channel, capture.isMuted(), audio.isDeafened());
+}
+
+void VoiceClient::onVoiceState(const std::string &session, bool srvMute, bool srvDeaf) {
 	if (session != DiscordClient::getInstance().getSessionId()) {
 		return;
+	}
+
+	serverMuted = srvMute;
+	serverDeafened = srvDeaf;
+	if (srvMute) {
+		capture.setMuted(true);
 	}
 
 	{
@@ -163,16 +222,10 @@ void VoiceClient::socketThread() {
 	ws.setOnBinaryMessage([this](std::string &msg) { handleBinaryPayload(msg); });
 	ws.setOnClose([this](int code, const std::string &reason) {
 		Logger::log("[Voice] Closed code=%d reason=%s", code, reason.c_str());
-		{
-			std::lock_guard<std::mutex> lock(mutex);
-			lastFailure.closeCode = code;
-			lastFailure.reason = reason;
-		}
 		if (code == CLOSE_DAVE_REQUIRED) {
-			daveRequired = true;
 			Logger::log("[Voice] Server requires the DAVE protocol; this client advertises version 0.");
 		}
-		setState(VoiceState::FAILED);
+		setState(code == CLOSE_NORMAL ? VoiceState::DISCONNECTED : VoiceState::FAILED);
 	});
 	ws.setOnError([](const std::string &err) { Logger::log("[Voice] Error: %s", err.c_str()); });
 
@@ -498,10 +551,18 @@ void VoiceClient::handleRtpPacket(uint8_t *packet, size_t len) {
 			}
 			return;
 		}
+		markSpeaking(userId);
 		audio.pushOpus(ssrc, daveFrameBuffer, written);
 		return;
 	}
 
+	{
+		std::lock_guard<std::mutex> lock(mutex);
+		auto it = ssrcToUser.find(ssrc);
+		if (it != ssrcToUser.end()) {
+			speakingUntil[it->second] = osGetTime() + SPEAKING_HOLD_MS;
+		}
+	}
 	audio.pushOpus(ssrc, opusData, opusLen);
 }
 
@@ -626,9 +687,13 @@ void VoiceClient::mediaThread() {
 				continue;
 			}
 
-			if (!speakingSent) {
-				sendSpeaking(true);
-				speakingSent = true;
+			bool active = capture.lastPeak() >= SPEAKING_PEAK_THRESHOLD;
+			if (active) {
+				markSpeaking(DiscordClient::getInstance().getCurrentUser().id);
+			}
+			if (active != speakingSent) {
+				sendSpeaking(active);
+				speakingSent = active;
 			}
 			sendAudioFrame(frame, (size_t)encoded);
 		}
@@ -891,6 +956,7 @@ void VoiceClient::handlePayload(const std::string &message) {
 		if (!capture.start()) {
 			Logger::log("[Voice] Capture unavailable; receive only");
 		}
+		publishVoiceState();
 		speakingSent = false;
 		sendNonce = 0;
 		sendSequence = 0;
@@ -999,6 +1065,10 @@ void VoiceClient::handlePayload(const std::string &message) {
 }
 
 void VoiceClient::disconnect() {
+	if (state == VoiceState::ESTABLISHED) {
+		Utils::SoundPlayer::getInstance().play(Utils::Sound::VOICE_LEFT);
+	}
+
 	stopMedia = true;
 	if (media) {
 		threadJoin(media, U64_MAX);
@@ -1038,6 +1108,7 @@ void VoiceClient::disconnect() {
 		guildId.clear();
 		channelId.clear();
 		roster.clear();
+		speakingUntil.clear();
 		externalSenderPackage.clear();
 		haveState = false;
 		haveServer = false;

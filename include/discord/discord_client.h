@@ -8,6 +8,7 @@
 #include <deque>
 #include <functional>
 #include <map>
+#include <set>
 #include <mutex>
 #include <optional>
 #include <rapidjson/document.h>
@@ -123,7 +124,10 @@ class DiscordClient {
 
 	void updateVoiceState(const std::string &guildId, const std::string &channelId, bool selfMute, bool selfDeaf);
 
-	void setVoiceStateCallback(std::function<void(const std::string &sessionId)> cb) {
+	std::vector<VoiceParticipant> getVoiceParticipants(const std::string &channelId);
+	void resolveVoiceNames(const std::string &guildId);
+
+	void setVoiceStateCallback(std::function<void(const std::string &sessionId, bool serverMute, bool serverDeaf)> cb) {
 		std::lock_guard<std::recursive_mutex> lock(clientMutex);
 		voiceStateCallback = cb;
 	}
@@ -309,7 +313,14 @@ class DiscordClient {
 	mutable std::recursive_mutex clientMutex;
 
 	std::function<void()> connectionCallback;
-	std::function<void(const std::string &)> voiceStateCallback;
+	std::function<void(const std::string &, bool, bool)> voiceStateCallback;
+
+	std::map<std::string, std::vector<VoiceParticipant>> voiceParticipants;
+	std::map<std::string, std::string> voiceChannelByUser;
+	void applyVoiceState(const rapidjson::Value &state, const std::string &guildId);
+	void clearVoiceParticipant(const std::string &userId);
+	void resolveVoiceParticipant(const std::string &guildId, const std::string &userId);
+	std::set<std::string> voiceNameLookups;
 	std::function<void(const std::string &, const std::string &, const std::string &)> voiceServerCallback;
 	std::function<void(const Message &)> messageCallback;
 	std::function<void(const Message &)> messageUpdateCallback;

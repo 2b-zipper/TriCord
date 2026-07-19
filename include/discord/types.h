@@ -67,7 +67,21 @@ struct Role {
 struct Member {
 	std::string user_id;
 	std::string nickname;
+	std::string username;
+	std::string globalName;
+	std::string avatar;
 	std::vector<std::string> role_ids;
+};
+
+struct VoiceParticipant {
+	std::string userId;
+	std::string guildId;
+	std::string name;
+	std::string avatar;
+	bool selfMute = false;
+	bool selfDeaf = false;
+	bool mute = false;
+	bool deaf = false;
 };
 
 struct GuildFolder {

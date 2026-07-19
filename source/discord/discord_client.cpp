@@ -1,5 +1,6 @@
 #include "discord/discord_client.h"
 #include "core/config.h"
+#include "discord/avatar_cache.h"
 #include "core/i18n.h"
 #include "log.h"
 #include "network/http_client.h"
@@ -498,11 +499,16 @@ void DiscordClient::handleDispatch(const rapidjson::Document &doc) {
 	const rapidjson::Value &d = doc["d"];
 
 	if (t == "VOICE_STATE_UPDATE") {
+		applyVoiceState(d, Utils::Json::getString(d, "guild_id"));
+		guildDataDirty = true;
 		if (Utils::Json::getString(d, "user_id") == currentUser.id) {
 			std::string voiceSession = Utils::Json::getString(d, "session_id");
-			Logger::log("[Voice] VOICE_STATE_UPDATE session=%s", voiceSession.c_str());
+			bool serverMute = Utils::Json::getBool(d, "mute");
+			bool serverDeaf = Utils::Json::getBool(d, "deaf");
+			Logger::log("[Voice] VOICE_STATE_UPDATE session=%s mute=%d deaf=%d", voiceSession.c_str(), serverMute,
+			            serverDeaf);
 			if (voiceStateCallback) {
-				voiceStateCallback(voiceSession);
+				voiceStateCallback(voiceSession, serverMute, serverDeaf);
 			}
 		}
 		return;
@@ -738,6 +744,22 @@ void DiscordClient::handleReady(const rapidjson::Value &d) {
 		readStates = std::move(newReadStates);
 		notificationSettings = std::move(newNotificationSettings);
 
+		voiceParticipants.clear();
+		voiceChannelByUser.clear();
+		if (d.HasMember("guilds") && d["guilds"].IsArray()) {
+			for (const auto &gObj : d["guilds"].GetArray()) {
+				if (!gObj.IsObject() || !gObj.HasMember("voice_states") || !gObj["voice_states"].IsArray()) {
+					continue;
+				}
+				const std::string gid = Utils::Json::getString(gObj, "id");
+				for (const auto &vs : gObj["voice_states"].GetArray()) {
+					if (vs.IsObject()) {
+						applyVoiceState(vs, gid);
+					}
+				}
+			}
+		}
+
 		std::string accName = currentUser.username;
 		Config::getInstance().updateCurrentAccountName(accName);
 
@@ -750,6 +772,7 @@ void DiscordClient::handleGuildCreate(const rapidjson::Value &d) {
 
 	Guild guild;
 	parseGuildObject(d, guild, currentUser.id);
+	const std::string guildId = guild.id;
 
 	bool found = false;
 	for (auto &g : guilds) {
@@ -776,6 +799,16 @@ void DiscordClient::handleGuildCreate(const rapidjson::Value &d) {
 		guilds.push_back(std::move(guild));
 		Logger::log("Added new guild %s", guilds.back().name.c_str());
 	}
+
+	if (d.HasMember("voice_states") && d["voice_states"].IsArray()) {
+		const rapidjson::Value &states = d["voice_states"];
+		for (rapidjson::SizeType i = 0; i < states.Size(); i++) {
+			if (states[i].IsObject()) {
+				applyVoiceState(states[i], guildId);
+			}
+		}
+	}
+
 	guildDataDirty.store(true);
 }
 
@@ -1411,6 +1444,12 @@ Member DiscordClient::parseMemberObject(const rapidjson::Value &mObj, const std:
 	Member member;
 	member.user_id = userId;
 	member.nickname = Utils::Json::getString(mObj, "nick");
+	if (mObj.HasMember("user") && mObj["user"].IsObject()) {
+		const rapidjson::Value &user = mObj["user"];
+		member.username = Utils::Json::getString(user, "username");
+		member.globalName = Utils::Json::getString(user, "global_name");
+		member.avatar = Utils::Json::getString(user, "avatar");
+	}
 	if (mObj.HasMember("roles") && mObj["roles"].IsArray()) {
 		const rapidjson::Value &roles = mObj["roles"];
 		for (rapidjson::SizeType i = 0; i < roles.Size(); i++) {
@@ -2749,6 +2788,148 @@ void DiscordClient::sendLazyRequest(const std::string &guildId, const std::strin
 	std::string json = s.GetString();
 	queueSend(json);
 	Logger::log("[Gateway] Sent Lazy Request (Op 14) for Guild %s Channel %s", guildId.c_str(), channelId.c_str());
+}
+
+void DiscordClient::clearVoiceParticipant(const std::string &userId) {
+	auto prev = voiceChannelByUser.find(userId);
+	if (prev == voiceChannelByUser.end()) {
+		return;
+	}
+
+	auto &list = voiceParticipants[prev->second];
+	for (auto it = list.begin(); it != list.end(); ++it) {
+		if (it->userId == userId) {
+			list.erase(it);
+			break;
+		}
+	}
+	if (list.empty()) {
+		voiceParticipants.erase(prev->second);
+	}
+	voiceChannelByUser.erase(prev);
+}
+
+void DiscordClient::applyVoiceState(const rapidjson::Value &state, const std::string &guildId) {
+	std::string uid = Utils::Json::getString(state, "user_id");
+	if (uid.empty()) {
+		return;
+	}
+
+	clearVoiceParticipant(uid);
+
+	if (!state.HasMember("channel_id") || !state["channel_id"].IsString()) {
+		return;
+	}
+	std::string channelId = state["channel_id"].GetString();
+
+	VoiceParticipant p;
+	p.userId = uid;
+	p.guildId = guildId;
+	p.selfMute = Utils::Json::getBool(state, "self_mute");
+	p.selfDeaf = Utils::Json::getBool(state, "self_deaf");
+	p.mute = Utils::Json::getBool(state, "mute");
+	p.deaf = Utils::Json::getBool(state, "deaf");
+
+	// The gateway guild object omits `member`, so a state seen at GUILD_CREATE
+	// only carries the user ID and has to be resolved against the member list.
+	if (state.HasMember("member") && state["member"].IsObject()) {
+		const rapidjson::Value &member = state["member"];
+		p.name = Utils::Json::getString(member, "nick");
+		if (member.HasMember("user") && member["user"].IsObject()) {
+			const rapidjson::Value &user = member["user"];
+			p.avatar = Utils::Json::getString(user, "avatar");
+			if (p.name.empty()) {
+				p.name = Utils::Json::getString(user, "global_name");
+			}
+			if (p.name.empty()) {
+				p.name = Utils::Json::getString(user, "username");
+			}
+		}
+	} else if (!guildId.empty()) {
+		for (const auto &g : guilds) {
+			if (g.id != guildId) {
+				continue;
+			}
+			for (const auto &m : g.members) {
+				if (m.user_id != uid) {
+					continue;
+				}
+				p.name = !m.nickname.empty() ? m.nickname : (!m.globalName.empty() ? m.globalName : m.username);
+				p.avatar = m.avatar;
+				break;
+			}
+			break;
+		}
+	}
+
+	// resolveVoiceNames() replaces this once the user looks at that guild.
+	if (p.name.empty()) {
+		p.name = uid;
+	}
+
+	voiceParticipants[channelId].push_back(std::move(p));
+	voiceChannelByUser[uid] = channelId;
+}
+
+void DiscordClient::resolveVoiceNames(const std::string &guildId) {
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	if (guildId.empty()) {
+		return;
+	}
+
+	for (const auto &entry : voiceParticipants) {
+		for (const auto &p : entry.second) {
+			if (p.guildId != guildId) {
+				continue;
+			}
+			if (p.name == p.userId) {
+				resolveVoiceParticipant(guildId, p.userId);
+			} else {
+				AvatarCache::getInstance().prefetchAvatar(p.userId, p.avatar, "0");
+			}
+		}
+	}
+}
+
+void DiscordClient::resolveVoiceParticipant(const std::string &guildId, const std::string &userId) {
+	if (!voiceNameLookups.insert(userId).second) {
+		return;
+	}
+
+	fetchMember(guildId, userId, [this, userId](const Member &member) {
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		this->voiceNameLookups.erase(userId);
+
+		std::string name = !member.nickname.empty()
+		                       ? member.nickname
+		                       : (!member.globalName.empty() ? member.globalName : member.username);
+		if (name.empty()) {
+			return;
+		}
+
+		auto it = this->voiceChannelByUser.find(userId);
+		if (it == this->voiceChannelByUser.end()) {
+			return;
+		}
+		for (auto &p : this->voiceParticipants[it->second]) {
+			if (p.userId == userId) {
+				p.name = name;
+				p.avatar = member.avatar;
+				AvatarCache::getInstance().prefetchAvatar(userId, p.avatar, "0");
+				this->guildDataDirty.store(true);
+				break;
+			}
+		}
+	});
+}
+
+std::vector<VoiceParticipant> DiscordClient::getVoiceParticipants(const std::string &channelId) {
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	auto it = voiceParticipants.find(channelId);
+	if (it == voiceParticipants.end()) {
+		return {};
+	}
+	return it->second;
 }
 
 void DiscordClient::updateVoiceState(const std::string &guildId, const std::string &channelId, bool selfMute,

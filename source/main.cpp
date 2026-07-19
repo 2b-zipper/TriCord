@@ -6,16 +6,12 @@
 #include "ui/image_manager.h"
 #include "ui/screen_manager.h"
 #include "utils/message_utils.h"
+#include "utils/sound_player.h"
 #include <3ds.h>
 #include <citro2d.h>
 #include <citro3d.h>
 
 #include <malloc.h>
-
-extern "C" {
-u32 __ctru_heap_size = 20 * 1024 * 1024;
-u32 __ctru_linear_heap_size = 12 * 1024 * 1024;
-}
 
 static const size_t SOC_SHAREDMEM_SIZE = 0x200000;
 static u32 *soc_sharedmem_ptr = NULL;
@@ -36,8 +32,19 @@ int main(int argc, char **argv) {
 	romfsInit();
 	psInit();
 
+	if (R_SUCCEEDED(ndspInit())) {
+		ndspSetOutputMode(NDSP_OUTPUT_MONO);
+		Utils::SoundPlayer::getInstance().init();
+	} else {
+		Logger::log("Audio unavailable (is dspfirm.cdc dumped?)");
+	}
+
 	Logger::init();
 	Logger::log("TriCord - Discord for 3DS starting...");
+	Logger::log("[Mem] app region %luKB (free %luKB), linear free %luKB",
+	            (unsigned long)(osGetMemRegionSize(MEMREGION_APPLICATION) / 1024),
+	            (unsigned long)(osGetMemRegionFree(MEMREGION_APPLICATION) / 1024),
+	            (unsigned long)(linearSpaceFree() / 1024));
 	Config::getInstance().load();
 	Network::NetworkManager::getInstance().init(3, 2);
 
@@ -69,6 +76,8 @@ int main(int argc, char **argv) {
 	UI::ImageManager::getInstance().shutdown();
 	Discord::DiscordClient::getInstance().shutdown();
 	Network::NetworkManager::getInstance().shutdown();
+	Utils::SoundPlayer::getInstance().shutdown();
+	ndspExit();
 	psExit();
 	romfsExit();
 	C2D_Fini();

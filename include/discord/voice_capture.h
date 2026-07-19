@@ -23,12 +23,14 @@ class VoiceCapture {
 
 	void setMuted(bool m) { muted = m; }
 	bool isMuted() const { return muted; }
+	int lastPeak() const { return peakLevel; }
 
 	int poll(uint8_t *out, size_t outSize);
 
   private:
 	bool running = false;
 	std::atomic<bool> muted{false};
+	std::atomic<int> peakLevel{0};
 
 	uint8_t *micBuffer = nullptr;
 	uint32_t micBufferSize = 0;
