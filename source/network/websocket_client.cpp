@@ -476,6 +476,7 @@ bool WebSocketClient::receiveFrame(std::string &message) {
 		return true;
 
 	case WebSocketOpcode::BINARY:
+		lastFrameBinary = true;
 		message = std::string(payload.begin(), payload.end());
 		return true;
 
@@ -506,12 +507,17 @@ void WebSocketClient::poll() {
 	}
 
 	std::string message;
+	lastFrameBinary = false;
 	if (receiveFrame(message) && !message.empty()) {
-		if (onMessage) {
+		if (lastFrameBinary && onBinaryMessage) {
+			onBinaryMessage(message);
+		} else if (onMessage) {
 			onMessage(message);
 		}
 	}
 }
+
+void WebSocketClient::setOnBinaryMessage(MessageCallback callback) { onBinaryMessage = callback; }
 
 void WebSocketClient::setOnMessage(MessageCallback callback) { onMessage = callback; }
 

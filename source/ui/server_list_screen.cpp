@@ -3,6 +3,7 @@
 #include "core/i18n.h"
 #include "discord/avatar_cache.h"
 #include "discord/discord_client.h"
+#include "discord/voice_client.h"
 #include "log.h"
 #include "ui/image_manager.h"
 #include "utils/message_utils.h"
@@ -1069,7 +1070,12 @@ void ServerListScreen::update() {
 			}
 		}
 
-		if (kDown & KEY_X) {
+		if (kDown & KEY_Y) {
+			Discord::VoiceClient &voice = Discord::VoiceClient::getInstance();
+			if (voice.getState() == Discord::VoiceState::ESTABLISHED) {
+				voice.setMuted(!voice.isMuted());
+			}
+		} else if (kDown & KEY_X) {
 			if (selectedChannelIndex >= 0 && selectedChannelIndex < (int)sortedChannels.size()) {
 				const auto &ch = sortedChannels[selectedChannelIndex];
 				if (ch.type != 4) { // not a category
@@ -1090,6 +1096,14 @@ void ServerListScreen::update() {
 				} else if (ch.type == 15) {
 					Discord::DiscordClient::getInstance().setSelectedChannelId(ch.id);
 					ScreenManager::getInstance().pushScreen(ScreenType::FORUM_CHANNEL);
+				} else if (ch.type == 2 || ch.type == 13) {
+					Discord::VoiceClient &voice = Discord::VoiceClient::getInstance();
+					if (voice.getState() == Discord::VoiceState::DISCONNECTED ||
+					    voice.getState() == Discord::VoiceState::FAILED) {
+						voice.connect(sm.getSelectedGuildId(), ch.id);
+					} else {
+						voice.disconnect();
+					}
 				}
 			}
 		}
@@ -1588,6 +1602,46 @@ void ServerListScreen::renderBottom(C3D_RenderTarget *target) {
 		drawText(10.0f, BOTTOM_SCREEN_HEIGHT - 25.0f, 0.5f, 0.4f, 0.4f, ScreenManager::colorTextMuted(),
 		         "\uE079\uE07A: " + TR("common.navigate") + "  \uE001: " + TR("common.back") +
 		             "  \uE000: " + TR("common.enter"));
+
+		Discord::VoiceClient &voice = Discord::VoiceClient::getInstance();
+		Discord::VoiceState vs = voice.getState();
+		if (vs != Discord::VoiceState::DISCONNECTED) {
+			std::string label = "Voice: ";
+			u32 color = ScreenManager::colorTextMuted();
+			switch (vs) {
+			case Discord::VoiceState::AWAITING_SERVER:
+				label += "waiting for server";
+				break;
+			case Discord::VoiceState::CONNECTING:
+				label += "connecting";
+				break;
+			case Discord::VoiceState::IDENTIFYING:
+				label += "identifying";
+				break;
+			case Discord::VoiceState::READY:
+				label += "ready";
+				break;
+			case Discord::VoiceState::SELECTING_PROTOCOL:
+				label += "negotiating";
+				break;
+			case Discord::VoiceState::ESTABLISHED:
+				label += voice.isMuted() ? "connected (muted,  to talk)" : "connected (MIC LIVE,  to mute)";
+				color = ScreenManager::colorAccent();
+				break;
+			case Discord::VoiceState::FAILED: {
+				Discord::VoiceFailure f = voice.getLastFailure();
+				label += "closed " + std::to_string(f.closeCode);
+				if (voice.requiresDave()) {
+					label += " (DAVE required)";
+				}
+				color = ScreenManager::colorError();
+				break;
+			}
+			default:
+				break;
+			}
+			drawText(10.0f, BOTTOM_SCREEN_HEIGHT - 38.0f, 0.5f, 0.4f, 0.4f, color, label);
+		}
 	}
 }
 

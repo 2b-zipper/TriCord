@@ -497,6 +497,31 @@ void DiscordClient::handleDispatch(const rapidjson::Document &doc) {
 	}
 	const rapidjson::Value &d = doc["d"];
 
+	if (t == "VOICE_STATE_UPDATE") {
+		if (Utils::Json::getString(d, "user_id") == currentUser.id) {
+			std::string voiceSession = Utils::Json::getString(d, "session_id");
+			Logger::log("[Voice] VOICE_STATE_UPDATE session=%s", voiceSession.c_str());
+			if (voiceStateCallback) {
+				voiceStateCallback(voiceSession);
+			}
+		}
+		return;
+	}
+
+	if (t == "VOICE_SERVER_UPDATE") {
+		std::string token = Utils::Json::getString(d, "token");
+		std::string endpoint = Utils::Json::getString(d, "endpoint");
+		std::string serverId = Utils::Json::getString(d, "guild_id");
+		if (serverId.empty()) {
+			serverId = Utils::Json::getString(d, "channel_id");
+		}
+		Logger::log("[Voice] VOICE_SERVER_UPDATE endpoint=%s server=%s", endpoint.c_str(), serverId.c_str());
+		if (voiceServerCallback) {
+			voiceServerCallback(token, endpoint, serverId);
+		}
+		return;
+	}
+
 	if (t == "READY") {
 		handleReady(d);
 	} else if (t == "GUILD_CREATE") {
@@ -2724,6 +2749,44 @@ void DiscordClient::sendLazyRequest(const std::string &guildId, const std::strin
 	std::string json = s.GetString();
 	queueSend(json);
 	Logger::log("[Gateway] Sent Lazy Request (Op 14) for Guild %s Channel %s", guildId.c_str(), channelId.c_str());
+}
+
+void DiscordClient::updateVoiceState(const std::string &guildId, const std::string &channelId, bool selfMute,
+                                     bool selfDeaf) {
+	rapidjson::StringBuffer s;
+	rapidjson::Writer<rapidjson::StringBuffer> writer(s);
+	writer.StartObject();
+	writer.Key("op");
+	writer.Int(4);
+	writer.Key("d");
+	writer.StartObject();
+
+	writer.Key("guild_id");
+	if (guildId.empty() || guildId == "DM") {
+		writer.Null();
+	} else {
+		writer.String(guildId.c_str());
+	}
+
+	writer.Key("channel_id");
+	if (channelId.empty()) {
+		writer.Null();
+	} else {
+		writer.String(channelId.c_str());
+	}
+
+	writer.Key("self_mute");
+	writer.Bool(selfMute);
+	writer.Key("self_deaf");
+	writer.Bool(selfDeaf);
+	writer.Key("self_video");
+	writer.Bool(false);
+
+	writer.EndObject();
+	writer.EndObject();
+
+	queueSend(s.GetString());
+	Logger::log("[Voice] Sent Update Voice State (Op 4) guild=%s channel=%s", guildId.c_str(), channelId.c_str());
 }
 
 void DiscordClient::updatePresence(UserStatus status) {

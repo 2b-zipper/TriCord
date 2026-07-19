@@ -116,6 +116,23 @@ class DiscordClient {
 		return currentUser;
 	}
 
+	std::string getSessionId() {
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		return sessionId;
+	}
+
+	void updateVoiceState(const std::string &guildId, const std::string &channelId, bool selfMute, bool selfDeaf);
+
+	void setVoiceStateCallback(std::function<void(const std::string &sessionId)> cb) {
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		voiceStateCallback = cb;
+	}
+	void setVoiceServerCallback(
+	    std::function<void(const std::string &token, const std::string &endpoint, const std::string &serverId)> cb) {
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		voiceServerCallback = cb;
+	}
+
 	const std::vector<Guild> &getGuilds() { return guilds; }
 	const std::vector<GuildFolder> &getGuildFolders() { return folders; }
 	const std::vector<Channel> &getPrivateChannels() { return privateChannels; }
@@ -292,6 +309,8 @@ class DiscordClient {
 	mutable std::recursive_mutex clientMutex;
 
 	std::function<void()> connectionCallback;
+	std::function<void(const std::string &)> voiceStateCallback;
+	std::function<void(const std::string &, const std::string &, const std::string &)> voiceServerCallback;
 	std::function<void(const Message &)> messageCallback;
 	std::function<void(const Message &)> messageUpdateCallback;
 	std::function<void(const std::string &)> messageDeleteCallback;

@@ -41,6 +41,7 @@ class WebSocketClient {
 	bool sendBinary(const std::vector<uint8_t> &data);
 
 	void setOnMessage(MessageCallback callback);
+	void setOnBinaryMessage(MessageCallback callback);
 	void setOnError(ErrorCallback callback);
 	void setOnClose(CloseCallback callback);
 
@@ -55,6 +56,8 @@ class WebSocketClient {
 	bool useTLS;
 
 	MessageCallback onMessage;
+	MessageCallback onBinaryMessage;
+	bool lastFrameBinary = false;
 	ErrorCallback onError;
 	CloseCallback onClose;
 

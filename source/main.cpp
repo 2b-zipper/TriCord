@@ -12,6 +12,11 @@
 
 #include <malloc.h>
 
+extern "C" {
+u32 __ctru_heap_size = 20 * 1024 * 1024;
+u32 __ctru_linear_heap_size = 12 * 1024 * 1024;
+}
+
 static const size_t SOC_SHAREDMEM_SIZE = 0x200000;
 static u32 *soc_sharedmem_ptr = NULL;
 

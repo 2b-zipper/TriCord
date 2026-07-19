@@ -31,9 +31,13 @@ include $(DEVKITARM)/3ds_rules
 #---------------------------------------------------------------------------------
 TARGET		:=	TriCord
 BUILD		:=	build
-SOURCES		:=	source source/core source/network source/discord source/ui source/ui/forum source/utils library/qrcodegen
+SOURCES		:=	source source/core source/network source/discord source/ui source/ui/forum source/utils library/qrcodegen \
+			library/mlspp/src library/mlspp/hpke_src \
+			library/libdave/src library/libdave/src/mls library/libdave/src/utils
 DATA		:=	data
-INCLUDES	:=	include include/core include/ui library library/stb_image library/qrcodegen
+INCLUDES	:=	include include/core include/ui library library/stb_image library/qrcodegen \
+			library/libdave/includes library/libdave/src \
+			library/mlspp/include library/mlspp/gen library/mlspp/hpke_src
 GRAPHICS	:=	gfx
 GFXBUILD	:=	$(BUILD)
 ROMFS		:=	romfs
@@ -67,7 +71,7 @@ CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17 -Wno-psabi
 ASFLAGS	:=	-g $(ARCH)
 LDFLAGS	=	-specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 
-LIBS	:= -lcurl -lmbedtls -lmbedx509 -lmbedcrypto -lz -lcitro2d -lcitro3d -lctru -lm
+LIBS	:= -lcurl -lopus -lmbedtls -lmbedx509 -lmbedcrypto -lz -lcitro2d -lcitro3d -lctru -lm
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing
@@ -224,6 +228,14 @@ APP_ROMFS         := $(TOPDIR)/$(ROMFS)
 VERSION_DEFS := -DAPP_VERSION_MAJOR=$(APP_VERSION_MAJOR) -DAPP_VERSION_MINOR=$(APP_VERSION_MINOR) -DAPP_VERSION_MICRO=$(APP_VERSION_MICRO)
 CFLAGS += $(VERSION_DEFS)
 CXXFLAGS += $(VERSION_DEFS)
+
+MLSPP_OBJS := $(notdir $(patsubst %.cpp,%.o,$(wildcard $(TOPDIR)/library/mlspp/src/*.cpp) \
+	$(wildcard $(TOPDIR)/library/mlspp/hpke_src/*.cpp) \
+	$(wildcard $(TOPDIR)/library/libdave/src/*.cpp) \
+	$(wildcard $(TOPDIR)/library/libdave/src/mls/*.cpp) \
+	$(wildcard $(TOPDIR)/library/libdave/src/utils/*.cpp)) \
+	dave_session.o)
+$(MLSPP_OBJS): CXXFLAGS := $(filter-out -fno-rtti -fno-exceptions,$(CXXFLAGS)) -frtti -fexceptions -DWITH_MBEDTLS
 
 ifneq ("$(wildcard $(TOPDIR)/$(BANNER_IMAGE).cgfx)","")
 	BANNER_IMAGE_FILE := $(TOPDIR)/$(BANNER_IMAGE).cgfx
