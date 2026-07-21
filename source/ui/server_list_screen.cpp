@@ -267,49 +267,6 @@ static bool isMuteActive(bool muted, const std::string &endTime) {
 	return muteEnd > MessageUtils::getUtcNow();
 }
 
-// Unread marking follows the UNREADS_* flags; when unset it follows message_notifications.
-enum class UnreadMode { ALL_MESSAGES, ONLY_MENTIONS, NO_MESSAGES, MUTED };
-
-static UnreadMode levelToMode(int messageNotifications, UnreadMode inheritMode) {
-	switch (messageNotifications) {
-	case 0:
-		return UnreadMode::ALL_MESSAGES;
-	case 1:
-		return UnreadMode::ONLY_MENTIONS;
-	case 2:
-		return UnreadMode::NO_MESSAGES;
-	default:
-		return inheritMode;
-	}
-}
-
-static UnreadMode resolveGuildMode(const Discord::GuildNotificationSettings &gs) {
-	if (isMuteActive(gs.muted, gs.muteEndTime)) {
-		return UnreadMode::MUTED;
-	}
-	if (gs.flags & (1 << 11)) {
-		return UnreadMode::ALL_MESSAGES;
-	}
-	if (gs.flags & (1 << 12)) {
-		return UnreadMode::ONLY_MENTIONS;
-	}
-	return levelToMode(gs.messageNotifications, UnreadMode::ALL_MESSAGES);
-}
-
-static UnreadMode resolveChannelMode(const Discord::ChannelNotificationOverride &co, UnreadMode guildMode) {
-	if (isMuteActive(co.muted, co.muteEndTime)) {
-		return UnreadMode::MUTED;
-	}
-	UnreadMode inheritMode = (guildMode == UnreadMode::MUTED) ? UnreadMode::ALL_MESSAGES : guildMode;
-	if (co.flags & (1 << 10)) {
-		return UnreadMode::ALL_MESSAGES;
-	}
-	if (co.flags & (1 << 9)) {
-		return UnreadMode::ONLY_MENTIONS;
-	}
-	return levelToMode(co.messageNotifications, inheritMode);
-}
-
 static const struct {
 	const char *key;
 	int minutes;
@@ -714,10 +671,10 @@ void ServerListScreen::updateUnreadCache() {
 	channelUnreadCache.clear();
 
 	for (const auto &guild : dc.getGuilds()) {
-		UnreadMode guildMode = UnreadMode::ALL_MESSAGES;
+		bool guildMuted = false;
 		auto gsIt = notifSettings.find(guild.id);
 		if (gsIt != notifSettings.end()) {
-			guildMode = resolveGuildMode(gsIt->second);
+			guildMuted = isMuteActive(gsIt->second.muted, gsIt->second.muteEndTime);
 		}
 
 		bool guildHasUnread = false;
@@ -734,13 +691,10 @@ void ServerListScreen::updateUnreadCache() {
 				continue;
 			}
 
-			// Guild mute suppresses the server icon only; channels still show unread dots.
-			UnreadMode chMode = (guildMode == UnreadMode::MUTED) ? UnreadMode::ALL_MESSAGES : guildMode;
 			bool chMuted = false;
 			if (gsIt != notifSettings.end()) {
 				auto coIt = gsIt->second.channelOverrides.find(ch.id);
 				if (coIt != gsIt->second.channelOverrides.end()) {
-					chMode = resolveChannelMode(coIt->second, guildMode);
 					chMuted = isMuteActive(coIt->second.muted, coIt->second.muteEndTime);
 				}
 			}
@@ -754,23 +708,9 @@ void ServerListScreen::updateUnreadCache() {
 			bool rawUnread = MessageUtils::isNewerSnowflake(ch.last_message_id, rsIt->second.lastReadMessageId);
 			int mentions = rsIt->second.mentionCount;
 
-			bool showUnread = false;
 			// Mute hides the unread dot only; mention_count keeps counting while muted.
+			bool showUnread = rawUnread && !chMuted;
 			int showMentions = mentions;
-
-			if (rawUnread) {
-				switch (chMode) {
-				case UnreadMode::ALL_MESSAGES:
-				case UnreadMode::NO_MESSAGES:
-					showUnread = true;
-					break;
-				case UnreadMode::ONLY_MENTIONS:
-					showUnread = (mentions > 0);
-					break;
-				case UnreadMode::MUTED:
-					break;
-				}
-			}
 
 			channelUnreadCache[ch.id] = {showUnread, showMentions, chMuted};
 
@@ -780,8 +720,7 @@ void ServerListScreen::updateUnreadCache() {
 			guildMentions += showMentions;
 		}
 
-		bool guildUnread = (guildMode == UnreadMode::MUTED) ? false : guildHasUnread;
-		guildSummary[guild.id] = {guildUnread, guildMentions};
+		guildSummary[guild.id] = {guildMuted ? false : guildHasUnread, guildMentions};
 	}
 
 	for (auto &item : listItems) {
