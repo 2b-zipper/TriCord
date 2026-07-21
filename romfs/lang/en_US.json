@@ -1,6 +1,7 @@
 {
     "app.name": "TriCord",
     "channel.menu.mute": "Mute Channel",
+    "channel.menu.open_chat": "Open Chat",
     "channel.mute.unmute": "Unmute Channel",
     "channel.no_visible": "No visible channels",
     "channel.select": "Channel Selection",

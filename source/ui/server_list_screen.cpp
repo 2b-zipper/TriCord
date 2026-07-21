@@ -321,12 +321,17 @@ static const struct {
 static const int MENU_OPEN_DURATION = INT_MIN + 1;
 static const int MENU_MARK_READ = INT_MIN + 2;
 static const int MENU_OPEN_LEVELS = INT_MIN + 3;
+static const int MENU_OPEN_CHAT = INT_MIN + 4;
 
 static bool opensSubmenu(int tw) { return tw == MENU_OPEN_DURATION || tw == MENU_OPEN_LEVELS; }
 
 void ServerListScreen::buildTopLevelMenu(bool currentlyMuted, bool hasUnread) {
 	muteMenuOptions.clear();
 	muteMenuTimeWindows.clear();
+	if (muteMenuIsChannel && muteMenuIsVoice) {
+		muteMenuOptions.push_back(TR("channel.menu.open_chat"));
+		muteMenuTimeWindows.push_back(MENU_OPEN_CHAT);
+	}
 	if (currentlyMuted) {
 		muteMenuOptions.push_back(TR(muteMenuIsChannel ? "channel.mute.unmute" : "server.mute.unmute"));
 		muteMenuTimeWindows.push_back(0);
@@ -480,6 +485,7 @@ void ServerListScreen::restoreTopLevelMenu() {
 void ServerListScreen::openMuteMenu(const std::string &guildId) {
 	muteMenuTargetId = guildId;
 	muteMenuIsChannel = false;
+	muteMenuIsVoice = false;
 	muteMenuAnchorX = SIDEBAR_WIDTH + 4.0f;
 	int rel = selectedIndex - scrollOffset;
 	muteMenuAnchorY = (rel >= 0 && rel < 5) ? rel * 48.0f + 24.0f : 120.0f;
@@ -528,9 +534,10 @@ void ServerListScreen::openMuteMenu(const std::string &guildId) {
 	isMuteMenuOpen = true;
 }
 
-void ServerListScreen::openChannelMuteMenu(const std::string &channelId) {
+void ServerListScreen::openChannelMuteMenu(const std::string &channelId, int channelType) {
 	muteMenuTargetId = channelId;
 	muteMenuIsChannel = true;
+	muteMenuIsVoice = channelType == 2 || channelType == 13;
 	muteMenuAnchorX = 4.0f;
 	int rel = selectedChannelIndex - channelScrollOffset;
 	muteMenuAnchorY = (rel >= 0 && rel < 9) ? 26.0f + rel * 22.0f + 11.0f : 120.0f;
@@ -918,6 +925,10 @@ void ServerListScreen::update() {
 					muteMenuParentIdx = muteMenuIndex;
 					muteMenuLevel = 1;
 					muteMenuIndex = 0;
+				} else if (tw == MENU_OPEN_CHAT) {
+					isMuteMenuOpen = false;
+					Discord::DiscordClient::getInstance().setSelectedChannelId(muteMenuTargetId);
+					ScreenManager::getInstance().pushScreen(ScreenType::MESSAGES);
 				} else if (tw == MENU_MARK_READ) {
 					isMuteMenuOpen = false;
 					if (muteMenuIsChannel) {
@@ -1097,7 +1108,7 @@ void ServerListScreen::update() {
 			if (selectedChannelIndex >= 0 && selectedChannelIndex < (int)sortedChannels.size()) {
 				const auto &ch = sortedChannels[selectedChannelIndex];
 				if (ch.type != 4) { // not a category
-					openChannelMuteMenu(ch.id);
+					openChannelMuteMenu(ch.id, ch.type);
 				}
 			}
 		} else if (kDown & KEY_B) {

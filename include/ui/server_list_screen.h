@@ -102,6 +102,7 @@ class ServerListScreen : public Screen {
 	int muteMenuCheckedIdx = -1;
 	std::string muteMenuTargetId;
 	bool muteMenuHasUnread = false;
+	bool muteMenuIsVoice = false;
 	std::string muteMenuExpireLabel; // format: "M/D HH:MM" or empty
 	float muteMenuAnchorX = 76.0f;
 	float muteMenuAnchorY = 120.0f;
@@ -112,7 +113,7 @@ class ServerListScreen : public Screen {
 	void buildLevelMenu();
 	void restoreTopLevelMenu();
 	void openMuteMenu(const std::string &guildId);
-	void openChannelMuteMenu(const std::string &channelId);
+	void openChannelMuteMenu(const std::string &channelId, int channelType);
 	void drawMuteMenu();
 };
 

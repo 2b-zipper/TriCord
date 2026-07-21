@@ -1656,7 +1656,8 @@ void MessageScreen::renderBottom(C3D_RenderTarget *target) {
 		iconPath = "romfs:/discord-icons/bookcheck.png";
 	} else if (channelType == 5) {
 		iconPath = "romfs:/discord-icons/announcement.png";
-	} else if (channelType == 10 || channelType == 11 || channelType == 12 || channelType == 1 || channelType == 3) {
+	} else if (channelType == 10 || channelType == 11 || channelType == 12 || channelType == 1 || channelType == 3 ||
+	           channelType == 2 || channelType == 13) {
 		iconPath = "romfs:/discord-icons/chat.png";
 	} else {
 		iconPath = "romfs:/discord-icons/text.png";

@@ -1,6 +1,7 @@
 {
     "app.name": "TriCord",
     "channel.menu.mute": "チャンネルを通知オフ",
+    "channel.menu.open_chat": "チャットを開く",
     "channel.mute.unmute": "チャンネルを通知オン",
     "channel.no_visible": "表示できるチャンネルがありません",
     "channel.select": "チャンネル選択",
