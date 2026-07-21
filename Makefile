@@ -33,11 +33,17 @@ TARGET		:=	TriCord
 BUILD		:=	build
 SOURCES		:=	source source/core source/network source/discord source/ui source/ui/forum source/utils library/qrcodegen \
 			library/mlspp/src library/mlspp/hpke_src \
-			library/libdave/src library/libdave/src/mls library/libdave/src/utils
+			library/libdave/src library/libdave/src/mls library/libdave/src/utils \
+			library/webrtc-aecm/common_audio \
+			library/webrtc-aecm/common_audio/signal_processing \
+			library/webrtc-aecm/common_audio/third_party/spl_sqrt_floor \
+			library/webrtc-aecm/modules/audio_processing/aecm \
+			library/webrtc-aecm/modules/audio_processing/utility
 DATA		:=	data
 INCLUDES	:=	include include/core include/ui library library/stb_image library/qrcodegen \
 			library/libdave/includes library/libdave/src \
-			library/mlspp/include library/mlspp/gen library/mlspp/hpke_src
+			library/mlspp/include library/mlspp/gen library/mlspp/hpke_src \
+			library/webrtc-aecm
 GRAPHICS	:=	gfx
 GFXBUILD	:=	$(BUILD)
 ROMFS		:=	romfs

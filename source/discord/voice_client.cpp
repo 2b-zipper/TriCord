@@ -678,6 +678,8 @@ void VoiceClient::mediaThread() {
 
 		audio.pump();
 
+		echo.setEnabled(!osIsHeadsetConnected());
+
 		uint8_t frame[512];
 		int encoded = capture.poll(frame, sizeof(frame));
 		if (encoded > 0) {
@@ -949,6 +951,12 @@ void VoiceClient::handlePayload(const std::string &message) {
 			break;
 		}
 
+		if (!echo.start()) {
+			Logger::log("[Voice] Echo cancellation unavailable");
+		}
+		audio.setEchoCanceller(&echo);
+		capture.setEchoCanceller(&echo);
+
 		if (!audio.start()) {
 			setState(VoiceState::FAILED);
 			break;
@@ -1085,6 +1093,9 @@ void VoiceClient::disconnect() {
 	}
 	capture.stop();
 	audio.stop();
+	capture.setEchoCanceller(nullptr);
+	audio.setEchoCanceller(nullptr);
+	echo.stop();
 
 	stopWorker = true;
 	if (worker.joinable()) {

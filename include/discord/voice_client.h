@@ -79,6 +79,7 @@ class VoiceClient {
 	std::atomic<bool> stopMedia{false};
 	VoiceAudio audio;
 	VoiceCapture capture;
+	EchoCanceller echo;
 	std::atomic<VoiceState> state{VoiceState::DISCONNECTED};
 	std::atomic<bool> serverMuted{false};
 	std::atomic<bool> serverDeafened{false};

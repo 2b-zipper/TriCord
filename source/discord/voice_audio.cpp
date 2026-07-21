@@ -167,31 +167,66 @@ void VoiceAudio::dropSpeaker(uint32_t ssrc) {
 	speakers.erase(it);
 }
 
+void VoiceAudio::submitFrame(ndspWaveBuf &buf, const int16_t *src) {
+	int16_t *dst = (int16_t *)buf.data_vaddr;
+	memcpy(dst, src, FRAME_SAMPLES * sizeof(int16_t));
+
+	// Averaged rather than decimated: aliasing would corrupt the envelope the
+	// delay estimator works from.
+	if (echo) {
+		for (int i = 0; i < ECHO_FRAME_SAMPLES; i++) {
+			int32_t sum = 0;
+			for (int j = 0; j < ECHO_DECIMATION; j++) {
+				sum += src[i * ECHO_DECIMATION + j];
+			}
+			echoFrame[i] = (int16_t)(sum / ECHO_DECIMATION);
+		}
+		echo->bufferFarEnd(echoFrame, ECHO_FRAME_SAMPLES);
+	}
+
+	DSP_FlushDataCache(dst, FRAME_SAMPLES * sizeof(int16_t));
+	ndspChnWaveBufAdd(NDSP_CHANNEL, &buf);
+
+	playFrame++;
+	nextWaveBuf = (nextWaveBuf + 1) % 4;
+}
+
 void VoiceAudio::pump() {
 	std::lock_guard<std::mutex> lock(mutex);
 	if (!running) {
 		return;
 	}
 
+	int queued = 0;
+	for (int i = 0; i < 4; i++) {
+		if (waveBufs[i].status != NDSP_WBUF_FREE && waveBufs[i].status != NDSP_WBUF_DONE) {
+			queued++;
+		}
+	}
+
+	// Silence is submitted rather than nothing: the far-end reference has to sit
+	// on a timeline that never jumps, or the delay estimate breaks every time
+	// the channel goes quiet.
 	for (int i = 0; i < 4; i++) {
 		ndspWaveBuf &buf = waveBufs[nextWaveBuf];
 		if (buf.status != NDSP_WBUF_FREE && buf.status != NDSP_WBUF_DONE) {
 			break;
 		}
-		if (playFrame >= writtenFrames) {
-			break;
+
+		if (playFrame < writtenFrames) {
+			int16_t *src = ring + (playFrame % RING_FRAMES) * FRAME_SAMPLES;
+			submitFrame(buf, src);
+			memset(src, 0, FRAME_SAMPLES * sizeof(int16_t));
+		} else {
+			submitFrame(buf, silentFrame);
 		}
+		queued++;
+	}
 
-		int16_t *src = ring + (playFrame % RING_FRAMES) * FRAME_SAMPLES;
-		int16_t *dst = (int16_t *)buf.data_vaddr;
-		memcpy(dst, src, FRAME_SAMPLES * sizeof(int16_t));
-		memset(src, 0, FRAME_SAMPLES * sizeof(int16_t));
-
-		DSP_FlushDataCache(dst, FRAME_SAMPLES * sizeof(int16_t));
-		ndspChnWaveBufAdd(NDSP_CHANNEL, &buf);
-
-		playFrame++;
-		nextWaveBuf = (nextWaveBuf + 1) % 4;
+	// Ignoring the DSP pipeline and acoustic path is deliberate: AECM recovers
+	// from an underestimated delay but not an overestimated one.
+	if (echo) {
+		echo->setDelayMs(queued * 1000 * FRAME_SAMPLES / SAMPLE_RATE);
 	}
 }
 

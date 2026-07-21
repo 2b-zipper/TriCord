@@ -85,6 +85,7 @@ Output: `TriCord.3dsx`, `TriCord.cia`, `TriCord.elf`
 - [qrcodegen](https://github.com/nayuki/QR-Code-generator) (MIT License)
 - [mlspp](https://github.com/cisco/mlspp) (BSD 2-Clause License)
 - [libdave](https://github.com/discord/libdave) (MIT License)
+- [WebRTC AECM](https://github.com/webrtc-mirror/webrtc) (BSD 3-Clause License)
 
 ### Additional Resources
 - CA bundle: [cacert-2025-12-02.pem](https://curl.se/docs/caextract.html) (Mozilla's CA certificate bundle)

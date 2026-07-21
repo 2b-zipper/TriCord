@@ -1,6 +1,8 @@
 #ifndef VOICE_AUDIO_H
 #define VOICE_AUDIO_H
 
+#include "discord/echo_canceller.h"
+
 #include <3ds.h>
 #include <atomic>
 #include <cstdint>
@@ -29,6 +31,8 @@ class VoiceAudio {
 	void setDeafened(bool d);
 	bool isDeafened() const { return deafened; }
 
+	void setEchoCanceller(EchoCanceller *e) { echo = e; }
+
 	void pump();
 
   private:
@@ -40,8 +44,17 @@ class VoiceAudio {
 
 	void mixFrame(size_t frameIndex, const int16_t *samples);
 
+	static constexpr int ECHO_RATE = 16000;
+	static constexpr int ECHO_DECIMATION = SAMPLE_RATE / ECHO_RATE;
+	static constexpr int ECHO_FRAME_SAMPLES = FRAME_SAMPLES / ECHO_DECIMATION;
+
+	void submitFrame(ndspWaveBuf &buf, const int16_t *src);
+
 	bool running = false;
 	std::atomic<bool> deafened{false};
+	EchoCanceller *echo = nullptr;
+	int16_t echoFrame[ECHO_FRAME_SAMPLES] = {};
+	int16_t silentFrame[FRAME_SAMPLES] = {};
 	int16_t *ring = nullptr;
 	size_t playFrame = 0;
 	size_t writtenFrames = 0;

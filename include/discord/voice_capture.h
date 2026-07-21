@@ -1,6 +1,8 @@
 #ifndef VOICE_CAPTURE_H
 #define VOICE_CAPTURE_H
 
+#include "discord/echo_canceller.h"
+
 #include <3ds.h>
 #include <cstdint>
 #include <atomic>
@@ -23,6 +25,9 @@ class VoiceCapture {
 
 	void setMuted(bool m) { muted = m; }
 	bool isMuted() const { return muted; }
+
+	void setEchoCanceller(EchoCanceller *e) { echo = e; }
+
 	int lastPeak() const { return peakLevel; }
 
 	int poll(uint8_t *out, size_t outSize);
@@ -31,6 +36,7 @@ class VoiceCapture {
 	bool running = false;
 	std::atomic<bool> muted{false};
 	std::atomic<int> peakLevel{0};
+	EchoCanceller *echo = nullptr;
 
 	uint8_t *micBuffer = nullptr;
 	uint32_t micBufferSize = 0;

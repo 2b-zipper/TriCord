@@ -138,6 +138,12 @@ int VoiceCapture::poll(uint8_t *out, size_t outSize) {
 	resamplePos = pos - (float)consumed;
 	readOffset = (readOffset + consumed * sampleBytes) % micBufferSize;
 
+	// Ahead of the peak, so the speaking indicator ignores the speaker's output.
+	static_assert(FRAME_SAMPLES % EchoCanceller::CHUNK == 0, "frame must divide into AECM chunks");
+	if (echo) {
+		echo->process(pcm, FRAME_SAMPLES);
+	}
+
 	int peak = 0;
 	for (int i = 0; i < FRAME_SAMPLES; i++) {
 		int magnitude = pcm[i] < 0 ? -pcm[i] : pcm[i];
