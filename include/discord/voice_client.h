@@ -115,9 +115,11 @@ class VoiceClient {
 	// Discord clients stop sending audio instead of reliably sending a
 	// speaking:0, so activity is tracked by packet arrival and expires.
 	std::map<std::string, uint64_t> speakingUntil;
-	static constexpr uint64_t SPEAKING_HOLD_MS = 400;
+	static constexpr uint64_t SPEAKING_HOLD_MS = 200;
+	static constexpr uint64_t TRANSMIT_HOLD_MS = 200;
 	static constexpr int SPEAKING_PEAK_THRESHOLD = 1200;
 	void markSpeaking(const std::string &userId);
+	void clearSpeaking(const std::string &userId);
 	std::vector<uint8_t> externalSenderPackage;
 	uint32_t packetsDecoded = 0;
 	uint32_t decryptFailures = 0;
@@ -138,6 +140,7 @@ class VoiceClient {
 	uint16_t sendSequence = 0;
 	uint32_t sendTimestamp = 0;
 	bool speakingSent = false;
+	uint64_t transmitUntil = 0;
 
   public:
 	void setMuted(bool m);

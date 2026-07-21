@@ -23,6 +23,14 @@ constexpr int VOICE_GATEWAY_VERSION = 8;
 constexpr int CLOSE_NORMAL = 1000;
 constexpr int CLOSE_DAVE_REQUIRED = 4017;
 constexpr int OPUS_PAYLOAD_TYPE = 120;
+// Opus RTP always uses a 48kHz clock regardless of the encoder rate.
+constexpr uint32_t OPUS_FRAME_TICKS = 960;
+constexpr uint8_t OPUS_SILENCE_FRAME[] = {0xF8, 0xFF, 0xFE};
+constexpr int OPUS_SILENCE_REPEATS = 5;
+
+bool isOpusSilence(const uint8_t *data, size_t len) {
+	return len == sizeof(OPUS_SILENCE_FRAME) && memcmp(data, OPUS_SILENCE_FRAME, len) == 0;
+}
 constexpr size_t IP_DISCOVERY_SIZE = 74;
 constexpr uint8_t IP_DISCOVERY_BODY_SIZE = 70;
 constexpr int RTCP_PT_MIN = 200;
@@ -117,6 +125,11 @@ void VoiceClient::connect(const std::string &guild, const std::string &channel) 
 void VoiceClient::markSpeaking(const std::string &userId) {
 	std::lock_guard<std::mutex> lock(mutex);
 	speakingUntil[userId] = osGetTime() + SPEAKING_HOLD_MS;
+}
+
+void VoiceClient::clearSpeaking(const std::string &userId) {
+	std::lock_guard<std::mutex> lock(mutex);
+	speakingUntil.erase(userId);
 }
 
 bool VoiceClient::isSpeaking(const std::string &userId) const {
@@ -553,16 +566,28 @@ void VoiceClient::handleRtpPacket(uint8_t *packet, size_t len) {
 			}
 			return;
 		}
-		markSpeaking(userId);
+		if (isOpusSilence(daveFrameBuffer, written)) {
+			clearSpeaking(userId);
+		} else {
+			markSpeaking(userId);
+		}
 		audio.pushOpus(ssrc, daveFrameBuffer, written);
 		return;
 	}
 
+	std::string userId;
 	{
 		std::lock_guard<std::mutex> lock(mutex);
 		auto it = ssrcToUser.find(ssrc);
 		if (it != ssrcToUser.end()) {
-			speakingUntil[it->second] = osGetTime() + SPEAKING_HOLD_MS;
+			userId = it->second;
+		}
+	}
+	if (!userId.empty()) {
+		if (isOpusSilence(opusData, opusLen)) {
+			clearSpeaking(userId);
+		} else {
+			markSpeaking(userId);
 		}
 	}
 	audio.pushOpus(ssrc, opusData, opusLen);
@@ -648,8 +673,7 @@ void VoiceClient::sendAudioFrame(const uint8_t *opusData, size_t opusLen) {
 
 	sendNonce++;
 	sendSequence++;
-	// Opus RTP always uses a 48kHz clock regardless of the encoder rate.
-	sendTimestamp += 960;
+	sendTimestamp += OPUS_FRAME_TICKS;
 	packetsSent++;
 	if (packetsSent == 1) {
 		Logger::log("[Voice] First audio frame sent (%zu bytes opus)", opusLen);
@@ -682,24 +706,39 @@ void VoiceClient::mediaThread() {
 
 		uint8_t frame[512];
 		int encoded = capture.poll(frame, sizeof(frame));
-		if (encoded > 0) {
-			if (daveVersion != 0 && !dave.hasGroup()) {
-				if (!daveWaitLogged) {
-					Logger::log("[Voice] Holding audio until the DAVE group is established");
-					daveWaitLogged = true;
-				}
-				continue;
-			}
 
-			bool active = capture.lastPeak() >= SPEAKING_PEAK_THRESHOLD;
+		const bool daveReady = daveVersion == 0 || dave.hasGroup();
+		if (encoded > 0 && !daveReady && !daveWaitLogged) {
+			Logger::log("[Voice] Holding audio until the DAVE group is established");
+			daveWaitLogged = true;
+		}
+
+		if (!capture.isMuted() && capture.lastPeak() >= SPEAKING_PEAK_THRESHOLD) {
+			transmitUntil = osGetTime() + TRANSMIT_HOLD_MS;
+		}
+		const bool active = daveReady && !capture.isMuted() && osGetTime() < transmitUntil;
+
+		if (active) {
+			markSpeaking(DiscordClient::getInstance().getCurrentUser().id);
+		}
+		if (active != speakingSent) {
+			// Documented stop signal: five silence frames tell the far side the
+			// user stopped and stop Opus interpolating across the gap.
+			if (!active) {
+				for (int i = 0; i < OPUS_SILENCE_REPEATS; i++) {
+					sendAudioFrame(OPUS_SILENCE_FRAME, sizeof(OPUS_SILENCE_FRAME));
+				}
+			}
+			sendSpeaking(active);
+			speakingSent = active;
+		}
+
+		if (encoded > 0) {
 			if (active) {
-				markSpeaking(DiscordClient::getInstance().getCurrentUser().id);
+				sendAudioFrame(frame, (size_t)encoded);
+			} else {
+				sendTimestamp += OPUS_FRAME_TICKS;
 			}
-			if (active != speakingSent) {
-				sendSpeaking(active);
-				speakingSent = active;
-			}
-			sendAudioFrame(frame, (size_t)encoded);
 		}
 	}
 
