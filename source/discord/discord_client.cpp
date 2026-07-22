@@ -1525,6 +1525,7 @@ User DiscordClient::parseUserObject(const rapidjson::Value &uObj) {
 	u.global_name = Utils::Json::getString(uObj, "global_name");
 	u.avatar = Utils::Json::getString(uObj, "avatar");
 	u.discriminator = Utils::Json::getString(uObj, "discriminator");
+	u.bot = Utils::Json::getBool(uObj, "bot");
 	return u;
 }
 

@@ -2541,7 +2541,17 @@ void MessageScreen::renderCallParticipants(float y, const std::vector<Discord::V
 	}
 }
 
-bool MessageScreen::isCallableChannel() const { return channelType == 1 || channelType == 3; }
+bool MessageScreen::isCallableChannel() const {
+	if (channelType == 3) {
+		return true;
+	}
+	if (channelType != 1) {
+		return false;
+	}
+
+	Discord::Channel ch = Discord::DiscordClient::getInstance().getChannel(channelId);
+	return ch.recipients.empty() || !ch.recipients[0].bot;
+}
 
 bool MessageScreen::isCallActive() const {
 	Discord::VoiceClient &voice = Discord::VoiceClient::getInstance();

@@ -16,6 +16,7 @@ struct User {
 	std::string discriminator;
 	std::string global_name;
 	std::string avatar;
+	bool bot = false;
 	UserStatus status = UserStatus::UNKNOWN;
 };
 
