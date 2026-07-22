@@ -2,11 +2,11 @@
 #include "core/config.h"
 #include "core/i18n.h"
 #include "discord/avatar_cache.h"
+#include "discord/voice_client.h"
 #include "discord/discord_client.h"
 #include "log.h"
 #include "ui/about_screen.h"
 #include "ui/disclaimer_screen.h"
-#include "ui/dm_screen.h"
 #include "ui/emoji_manager.h"
 #include "ui/forum_screen.h"
 #include "ui/image_manager.h"
@@ -88,7 +88,7 @@ void ScreenManager::setScreen(ScreenType type) {
 	}
 
 	if (type == ScreenType::LOGIN || type == ScreenType::GUILD_LIST || type == ScreenType::ADD_ACCOUNT ||
-	    type == ScreenType::DM_LIST || type == ScreenType::DISCLAIMER) {
+	    type == ScreenType::DISCLAIMER) {
 		screenHistory.clear();
 	}
 
@@ -156,9 +156,6 @@ void ScreenManager::setScreen(ScreenType type) {
 	case ScreenType::SETTINGS:
 		currentScreen = std::make_unique<SettingsScreen>();
 		break;
-	case ScreenType::DM_LIST:
-		currentScreen = std::make_unique<DmScreen>();
-		break;
 	case ScreenType::ABOUT:
 		currentScreen = std::make_unique<AboutScreen>();
 		break;
@@ -200,6 +197,7 @@ void ScreenManager::update() {
 	ImageManager::getInstance().update();
 	EmojiManager::getInstance().update();
 	Discord::AvatarCache::getInstance().update();
+	Discord::VoiceClient::getInstance().update();
 
 	hamburgerMenu.update();
 
@@ -215,9 +213,12 @@ void ScreenManager::update() {
 		return;
 	}
 
-	bool shouldBlockScreen = !hamburgerMenu.isClosed();
+	bool callWasVisible = incomingCall.isVisible();
+	incomingCall.update();
 
-	if (!isMenuHidden()) {
+	bool shouldBlockScreen = !hamburgerMenu.isClosed() || callWasVisible || incomingCall.isVisible();
+
+	if (!isMenuHidden() && !callWasVisible) {
 		touchPosition touch;
 		hidTouchRead(&touch);
 		if (kDown & KEY_TOUCH) {
@@ -291,6 +292,8 @@ void ScreenManager::render() {
 	if (toastTimer > 0) {
 		drawToast();
 	}
+
+	incomingCall.render();
 
 	C3D_FrameEnd(0);
 }

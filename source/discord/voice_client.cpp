@@ -84,6 +84,13 @@ void VoiceClient::setState(VoiceState s) {
 	if (s == VoiceState::ESTABLISHED && state != VoiceState::ESTABLISHED) {
 		Utils::SoundPlayer::getInstance().play(Utils::Sound::VOICE_JOIN);
 		rosterPrimed = true;
+		if (!ringChannelId.empty()) {
+			DiscordClient::getInstance().ringCall(ringChannelId);
+			ringChannelId.clear();
+			outgoingRingTimer = Utils::SoundPlayer::getInstance().clipFrames(Utils::Sound::VOICE_JOIN);
+			ringPlaying = false;
+			outgoingRing = true;
+		}
 	}
 	state = s;
 	if (stateCallback) {
@@ -91,8 +98,14 @@ void VoiceClient::setState(VoiceState s) {
 	}
 }
 
-void VoiceClient::connect(const std::string &guild, const std::string &channel) {
+void VoiceClient::connect(const std::string &guild, const std::string &channel, bool ringRecipients) {
 	disconnect();
+
+	ringChannelId = ringRecipients ? channel : std::string();
+	outgoingRing = false;
+	ringPlaying = false;
+	outgoingRingTimer = 0;
+	sawRinging = false;
 
 	{
 		std::lock_guard<std::mutex> lock(mutex);
@@ -162,6 +175,61 @@ void VoiceClient::setDeafened(bool d) {
 	audio.setDeafened(d);
 	Utils::SoundPlayer::getInstance().play(d ? Utils::Sound::HEADPHONE_OFF : Utils::Sound::HEADPHONE_ON);
 	publishVoiceState();
+}
+
+void VoiceClient::stopOutgoingRing() {
+	if (!outgoingRing.exchange(false)) {
+		return;
+	}
+	if (ringPlaying.exchange(false)) {
+		Utils::SoundPlayer::getInstance().stop();
+	}
+}
+
+void VoiceClient::update() {
+	if (!outgoingRing) {
+		return;
+	}
+
+	if (state != VoiceState::ESTABLISHED) {
+		stopOutgoingRing();
+		return;
+	}
+
+	bool othersPresent = false;
+	{
+		std::lock_guard<std::mutex> lock(mutex);
+		othersPresent = !roster.empty();
+	}
+	if (othersPresent) {
+		stopOutgoingRing();
+		return;
+	}
+
+	auto ringingLeft = DiscordClient::getInstance().getCallRingingCount(getChannelId());
+	if (ringingLeft) {
+		if (*ringingLeft > 0) {
+			sawRinging = true;
+		} else if (sawRinging) {
+			stopOutgoingRing();
+			return;
+		}
+	}
+
+	if (--outgoingRingTimer <= 0) {
+		Utils::SoundPlayer &sound = Utils::SoundPlayer::getInstance();
+		sound.play(Utils::Sound::CALL_OUTGOING);
+		ringPlaying = true;
+		outgoingRingTimer = sound.clipFrames(Utils::Sound::CALL_OUTGOING);
+		if (outgoingRingTimer <= 0) {
+			outgoingRingTimer = 60;
+		}
+	}
+}
+
+std::string VoiceClient::getChannelId() {
+	std::lock_guard<std::mutex> lock(mutex);
+	return channelId;
 }
 
 void VoiceClient::publishVoiceState() {
@@ -1052,6 +1120,9 @@ void VoiceClient::handlePayload(const std::string &message) {
 					joined = true;
 				}
 			}
+			if (joined) {
+				stopOutgoingRing();
+			}
 			if (joined && rosterPrimed) {
 				Utils::SoundPlayer::getInstance().play(Utils::Sound::VOICE_JOIN);
 			}
@@ -1120,6 +1191,8 @@ void VoiceClient::handlePayload(const std::string &message) {
 }
 
 void VoiceClient::disconnect() {
+	stopOutgoingRing();
+
 	if (state == VoiceState::ESTABLISHED) {
 		Utils::SoundPlayer::getInstance().play(Utils::Sound::VOICE_LEFT);
 	}

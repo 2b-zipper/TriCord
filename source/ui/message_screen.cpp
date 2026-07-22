@@ -3,6 +3,7 @@
 #include "core/i18n.h"
 #include "discord/avatar_cache.h"
 #include "discord/discord_client.h"
+#include "discord/voice_client.h"
 #include "log.h"
 #include "ui/emoji_manager.h"
 #include "ui/image_manager.h"
@@ -250,8 +251,10 @@ void MessageScreen::onEnter() {
 	totalContentHeight = 0.0f;
 	rebuildLayoutCache();
 	isForumView = (channel.type == 15);
-	isHiddenChannel =
-	    !channel.viewable && (guildId.empty() || client.getGuild(guildId).ownerId != client.getCurrentUser().id);
+	// DMs carry no guild permissions, so the viewable flag never applies to them.
+	bool isPrivate = (channel.type == 1 || channel.type == 3);
+	isHiddenChannel = !isPrivate && !channel.viewable &&
+	                  (guildId.empty() || client.getGuild(guildId).ownerId != client.getCurrentUser().id);
 
 	if (isHiddenChannel) {
 		isLoading = false;
@@ -350,6 +353,14 @@ void MessageScreen::update() {
 		if (touch.px >= reactBtnX && touch.px <= reactBtnX + btnW && touch.py >= btnY && touch.py <= btnY + btnH) {
 			if (!isMenuOpen && !isLoading) {
 				bottomMode = BottomScreenMode::EMOJI_PICKER;
+			}
+		}
+
+		float callBtnX = reactBtnX - btnW - 8.0f;
+		if (isCallableChannel() && !isCallActive() && touch.px >= callBtnX && touch.px <= callBtnX + btnW &&
+		    touch.py >= btnY && touch.py <= btnY + btnH) {
+			if (!isMenuOpen && !isLoading) {
+				startCall();
 			}
 		}
 	}
@@ -1706,17 +1717,23 @@ void MessageScreen::renderBottom(C3D_RenderTarget *target) {
 
 	C2D_DrawRectSolid(10, 32, 0.5f, 320 - 20, 1, ScreenManager::colorSeparator());
 
-	std::string displayTopic = channelTopic.empty() ? Core::I18n::getInstance().get("common.no_topic") : channelTopic;
+	std::vector<Discord::VoiceParticipant> participants = callParticipants();
+	if (isCallActive() || !participants.empty()) {
+		renderCallParticipants(40.0f, participants);
+	} else {
+		std::string displayTopic =
+		    channelTopic.empty() ? Core::I18n::getInstance().get("common.no_topic") : channelTopic;
 
-	float topicY = 40.0f;
+		float topicY = 40.0f;
 
-	drawText(10.0f, topicY, 0.5f, 0.45f, 0.45f, ScreenManager::colorSelection(),
-	         Core::I18n::getInstance().get("message.topic"));
-	topicY += 15.0f;
+		drawText(10.0f, topicY, 0.5f, 0.45f, 0.45f, ScreenManager::colorSelection(),
+		         Core::I18n::getInstance().get("message.topic"));
+		topicY += 15.0f;
 
-	const auto &topicLayout = UI::MarkdownRenderer::get(displayTopic, 300.0f, 0.4f, 13.0f / 0.4f);
-	UI::MarkdownRenderer::draw(topicLayout, 10.0f, topicY, 0.5f, ScreenManager::colorText(), 10);
-	topicY += UI::MarkdownRenderer::heightOf(topicLayout, 10);
+		const auto &topicLayout = UI::MarkdownRenderer::get(displayTopic, 300.0f, 0.4f, 13.0f / 0.4f);
+		UI::MarkdownRenderer::draw(topicLayout, 10.0f, topicY, 0.5f, ScreenManager::colorText(), 10);
+		topicY += UI::MarkdownRenderer::heightOf(topicLayout, 10);
+	}
 
 	bool canSend = Discord::DiscordClient::getInstance().canSendMessage(channelId);
 
@@ -2420,6 +2437,120 @@ void MessageScreen::renderReactionIcon() {
 		C2D_DrawImageAt(img, reactBtnX + (btnW - iconSize) / 2.0f, btnY + (btnH - iconSize) / 2.0f, 0.55f, &tint,
 		                iconSize / tex->width, iconSize / tex->height);
 	}
+
+	if (!isCallableChannel() || isCallActive()) {
+		return;
+	}
+
+	float callBtnX = reactBtnX - btnW - 8.0f;
+
+	drawRoundedRect(callBtnX, btnY, 0.54f, btnW, btnH, 8.0f, ScreenManager::colorBackgroundLight());
+
+	C3D_Tex *callTex = UI::ImageManager::getInstance().getLocalImage("romfs:/discord-icons/phone-call.png");
+	if (callTex) {
+		float iconSize = 20.0f;
+		Tex3DS_SubTexture subtex = {(u16)callTex->width, (u16)callTex->height, 0.0f, 1.0f, 1.0f, 0.0f};
+		C2D_Image img = {callTex, &subtex};
+		C2D_ImageTint tint;
+		C2D_PlainImageTint(&tint, ScreenManager::colorText(), 1.0f);
+		C2D_DrawImageAt(img, callBtnX + (btnW - iconSize) / 2.0f, btnY + (btnH - iconSize) / 2.0f, 0.55f, &tint,
+		                iconSize / callTex->width, iconSize / callTex->height);
+	}
+}
+
+std::vector<Discord::VoiceParticipant> MessageScreen::callParticipants() const {
+	if (!isCallableChannel()) {
+		return {};
+	}
+	return Discord::DiscordClient::getInstance().getVoiceParticipants(channelId);
+}
+
+void MessageScreen::renderCallParticipants(float y, const std::vector<Discord::VoiceParticipant> &participants) {
+	drawText(10.0f, y, 0.5f, 0.45f, 0.45f, ScreenManager::colorSelection(), TR("call.in_call"));
+	y += 17.0f;
+
+	const float rowH = 26.0f;
+	const float avatarSize = 20.0f;
+	const int maxRows = 5;
+
+	int drawn = 0;
+	for (const auto &p : participants) {
+		if (drawn >= maxRows) {
+			break;
+		}
+
+		float rowY = y + drawn * rowH;
+		float avatarY = rowY + (rowH - avatarSize) / 2.0f;
+
+		if (Discord::VoiceClient::getInstance().isSpeaking(p.userId)) {
+			drawCircle(14.0f + avatarSize / 2.0f, avatarY + avatarSize / 2.0f, 0.49f, avatarSize / 2.0f + 1.5f,
+			           C2D_Color32(35, 165, 90, 255));
+		}
+
+		C3D_Tex *avatar = Discord::AvatarCache::getInstance().getAvatar(p.userId, p.avatar, "0");
+		if (avatar) {
+			Tex3DS_SubTexture sub = {(u16)avatar->width, (u16)avatar->height, 0.0f, 1.0f, 1.0f, 0.0f};
+			C2D_Image img = {avatar, &sub};
+			C2D_DrawImageAt(img, 14.0f, avatarY, 0.5f, nullptr, avatarSize / avatar->width,
+			                avatarSize / avatar->height);
+		}
+
+		int stateIcons = (p.mute || p.selfMute ? 1 : 0) + (p.deaf || p.selfDeaf ? 1 : 0);
+		float nameX = 14.0f + avatarSize + 6.0f;
+		float nameLimit = 310.0f - nameX - stateIcons * 15.0f;
+		drawRichText(nameX, rowY + 5.0f, 0.5f, 0.45f, 0.45f, ScreenManager::colorText(),
+		             getTruncatedRichText(p.name, nameLimit, 0.45f, 0.45f));
+
+		const char *micIcon = p.mute       ? "romfs:/discord-icons/mic-denied.png"
+		                      : p.selfMute ? "romfs:/discord-icons/mic-muted.png"
+		                                   : nullptr;
+		const char *deafIcon = p.deaf       ? "romfs:/discord-icons/headphones-denied.png"
+		                       : p.selfDeaf ? "romfs:/discord-icons/headphones-muted.png"
+		                                    : nullptr;
+
+		const float stateSize = 12.0f;
+		float stateX = 310.0f - stateSize;
+		const struct {
+			const char *path;
+			bool byServer;
+		} icons[] = {{deafIcon, p.deaf}, {micIcon, p.mute}};
+
+		for (const auto &entry : icons) {
+			if (!entry.path) {
+				continue;
+			}
+			C3D_Tex *tex = UI::ImageManager::getInstance().getLocalImage(entry.path);
+			if (tex) {
+				Tex3DS_SubTexture sub = {(u16)tex->width, (u16)tex->height, 0.0f, 1.0f, 1.0f, 0.0f};
+				C2D_Image img = {tex, &sub};
+				C2D_ImageTint tint;
+				C2D_PlainImageTint(
+				    &tint, entry.byServer ? ScreenManager::colorError() : ScreenManager::colorTextMuted(), 1.0f);
+				C2D_DrawImageAt(img, stateX, rowY + (rowH - stateSize) / 2.0f, 0.5f, &tint, stateSize / tex->width,
+				                stateSize / tex->height);
+			}
+			stateX -= stateSize + 3.0f;
+		}
+
+		drawn++;
+	}
+
+	if ((int)participants.size() > maxRows) {
+		drawText(14.0f, y + maxRows * rowH, 0.5f, 0.4f, 0.4f, ScreenManager::colorTextMuted(),
+		         "+" + std::to_string((int)participants.size() - maxRows));
+	}
+}
+
+bool MessageScreen::isCallableChannel() const { return channelType == 1 || channelType == 3; }
+
+bool MessageScreen::isCallActive() const {
+	Discord::VoiceClient &voice = Discord::VoiceClient::getInstance();
+	return voice.getState() != Discord::VoiceState::DISCONNECTED && voice.getChannelId() == channelId;
+}
+
+void MessageScreen::startCall() {
+	bool ongoing = !callParticipants().empty();
+	Discord::VoiceClient::getInstance().connect("DM", channelId, !ongoing);
 }
 
 std::unordered_set<std::string> MessageScreen::getVisibleTwemojis() {

@@ -33,10 +33,13 @@ class VoiceClient {
   public:
 	static VoiceClient &getInstance();
 
-	void connect(const std::string &guildId, const std::string &channelId);
+	void connect(const std::string &guildId, const std::string &channelId, bool ringRecipients = false);
 	void disconnect();
 
 	VoiceState getState() const { return state; }
+	std::string getChannelId();
+
+	void update();
 
 	void setStateCallback(std::function<void(VoiceState)> cb) { stateCallback = cb; }
 
@@ -141,6 +144,12 @@ class VoiceClient {
 	uint32_t sendTimestamp = 0;
 	bool speakingSent = false;
 	uint64_t transmitUntil = 0;
+	std::string ringChannelId;
+	std::atomic<bool> outgoingRing{false};
+	std::atomic<bool> ringPlaying{false};
+	int outgoingRingTimer = 0;
+	bool sawRinging = false;
+	void stopOutgoingRing();
 
   public:
 	void setMuted(bool m);

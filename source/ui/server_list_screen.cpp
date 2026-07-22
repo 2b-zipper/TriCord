@@ -51,7 +51,7 @@ ServerListScreen::ServerListScreen()
 	refreshChannels();
 
 	if (selectedIndex >= 0 && selectedIndex < (int)listItems.size()) {
-		if (!listItems[selectedIndex].isFolder) {
+		if (!listItems[selectedIndex].isFolder && !listItems[selectedIndex].isDm) {
 			Discord::DiscordClient::getInstance().fetchGuildDetails(listItems[selectedIndex].id);
 		}
 	}
@@ -156,6 +156,12 @@ void ServerListScreen::rebuildList() {
 			listItems.insert(listItems.begin(), orphans.begin(), orphans.end());
 		}
 	}
+	ListItem dmItem;
+	dmItem.isDm = true;
+	dmItem.id = "DM";
+	dmItem.name = TR("menu.direct_messages");
+	listItems.insert(listItems.begin(), dmItem);
+
 	Logger::log("ServerListScreen::rebuildList() end, items: %d", (int)listItems.size());
 	updateUnreadCache();
 }
@@ -170,6 +176,18 @@ void ServerListScreen::refreshChannels() {
 
 	const auto &item = listItems[selectedIndex];
 	if (item.isFolder) {
+		return;
+	}
+
+	if (item.isDm) {
+		sortedChannels = Discord::DiscordClient::getInstance().getPrivateChannels();
+		std::sort(sortedChannels.begin(), sortedChannels.end(),
+		          [](const Discord::Channel &a, const Discord::Channel &b) {
+			          if (a.last_message_id.length() != b.last_message_id.length()) {
+				          return a.last_message_id.length() > b.last_message_id.length();
+			          }
+			          return a.last_message_id > b.last_message_id;
+		          });
 		return;
 	}
 
@@ -723,6 +741,28 @@ void ServerListScreen::updateUnreadCache() {
 		guildSummary[guild.id] = {guildMuted ? false : guildHasUnread, guildMentions};
 	}
 
+	{
+		int dmMentions = 0;
+		for (const auto &dm : dc.getPrivateChannels()) {
+			if (dm.last_message_id.empty()) {
+				continue;
+			}
+			auto rsIt = readStates.find(dm.id);
+			if (rsIt == readStates.end() || rsIt->second.lastReadMessageId.empty()) {
+				channelUnreadCache[dm.id] = {false, 0, false};
+				continue;
+			}
+
+			bool unread = MessageUtils::isNewerSnowflake(dm.last_message_id, rsIt->second.lastReadMessageId);
+			int mentions = rsIt->second.mentionCount;
+
+			channelUnreadCache[dm.id] = {unread, mentions, false};
+			dmMentions += (mentions > 0) ? mentions : (unread ? 1 : 0);
+		}
+		// Mention badge only; the plain dot is redundant for DMs.
+		guildSummary["DM"] = {false, dmMentions};
+	}
+
 	for (auto &item : listItems) {
 		if (item.isFolder) {
 			item.hasUnread = false;
@@ -769,6 +809,16 @@ void ServerListScreen::update() {
 	if (ackForVisibleChannel || guildDataChanged || ++unreadCacheTimer >= UNREAD_CACHE_INTERVAL) {
 		unreadCacheTimer = 0;
 		updateUnreadCache();
+	}
+
+	for (int i = channelScrollOffset; i < (int)sortedChannels.size() && i < channelScrollOffset + 6; i++) {
+		const auto &dm = sortedChannels[i];
+		if (dm.type == 1 && !dm.recipients.empty()) {
+			const auto &r = dm.recipients[0];
+			Discord::AvatarCache::getInstance().prefetchAvatar(r.id, r.avatar, r.discriminator);
+		} else if (dm.type == 3 && !dm.icon.empty()) {
+			Discord::AvatarCache::getInstance().prefetchChannelIcon(dm.id, dm.icon);
+		}
 	}
 
 	if (listItems.empty()) {
@@ -966,7 +1016,7 @@ void ServerListScreen::update() {
 			sm.setLastChannelScroll(sm.getSelectedGuildId(), channelScrollOffset);
 
 			if (selectedIndex >= 0 && selectedIndex < (int)listItems.size()) {
-				if (!listItems[selectedIndex].isFolder) {
+				if (!listItems[selectedIndex].isFolder && !listItems[selectedIndex].isDm) {
 					Discord::DiscordClient::getInstance().fetchGuildDetails(listItems[selectedIndex].id);
 				}
 			}
@@ -975,7 +1025,7 @@ void ServerListScreen::update() {
 		if (kDown & KEY_X) {
 			if (selectedIndex >= 0 && selectedIndex < (int)listItems.size()) {
 				const auto &item = listItems[selectedIndex];
-				if (!item.isFolder) {
+				if (!item.isFolder && !item.isDm) {
 					openMuteMenu(item.id);
 				}
 			}
@@ -1046,7 +1096,8 @@ void ServerListScreen::update() {
 		} else if (kDown & KEY_X) {
 			if (selectedChannelIndex >= 0 && selectedChannelIndex < (int)sortedChannels.size()) {
 				const auto &ch = sortedChannels[selectedChannelIndex];
-				if (ch.type != 4) { // not a category
+				// DMs have no entry in the guild notification tree, so the menu has nothing to act on.
+				if (ch.type != 4 && ch.type != 1 && ch.type != 3) {
 					openChannelMuteMenu(ch.id, ch.type);
 				}
 			}
@@ -1167,13 +1218,14 @@ void ServerListScreen::drawChannelList(float x, float y, float alpha) {
 			return;
 		}
 
+		bool isDmPane = selectedIndex >= 0 && selectedIndex < (int)listItems.size() && listItems[selectedIndex].isDm;
 		drawText(startX, startY + 20, 0.5f, 0.5f, 0.5f, ScreenManager::colorTextMuted(),
-		         Core::I18n::getInstance().get("channel.no_visible"));
+		         Core::I18n::getInstance().get(isDmPane ? "dm.no_messages" : "channel.no_visible"));
 		return;
 	}
 
-	int itemsPerPage = CHANNEL_ROWS_PER_PAGE;
-	float rowHeight = 22.0f;
+	int itemsPerPage = channelRowsPerPage();
+	float rowHeight = isDmPane() ? DM_ROW_HEIGHT : 22.0f;
 
 	int startIdx = (state == State::SELECTING_CHANNEL) ? channelScrollOffset : 0;
 
@@ -1194,6 +1246,60 @@ void ServerListScreen::drawChannelList(float x, float y, float alpha) {
 				chMentions = cit->second.mentionCount;
 				chMuted = cit->second.muted;
 			}
+		}
+
+		if (ch.type == 1 || ch.type == 3) {
+			const float dmHeight = rowHeight;
+			float dmY = startY + (rendered * rowHeight);
+			u32 dmColor = (isSelected || chUnread) ? ScreenManager::colorText() : ScreenManager::colorTextMuted();
+
+			if (isSelected) {
+				drawRoundedRect(x + 4, dmY + 1.0f, 0.5f, 400 - x - 8, dmHeight - 2.0f, 6.0f,
+				                ScreenManager::colorBackgroundLight());
+			}
+
+			const float dotR = 3.0f;
+			const float dotCX = x + 8.0f;
+			if (chUnread) {
+				drawCircle(dotCX, dmY + dmHeight / 2.0f, 0.51f, dotR, ScreenManager::colorText());
+			}
+
+			const float avatarSize = 32.0f;
+			float avatarX = dotCX + dotR + 5.0f;
+
+			C3D_Tex *avatarTex = nullptr;
+			if (ch.type == 1 && !ch.recipients.empty()) {
+				const auto &r = ch.recipients[0];
+				avatarTex = Discord::AvatarCache::getInstance().getAvatar(r.id, r.avatar, r.discriminator);
+			} else if (ch.type == 3 && !ch.icon.empty()) {
+				avatarTex = Discord::AvatarCache::getInstance().getChannelIcon(ch.id, ch.icon);
+			}
+
+			if (avatarTex) {
+				Tex3DS_SubTexture sub = {(u16)avatarTex->width, (u16)avatarTex->height, 0.0f, 1.0f, 1.0f, 0.0f};
+				C2D_Image img = {avatarTex, &sub};
+				C2D_DrawImageAt(img, avatarX, dmY + (dmHeight - avatarSize) / 2.0f, 0.5f, nullptr,
+				                avatarSize / avatarTex->width, avatarSize / avatarTex->height);
+			} else {
+				C3D_Tex *tex = UI::ImageManager::getInstance().getLocalImage("romfs:/discord-icons/chat.png");
+				if (tex) {
+					Tex3DS_SubTexture sub = {(u16)tex->width, (u16)tex->height, 0.0f, 1.0f, 1.0f, 0.0f};
+					C2D_Image img = {tex, &sub};
+					C2D_ImageTint tint;
+					C2D_PlainImageTint(&tint, dmColor, 1.0f);
+					const float fallback = 24.0f;
+					C2D_DrawImageAt(img, avatarX + (avatarSize - fallback) / 2.0f, dmY + (dmHeight - fallback) / 2.0f,
+					                0.5f, &tint, fallback / tex->width, fallback / tex->height);
+				}
+			}
+
+			float nameX = avatarX + avatarSize + 8.0f;
+			float nameLimit = 400.0f - nameX - 10.0f;
+			drawRichText(nameX, dmY + dmHeight / 2.0f - 8.0f, 0.5f, 0.55f, 0.55f, dmColor,
+			             getTruncatedRichText(MessageUtils::getChannelDisplayName(ch), nameLimit, 0.55f, 0.55f));
+
+			rendered++;
+			continue;
 		}
 
 		u32 color;
@@ -1419,20 +1525,45 @@ void ServerListScreen::drawListItem(int index, const ListItem &item, float x, fl
 		float fW = width - 24;
 		float fH = 48 - (roundTop ? 2 : 0) - (roundBottom ? 2 : 0);
 
-		C2D_DrawRectSolid(fX, fY, 0.45f, fW, fH, folderBg);
+		const float capR = 12.0f;
+		float topR = roundTop ? capR : 0.0f;
+		float botR = roundBottom ? capR : 0.0f;
+
+		// The body stops short of each rounded end, otherwise it fills the very
+		// corners the caps are meant to round off.
+		C2D_DrawRectSolid(fX, fY + topR, 0.45f, fW, fH - topR - botR, folderBg);
+
 		if (roundTop) {
-			drawCircle(fX + 12.0f, fY + 12.0f, 0.455f, 12.0f, folderBg);
-			drawCircle(fX + fW - 12.0f, fY + 12.0f, 0.455f, 12.0f, folderBg);
-			C2D_DrawRectSolid(fX + 12.0f, fY, 0.455f, fW - 24.0f, 12.0f, folderBg);
+			drawCircle(fX + topR, fY + topR, 0.45f, topR, folderBg);
+			drawCircle(fX + fW - topR, fY + topR, 0.45f, topR, folderBg);
+			C2D_DrawRectSolid(fX + topR, fY, 0.45f, fW - topR * 2.0f, topR, folderBg);
 		}
 		if (roundBottom) {
-			drawCircle(fX + 12.0f, fY + fH - 12.0f, 0.455f, 12.0f, folderBg);
-			drawCircle(fX + fW - 12.0f, fY + fH - 12.0f, 0.455f, 12.0f, folderBg);
-			C2D_DrawRectSolid(fX + 12.0f, fY + fH - 12.0f, 0.455f, fW - 24.0f, 12.0f, folderBg);
+			drawCircle(fX + botR, fY + fH - botR, 0.45f, botR, folderBg);
+			drawCircle(fX + fW - botR, fY + fH - botR, 0.45f, botR, folderBg);
+			C2D_DrawRectSolid(fX + botR, fY + fH - botR, 0.45f, fW - botR * 2.0f, botR, folderBg);
 		}
 	}
 
-	if (item.isFolder) {
+	if (item.isDm) {
+		drawRoundedRect(iconX, iconY, 0.49f, iconSize, iconSize, iconSize / 3.0f,
+		                ScreenManager::colorBackgroundLight());
+
+		C3D_Tex *tex = UI::ImageManager::getInstance().getLocalImage("romfs:/discord.png", true);
+		if (tex) {
+			Tex3DS_SubTexture subtex = {(u16)tex->width, (u16)tex->height, 0.0f, 1.0f, 1.0f, 0.0f};
+			C2D_Image img = {tex, &subtex};
+			float logoSize = iconSize * 0.68f;
+			float logoOffset = (iconSize - logoSize) / 2.0f;
+			C2D_ImageTint tint;
+			C2D_PlainImageTint(&tint, ScreenManager::colorText(), 1.0f);
+			C2D_DrawImageAt(img, iconX + logoOffset, iconY + logoOffset, 0.5f, &tint, logoSize / tex->width,
+			                logoSize / tex->height);
+		}
+
+		drawIconUnreadIndicator(iconX, iconY, iconSize, x + 6.0f, iconY + iconSize / 2.0f, item.mentionCount,
+		                        item.hasUnread, isSelected);
+	} else if (item.isFolder) {
 		if (item.expanded) {
 			float smallIconSize = 24.0f;
 			float smallIconX = x + (width - smallIconSize) / 2.0f;
@@ -1455,9 +1586,11 @@ void ServerListScreen::drawListItem(int index, const ListItem &item, float x, fl
 			u32 folderColor = item.color != 0 ? C2D_Color32((item.color >> 16) & 0xFF, (item.color >> 8) & 0xFF,
 			                                                item.color & 0xFF, 100)
 			                                  : C2D_Color32(88, 101, 242, 100);
-			C2D_DrawRectSolid(iconX, iconY, 0.5f, iconSize, iconSize, folderColor);
+			drawRoundedRect(iconX, iconY, 0.5f, iconSize, iconSize, iconSize / 3.0f, folderColor);
 
-			float miniSize = (iconSize - 6.0f) / 2.0f;
+			const float miniInset = 4.0f;
+			const float miniGap = 2.0f;
+			const float miniSize = 16.0f;
 			for (size_t i = 0; i < std::min((size_t)4, item.folderGuildIds.size()); ++i) {
 				const std::string &guildId = item.folderGuildIds[i];
 				const Discord::Guild *g = getGuild(guildId);
@@ -1467,8 +1600,8 @@ void ServerListScreen::drawListItem(int index, const ListItem &item, float x, fl
 
 				size_t miniRow = i / 2;
 				size_t miniCol = i % 2;
-				float mX = iconX + 2.0f + (float)miniCol * (miniSize + 2.0f);
-				float mY = iconY + 2.0f + (float)miniRow * (miniSize + 2.0f);
+				float mX = iconX + miniInset + (float)miniCol * (miniSize + miniGap);
+				float mY = iconY + miniInset + (float)miniRow * (miniSize + miniGap);
 
 				C3D_Tex *tex = nullptr;
 				if (!g->icon.empty()) {
@@ -1480,7 +1613,8 @@ void ServerListScreen::drawListItem(int index, const ListItem &item, float x, fl
 					C2D_Image img = {tex, &subtex};
 					C2D_DrawImageAt(img, mX, mY, 0.51f, nullptr, miniSize / tex->width, miniSize / tex->height);
 				} else {
-					C2D_DrawRectSolid(mX, mY, 0.51f, miniSize, miniSize, ScreenManager::colorBackgroundLight());
+					drawRoundedRect(mX, mY, 0.51f, miniSize, miniSize, miniSize / 3.0f,
+					                ScreenManager::colorBackgroundLight());
 					std::string miniInit = Utils::Utf8::getFirstChar(g->name.empty() ? "?" : g->name);
 					drawText(mX + miniSize / 2 - 3, mY + miniSize / 2 - 4, 0.52f, 0.3f, 0.3f,
 					         ScreenManager::colorText(), miniInit);
@@ -1506,7 +1640,8 @@ void ServerListScreen::drawListItem(int index, const ListItem &item, float x, fl
 			float sY = iconSize / tex->height;
 			C2D_DrawImageAt(img, iconX, iconY, 0.5f, nullptr, sX, sY);
 		} else {
-			C2D_DrawRectSolid(iconX, iconY, 0.5f, iconSize, iconSize, ScreenManager::colorBackgroundLight());
+			drawRoundedRect(iconX, iconY, 0.5f, iconSize, iconSize, iconSize / 3.0f,
+			                ScreenManager::colorBackgroundLight());
 
 			std::string init = Utils::Utf8::getFirstChar(item.name.empty() ? "?" : item.name);
 			drawText(iconX + iconSize / 2 - 5, iconY + iconSize / 2 - 6, 0.5f, 0.5f, 0.5f, ScreenManager::colorText(),
@@ -1517,6 +1652,12 @@ void ServerListScreen::drawListItem(int index, const ListItem &item, float x, fl
 		                        item.hasUnread, isSelected);
 	}
 }
+
+bool ServerListScreen::isDmPane() const {
+	return selectedIndex >= 0 && selectedIndex < (int)listItems.size() && listItems[selectedIndex].isDm;
+}
+
+int ServerListScreen::channelRowsPerPage() const { return isDmPane() ? DM_ROWS_PER_PAGE : CHANNEL_ROWS_PER_PAGE; }
 
 int ServerListScreen::channelRowSpan(int index) const {
 	if (index < 0 || index >= (int)sortedChannels.size()) {
@@ -1540,7 +1681,7 @@ void ServerListScreen::ensureChannelVisible() {
 		rows += channelRowSpan(i);
 	}
 
-	while (rows > CHANNEL_ROWS_PER_PAGE && channelScrollOffset < selectedChannelIndex) {
+	while (rows > channelRowsPerPage() && channelScrollOffset < selectedChannelIndex) {
 		rows -= channelRowSpan(channelScrollOffset);
 		channelScrollOffset++;
 	}

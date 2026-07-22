@@ -342,6 +342,48 @@ void DiscordClient::triggerTypingIndicator(const std::string &channelId) {
 	                                               [](const Network::HttpResponse &) {}, {{"Authorization", token}});
 }
 
+void DiscordClient::ringCall(const std::string &channelId) {
+	if (channelId.empty()) {
+		return;
+	}
+	std::string url = "https://discord.com/api/v10/channels/" + channelId + "/call/ring";
+	Network::NetworkManager::getInstance().enqueue(
+	    url, "POST", "{}", Network::RequestPriority::INTERACTIVE,
+	    [](const Network::HttpResponse &resp) { Logger::log("[Call] ring -> %d", resp.statusCode); },
+	    {{"Authorization", token}, {"Content-Type", "application/json"}});
+}
+
+void DiscordClient::stopRinging(const std::string &channelId) {
+	if (channelId.empty()) {
+		return;
+	}
+	{
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		if (incomingCallChannelId == channelId) {
+			incomingCallChannelId.clear();
+		}
+	}
+	std::string url = "https://discord.com/api/v10/channels/" + channelId + "/call/stop-ringing";
+	Network::NetworkManager::getInstance().enqueue(
+	    url, "POST", "{}", Network::RequestPriority::INTERACTIVE,
+	    [](const Network::HttpResponse &resp) { Logger::log("[Call] stop-ringing -> %d", resp.statusCode); },
+	    {{"Authorization", token}, {"Content-Type", "application/json"}});
+}
+
+std::string DiscordClient::getIncomingCallChannel() {
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	return incomingCallChannelId;
+}
+
+std::optional<int> DiscordClient::getCallRingingCount(const std::string &channelId) {
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	auto it = callRinging.find(channelId);
+	if (it == callRinging.end()) {
+		return std::nullopt;
+	}
+	return it->second;
+}
+
 std::vector<TypingUser> DiscordClient::getTypingUsers(const std::string &channelId) {
 	std::lock_guard<std::recursive_mutex> lock(clientMutex);
 	if (typingUsers.find(channelId) != typingUsers.end()) {
@@ -524,6 +566,47 @@ void DiscordClient::handleDispatch(const rapidjson::Document &doc) {
 		Logger::log("[Voice] VOICE_SERVER_UPDATE endpoint=%s server=%s", endpoint.c_str(), serverId.c_str());
 		if (voiceServerCallback) {
 			voiceServerCallback(token, endpoint, serverId);
+		}
+		return;
+	}
+
+	if (t == "CALL_CREATE" || t == "CALL_UPDATE") {
+		std::string channelId = Utils::Json::getString(d, "channel_id");
+		std::string self = getCurrentUser().id;
+		bool ringingUs = false;
+		int ringingCount = 0;
+		if (d.HasMember("ringing") && d["ringing"].IsArray()) {
+			for (const auto &r : d["ringing"].GetArray()) {
+				if (!r.IsString()) {
+					continue;
+				}
+				ringingCount++;
+				if (self == r.GetString()) {
+					ringingUs = true;
+				}
+			}
+		}
+
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		callRinging[channelId] = ringingCount;
+		if (ringingUs) {
+			if (incomingCallChannelId != channelId) {
+				Logger::log("[Call] Incoming call in %s", channelId.c_str());
+			}
+			incomingCallChannelId = channelId;
+		} else if (incomingCallChannelId == channelId) {
+			incomingCallChannelId.clear();
+		}
+		return;
+	}
+
+	if (t == "CALL_DELETE") {
+		std::string channelId = Utils::Json::getString(d, "channel_id");
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		callRinging[channelId] = 0;
+		if (incomingCallChannelId == channelId) {
+			Logger::log("[Call] Call in %s ended", channelId.c_str());
+			incomingCallChannelId.clear();
 		}
 		return;
 	}
@@ -2859,6 +2942,27 @@ void DiscordClient::applyVoiceState(const rapidjson::Value &state, const std::st
 				break;
 			}
 			break;
+		}
+	}
+
+	if (p.name.empty()) {
+		if (uid == currentUser.id) {
+			p.name = currentUser.global_name.empty() ? currentUser.username : currentUser.global_name;
+			p.avatar = currentUser.avatar;
+		} else {
+			for (const auto &pc : privateChannels) {
+				if (pc.id != channelId) {
+					continue;
+				}
+				for (const auto &r : pc.recipients) {
+					if (r.id == uid) {
+						p.name = r.global_name.empty() ? r.username : r.global_name;
+						p.avatar = r.avatar;
+						break;
+					}
+				}
+				break;
+			}
 		}
 	}
 

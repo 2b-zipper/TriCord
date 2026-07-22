@@ -15,7 +15,8 @@ const char *const SOUND_PATHS[(size_t)Sound::COUNT] = {
     "romfs:/discord-sounds/join.pcm",          "romfs:/discord-sounds/left.pcm",
     "romfs:/discord-sounds/left2.pcm",         "romfs:/discord-sounds/mic_on.pcm",
     "romfs:/discord-sounds/mic_off.pcm",       "romfs:/discord-sounds/headphone_on.pcm",
-    "romfs:/discord-sounds/headphone_off.pcm",
+    "romfs:/discord-sounds/headphone_off.pcm", "romfs:/discord-sounds/call_outgoing.pcm",
+    "romfs:/discord-sounds/call_incoming.pcm",
 };
 } // namespace
 
@@ -113,6 +114,27 @@ void SoundPlayer::shutdown() {
 		}
 	}
 	ready = false;
+}
+
+void SoundPlayer::stop() {
+	std::lock_guard<std::mutex> lock(mutex);
+	if (!ready) {
+		return;
+	}
+	ndspChnWaveBufClear(NDSP_CHANNEL);
+	for (int i = 0; i < WAVE_BUF_COUNT; i++) {
+		waveBufs[i].status = NDSP_WBUF_DONE;
+	}
+	nextWaveBuf = 0;
+}
+
+int SoundPlayer::clipFrames(Sound sound) {
+	std::lock_guard<std::mutex> lock(mutex);
+	const Clip &clip = clips[(size_t)sound];
+	if (!clip.samples || clip.count == 0) {
+		return 0;
+	}
+	return (int)((clip.count * 60 + SAMPLE_RATE - 1) / SAMPLE_RATE);
 }
 
 void SoundPlayer::play(Sound sound) {

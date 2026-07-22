@@ -174,6 +174,11 @@ class DiscordClient {
 	void triggerTypingIndicator(const std::string &channelId);
 	std::vector<TypingUser> getTypingUsers(const std::string &channelId);
 
+	void ringCall(const std::string &channelId);
+	void stopRinging(const std::string &channelId);
+	std::string getIncomingCallChannel();
+	std::optional<int> getCallRingingCount(const std::string &channelId);
+
 	void addReaction(const std::string &channelId, const std::string &messageId, const std::string &emoji);
 	void removeReaction(const std::string &channelId, const std::string &messageId, const std::string &emoji);
 
@@ -307,6 +312,8 @@ class DiscordClient {
 
 	std::string selectedGuildId;
 	std::string selectedChannelId;
+	std::string incomingCallChannelId;
+	std::map<std::string, int> callRinging;
 
 	Network::WebSocketClient ws;
 

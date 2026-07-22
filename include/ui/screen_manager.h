@@ -2,6 +2,7 @@
 #define SCREEN_MANAGER_H
 
 #include "ui/hamburger_menu.h"
+#include "ui/incoming_call.h"
 #include <citro2d.h>
 #include <map>
 #include <memory>
@@ -20,7 +21,6 @@ enum class ScreenType {
 	ADD_ACCOUNT,
 	FORUM_CHANNEL,
 	SETTINGS,
-	DM_LIST,
 	ABOUT,
 	DISCLAIMER,
 	THEME_MANAGER
@@ -145,6 +145,7 @@ class ScreenManager {
 	bool debugOverlayEnabled;
 	bool appExitRequested;
 	HamburgerMenu hamburgerMenu;
+	IncomingCall incomingCall;
 	C2D_ImageTint tint;
 
 	int lastServerIndex = 0;

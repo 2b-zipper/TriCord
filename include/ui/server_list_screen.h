@@ -27,6 +27,7 @@ class ServerListScreen : public Screen {
 
 	struct ListItem {
 		bool isFolder = false;
+		bool isDm = false;
 		std::string id;
 		std::string name;
 		std::string icon;
@@ -54,6 +55,11 @@ class ServerListScreen : public Screen {
 	void drawListItem(int index, const ListItem &item, float x, float y);
 
 	static const int CHANNEL_ROWS_PER_PAGE = 9;
+	// DM rows carry a 32px avatar, so they get their own taller grid.
+	static const int DM_ROWS_PER_PAGE = 5;
+	static constexpr float DM_ROW_HEIGHT = 40.0f;
+	bool isDmPane() const;
+	int channelRowsPerPage() const;
 	int channelRowSpan(int index) const;
 	void ensureChannelVisible();
 

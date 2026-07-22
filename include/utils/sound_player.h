@@ -17,6 +17,8 @@ enum class Sound {
 	MIC_OFF,
 	HEADPHONE_ON,
 	HEADPHONE_OFF,
+	CALL_OUTGOING,
+	CALL_INCOMING,
 	COUNT,
 };
 
@@ -30,6 +32,8 @@ class SoundPlayer {
 	void shutdown();
 
 	void play(Sound sound);
+	void stop();
+	int clipFrames(Sound sound);
 
   private:
 	SoundPlayer() = default;

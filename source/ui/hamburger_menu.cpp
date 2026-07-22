@@ -23,7 +23,6 @@ HamburgerMenu::HamburgerMenu()
 
 void HamburgerMenu::refreshStrings() {
 	items.clear();
-	items.push_back({TR("menu.direct_messages"), MenuItemType::DIRECT_MESSAGES});
 	items.push_back({TR("menu.servers"), MenuItemType::SERVER_LIST});
 	items.push_back({TR("menu.settings"), MenuItemType::SETTINGS});
 	items.push_back({TR("menu.about"), MenuItemType::ABOUT});
@@ -118,10 +117,6 @@ void HamburgerMenu::update() {
 				switch (item.type) {
 				case MenuItemType::SERVER_LIST:
 					sm.setScreen(ScreenType::GUILD_LIST);
-					close();
-					return;
-				case MenuItemType::DIRECT_MESSAGES:
-					sm.setScreen(ScreenType::DM_LIST);
 					close();
 					return;
 				case MenuItemType::SETTINGS:

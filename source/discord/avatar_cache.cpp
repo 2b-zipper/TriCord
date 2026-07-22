@@ -145,7 +145,7 @@ bool AvatarCache::shouldFetchLocked(const std::string &key, const std::string &h
 }
 
 void AvatarCache::startFetchLocked(const std::string &key, const std::string &url, const std::string &hash,
-                                   bool circular) {
+                                   float cornerRatio) {
 	int attempts = 0;
 	C3D_Tex *current = nullptr;
 	auto existing = cache.find(key);
@@ -165,11 +165,12 @@ void AvatarCache::startFetchLocked(const std::string &key, const std::string &ur
 	cache[key] = info;
 
 	Network::NetworkManager::getInstance().enqueue(
-	    url, "GET", "", Network::RequestPriority::BACKGROUND, [this, key, circular](const Network::HttpResponse &resp) {
+	    url, "GET", "", Network::RequestPriority::BACKGROUND,
+	    [this, key, cornerRatio](const Network::HttpResponse &resp) {
 		    if (resp.statusCode == 200 && !resp.body.empty()) {
 			    Utils::Image::TiledData tiled = Utils::Image::decodeToTiled(
 			        (const unsigned char *)resp.body.data(), resp.body.size(), Utils::Image::MAX_REMOTE_DIM,
-			        Utils::Image::MAX_REMOTE_DIM, true, circular);
+			        Utils::Image::MAX_REMOTE_DIM, true, cornerRatio);
 			    if (tiled.pixels) {
 				    std::lock_guard<std::recursive_mutex> lock(this->cacheMutex);
 				    PendingAvatar pa;
@@ -222,7 +223,7 @@ void AvatarCache::prefetchAvatar(const std::string &userId, const std::string &a
 		      ".png?size=" + std::to_string(AVATAR_SIZE);
 	}
 
-	startFetchLocked(userId, url, avatarHash, true);
+	startFetchLocked(userId, url, avatarHash, 0.5f);
 }
 
 void AvatarCache::prefetchGuildIcon(const std::string &guildId, const std::string &iconHash) {
@@ -238,7 +239,7 @@ void AvatarCache::prefetchGuildIcon(const std::string &guildId, const std::strin
 	startFetchLocked(guildId,
 	                 "https://cdn.discordapp.com/icons/" + guildId + "/" + iconHash +
 	                     ".png?size=" + std::to_string(GUILD_ICON_SIZE),
-	                 iconHash);
+	                 iconHash, GUILD_ICON_CORNER_RATIO);
 }
 
 void AvatarCache::prefetchChannelIcon(const std::string &channelId, const std::string &iconHash) {
@@ -254,7 +255,7 @@ void AvatarCache::prefetchChannelIcon(const std::string &channelId, const std::s
 	startFetchLocked(channelId,
 	                 "https://cdn.discordapp.com/channel-icons/" + channelId + "/" + iconHash +
 	                     ".png?size=" + std::to_string(AVATAR_SIZE),
-	                 iconHash);
+	                 iconHash, 0.5f);
 }
 
 } // namespace Discord

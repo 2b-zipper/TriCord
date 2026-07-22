@@ -3,6 +3,7 @@
 
 #include "utils/image_utils.h"
 #include <malloc.h>
+#include <math.h>
 #include <string.h>
 #include <vector>
 
@@ -15,7 +16,7 @@ static const int mortonTable[] = {0,  1,  4,  5,  16, 17, 20, 21, 2,  3,  6,  7,
                                   40, 41, 44, 45, 56, 57, 60, 61, 42, 43, 46, 47, 58, 59, 62, 63};
 
 TiledData decodeToTiled(const unsigned char *data, size_t size, int maxWidth, int maxHeight, bool noResize,
-                        bool circleMask) {
+                        float cornerRatio) {
 	TiledData result;
 	int w, h, c;
 
@@ -102,19 +103,36 @@ TiledData decodeToTiled(const unsigned char *data, size_t size, int maxWidth, in
 	stbi_image_free(img);
 
 	// Bytes are already swapped to RRGGBBAA, so alpha is the low byte.
-	if (circleMask) {
+	// Rounded-rect mask. A ratio of 0.5 makes the radius half the shorter side,
+	// which is a circle; smaller ratios give a squircle.
+	if (cornerRatio > 0.0f) {
 		const float cx = (targetW - 1) * 0.5f;
 		const float cy = (targetH - 1) * 0.5f;
-		const float radius = (cx < cy ? cx : cy) + 0.5f;
+		const float hx = cx + 0.5f;
+		const float hy = cy + 0.5f;
+
+		float radius = cornerRatio * (targetW < targetH ? targetW : targetH);
+		if (radius > hx) {
+			radius = hx;
+		}
+		if (radius > hy) {
+			radius = hy;
+		}
 
 		for (int y = 0; y < targetH; y++) {
 			const int *morton = &mortonTable[(y & 7) << 3];
 			u32 *tileRow = tiledBuf + ((size_t)(y >> 3) * tilesPerRow << 6);
-			const float dy = y - cy;
+			const float qy = fabsf(y - cy) - (hy - radius);
 
 			for (int x = 0; x < targetW; x++) {
-				const float dx = x - cx;
-				float coverage = radius - sqrtf(dx * dx + dy * dy);
+				const float qx = fabsf(x - cx) - (hx - radius);
+				const float mx = qx > 0.0f ? qx : 0.0f;
+				const float my = qy > 0.0f ? qy : 0.0f;
+				float inner = qx > qy ? qx : qy;
+				if (inner > 0.0f) {
+					inner = 0.0f;
+				}
+				float coverage = radius - (sqrtf(mx * mx + my * my) + inner);
 				if (coverage >= 1.0f) {
 					continue;
 				}

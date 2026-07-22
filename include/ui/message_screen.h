@@ -106,6 +106,11 @@ class MessageScreen : public Screen {
 	KeyboardResult runKeyboard(const std::string &hint, const std::string &initialText = "");
 
 	void renderReactionIcon();
+	void renderCallParticipants(float y, const std::vector<Discord::VoiceParticipant> &participants);
+	std::vector<Discord::VoiceParticipant> callParticipants() const;
+	bool isCallableChannel() const;
+	bool isCallActive() const;
+	void startCall();
 };
 
 } // namespace UI
