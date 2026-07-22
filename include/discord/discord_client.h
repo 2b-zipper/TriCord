@@ -80,6 +80,7 @@ class DiscordClient {
 	}
 
 	bool consumeGuildDataDirty() { return guildDataDirty.exchange(false); }
+	bool consumePrivateChannelsDirty() { return privateChannelsDirty.exchange(false); }
 
 	std::recursive_mutex &getMutex() { return clientMutex; }
 	std::string getStatusMessage() {
@@ -297,6 +298,7 @@ class DiscordClient {
 	std::atomic<bool> readStateDirty{false};
 	std::string readStateDirtyChannelId;
 	std::atomic<bool> guildDataDirty{false};
+	std::atomic<bool> privateChannelsDirty{false};
 	std::thread workerThread;
 	std::thread networkThread;
 

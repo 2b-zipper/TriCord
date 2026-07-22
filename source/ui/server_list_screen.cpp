@@ -806,9 +806,14 @@ void ServerListScreen::update() {
 		}
 	}
 	bool guildDataChanged = client.consumeGuildDataDirty();
+	bool privateChannelsChanged = client.consumePrivateChannelsDirty();
 	if (ackForVisibleChannel || guildDataChanged || ++unreadCacheTimer >= UNREAD_CACHE_INTERVAL) {
 		unreadCacheTimer = 0;
 		updateUnreadCache();
+	}
+
+	if (privateChannelsChanged && !listItems.empty() && selectedIndex >= 0 && selectedIndex < (int)listItems.size() && listItems[selectedIndex].isDm) {
+		refreshChannels();
 	}
 
 	for (int i = channelScrollOffset; i < (int)sortedChannels.size() && i < channelScrollOffset + 6; i++) {

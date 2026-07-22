@@ -913,6 +913,7 @@ void DiscordClient::handleChannelCreateUpdate(const rapidjson::Value &d) {
 		if (!found) {
 			privateChannels.insert(privateChannels.begin(), channel);
 		}
+		privateChannelsDirty.store(true);
 		Logger::log("Updated DM channel %s (%s)", channel.name.c_str(), channel.id.c_str());
 	} else if (d.HasMember("guild_id")) {
 		std::string guildId = Utils::Json::getString(d, "guild_id");
@@ -1049,9 +1050,13 @@ void DiscordClient::handleMessageCreate(const rapidjson::Value &d) {
 			}
 		}
 		if (!updatedChannel) {
-			for (auto &ch : privateChannels) {
-				if (ch.id == msg.channelId) {
-					ch.last_message_id = msg.id;
+			for (auto it = privateChannels.begin(); it != privateChannels.end(); ++it) {
+				if (it->id == msg.channelId) {
+					it->last_message_id = msg.id;
+					Channel ch = *it;
+					privateChannels.erase(it);
+					privateChannels.insert(privateChannels.begin(), ch);
+					privateChannelsDirty.store(true);
 					break;
 				}
 			}
