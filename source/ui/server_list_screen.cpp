@@ -812,7 +812,8 @@ void ServerListScreen::update() {
 		updateUnreadCache();
 	}
 
-	if (privateChannelsChanged && !listItems.empty() && selectedIndex >= 0 && selectedIndex < (int)listItems.size() && listItems[selectedIndex].isDm) {
+	if (privateChannelsChanged && !listItems.empty() && selectedIndex >= 0 && selectedIndex < (int)listItems.size() &&
+	    listItems[selectedIndex].isDm) {
 		refreshChannels();
 	}
 
@@ -1122,8 +1123,9 @@ void ServerListScreen::update() {
 					ScreenManager::getInstance().pushScreen(ScreenType::FORUM_CHANNEL);
 				} else if (ch.type == 2 || ch.type == 13) {
 					Discord::VoiceClient &voice = Discord::VoiceClient::getInstance();
-					if (voice.getState() == Discord::VoiceState::DISCONNECTED ||
-					    voice.getState() == Discord::VoiceState::FAILED) {
+					bool idle = voice.getState() == Discord::VoiceState::DISCONNECTED ||
+					            voice.getState() == Discord::VoiceState::FAILED;
+					if (idle || voice.getChannelId() != ch.id) {
 						voice.connect(sm.getSelectedGuildId(), ch.id);
 					} else {
 						voice.disconnect();
