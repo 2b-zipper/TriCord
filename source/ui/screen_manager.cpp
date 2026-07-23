@@ -140,7 +140,7 @@ void ScreenManager::setScreen(ScreenType type) {
 		break;
 	case ScreenType::FORUM_CHANNEL: {
 		auto &client = Discord::DiscordClient::getInstance();
-		std::string channelId = client.getSelectedChannelId();
+		std::string channelId = forumChannelId;
 		std::string channelName = TR("common.forum");
 		for (const auto &g : client.getGuilds()) {
 			for (const auto &ch : g.channels) {

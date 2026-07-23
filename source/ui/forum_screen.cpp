@@ -33,6 +33,7 @@ void ForumScreen::onEnter() {
 	std::lock_guard<std::recursive_mutex> lock(client.getMutex());
 	Discord::Channel channel = client.getChannel(channelId);
 	channelTopic = channel.topic;
+	channelType = channel.type;
 
 	truncatedChannelName = getTruncatedRichText(channelName, 380.0f, 0.52f, 0.52f);
 
@@ -211,7 +212,7 @@ void ForumScreen::renderBottom(C3D_RenderTarget *target) {
 
 	float headerX = 35.0f;
 
-	std::string iconPath = "romfs:/discord-icons/forum.png";
+	std::string iconPath = channelType == 15 ? "romfs:/discord-icons/forum.png" : "romfs:/discord-icons/thread.png";
 	C3D_Tex *icon = UI::ImageManager::getInstance().getLocalImage(iconPath);
 	if (icon) {
 		float iconSize = 18.0f;

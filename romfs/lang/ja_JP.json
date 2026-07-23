@@ -2,6 +2,7 @@
     "app.name": "TriCord",
     "channel.menu.mute": "チャンネルを通知オフ",
     "channel.menu.open_chat": "チャットを開く",
+    "channel.menu.threads": "スレッド",
     "call.accept": "応答",
     "call.decline": "拒否",
     "call.in_call": "通話中",

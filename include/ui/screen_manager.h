@@ -113,6 +113,10 @@ class ScreenManager {
 	}
 	void setLastChannelScroll(const std::string &guildId, int scroll) { lastChannelScroll[guildId] = scroll; }
 
+	// Separate from the selected channel, which opening a thread overwrites.
+	void setForumChannelId(const std::string &id) { forumChannelId = id; }
+	std::string getForumChannelId() const { return forumChannelId; }
+
 	int getLastForumIndex(const std::string &channelId) {
 		return lastForumIndex.count(channelId) ? lastForumIndex[channelId] : 0;
 	}
@@ -152,6 +156,7 @@ class ScreenManager {
 	int lastServerScroll = 0;
 	std::map<std::string, int> lastChannelIndex;
 	std::map<std::string, int> lastChannelScroll;
+	std::string forumChannelId;
 	std::map<std::string, int> lastForumIndex;
 	std::map<std::string, int> lastForumScroll;
 

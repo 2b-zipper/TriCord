@@ -230,7 +230,7 @@ class DiscordClient {
 	void handleReady(const rapidjson::Value &d);
 	void handleResumed();
 	void handleGuildCreate(const rapidjson::Value &d);
-	void handleChannelCreateUpdate(const rapidjson::Value &d);
+	void handleChannelCreateUpdate(const rapidjson::Value &d, const std::string &guildIdOverride = "");
 	void handleChannelDelete(const rapidjson::Value &d);
 	void handleTypingStart(const rapidjson::Value &d);
 	void handleMessageCreate(const rapidjson::Value &d);

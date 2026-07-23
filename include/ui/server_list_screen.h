@@ -5,6 +5,7 @@
 #include "screen_manager.h"
 #include <map>
 #include <string>
+#include <unordered_set>
 #include <unordered_map>
 #include <vector>
 
@@ -66,6 +67,13 @@ class ServerListScreen : public Screen {
 	void drawVoiceStatus();
 
 	std::string voiceNamesResolvedFor;
+	// Threads only sync to user accounts once the guild is subscribed to, and a
+	// subscription lasts only as long as the gateway session.
+	std::unordered_set<std::string> subscribedGuilds;
+	std::string subscribedSessionId;
+	int subscribeTimer = 0;
+	static const int SUBSCRIBE_SETTLE_FRAMES = 20;
+	void subscribeHighlightedGuild();
 
 	int repeatTimer;
 	u32 lastKey;
@@ -109,6 +117,7 @@ class ServerListScreen : public Screen {
 	std::string muteMenuTargetId;
 	bool muteMenuHasUnread = false;
 	bool muteMenuIsVoice = false;
+	bool muteMenuHasThreads = false;
 	std::string muteMenuExpireLabel; // format: "M/D HH:MM" or empty
 	float muteMenuAnchorX = 76.0f;
 	float muteMenuAnchorY = 120.0f;

@@ -2,6 +2,7 @@
     "app.name": "TriCord",
     "channel.menu.mute": "Mute Channel",
     "channel.menu.open_chat": "Open Chat",
+    "channel.menu.threads": "Threads",
     "call.accept": "Accept",
     "call.decline": "Decline",
     "call.in_call": "In Call",

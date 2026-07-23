@@ -166,6 +166,41 @@ void ServerListScreen::rebuildList() {
 	updateUnreadCache();
 }
 
+void ServerListScreen::subscribeHighlightedGuild() {
+	if (selectedIndex < 0 || selectedIndex >= (int)listItems.size()) {
+		return;
+	}
+	const auto &item = listItems[selectedIndex];
+	if (item.isFolder || item.isDm) {
+		return;
+	}
+
+	Discord::DiscordClient &client = Discord::DiscordClient::getInstance();
+	std::string session = client.getSessionId();
+	if (session.empty()) {
+		return;
+	}
+	if (session != subscribedSessionId) {
+		subscribedSessionId = session;
+		subscribedGuilds.clear();
+	}
+	if (subscribedGuilds.count(item.id)) {
+		return;
+	}
+
+	if (++subscribeTimer < SUBSCRIBE_SETTLE_FRAMES) {
+		return;
+	}
+
+	for (const auto &ch : sortedChannels) {
+		if (ch.type == 0 || ch.type == 5) {
+			subscribedGuilds.insert(item.id);
+			client.sendLazyRequest(item.id, ch.id);
+			break;
+		}
+	}
+}
+
 void ServerListScreen::refreshChannels() {
 	Logger::log("ServerListScreen::refreshChannels() start");
 	sortedChannels.clear();
@@ -268,6 +303,7 @@ void ServerListScreen::refreshChannels() {
 			}
 		}
 	}
+
 	updateUnreadCache();
 }
 
@@ -297,6 +333,7 @@ static const int MENU_OPEN_DURATION = INT_MIN + 1;
 static const int MENU_MARK_READ = INT_MIN + 2;
 static const int MENU_OPEN_LEVELS = INT_MIN + 3;
 static const int MENU_OPEN_CHAT = INT_MIN + 4;
+static const int MENU_OPEN_THREADS = INT_MIN + 5;
 
 static bool opensSubmenu(int tw) { return tw == MENU_OPEN_DURATION || tw == MENU_OPEN_LEVELS; }
 
@@ -306,6 +343,10 @@ void ServerListScreen::buildTopLevelMenu(bool currentlyMuted, bool hasUnread) {
 	if (muteMenuIsChannel && muteMenuIsVoice) {
 		muteMenuOptions.push_back(TR("channel.menu.open_chat"));
 		muteMenuTimeWindows.push_back(MENU_OPEN_CHAT);
+	}
+	if (muteMenuIsChannel && muteMenuHasThreads) {
+		muteMenuOptions.push_back(TR("channel.menu.threads"));
+		muteMenuTimeWindows.push_back(MENU_OPEN_THREADS);
 	}
 	if (currentlyMuted) {
 		muteMenuOptions.push_back(TR(muteMenuIsChannel ? "channel.mute.unmute" : "server.mute.unmute"));
@@ -461,6 +502,7 @@ void ServerListScreen::openMuteMenu(const std::string &guildId) {
 	muteMenuTargetId = guildId;
 	muteMenuIsChannel = false;
 	muteMenuIsVoice = false;
+	muteMenuHasThreads = false;
 	muteMenuAnchorX = SIDEBAR_WIDTH + 4.0f;
 	int rel = selectedIndex - scrollOffset;
 	muteMenuAnchorY = (rel >= 0 && rel < 5) ? rel * 48.0f + 24.0f : 120.0f;
@@ -521,6 +563,24 @@ void ServerListScreen::openChannelMuteMenu(const std::string &channelId, int cha
 	std::string guildId = dc.getGuildIdFromChannel(channelId);
 	std::lock_guard<std::recursive_mutex> lock(dc.getMutex());
 	const auto &notifSettings = dc.getNotificationSettings();
+
+	// Threads live in the guild's channel list but never render there: the list
+	// only nests entries under categories, and a thread's parent is a channel.
+	muteMenuHasThreads = false;
+	if (channelType == 0 || channelType == 5) {
+		for (const auto &g : dc.getGuilds()) {
+			if (g.id != guildId) {
+				continue;
+			}
+			for (const auto &ch : g.channels) {
+				if ((ch.type == 10 || ch.type == 11 || ch.type == 12) && ch.parent_id == channelId) {
+					muteMenuHasThreads = true;
+					break;
+				}
+			}
+			break;
+		}
+	}
 
 	bool currentlyMuted = false;
 	muteMenuExpireLabel.clear();
@@ -864,6 +924,8 @@ void ServerListScreen::update() {
 		}
 	}
 
+	subscribeHighlightedGuild();
+
 	u32 kDown = hidKeysDown();
 	u32 kHeld = hidKeysHeld();
 
@@ -924,6 +986,10 @@ void ServerListScreen::update() {
 					isMuteMenuOpen = false;
 					Discord::DiscordClient::getInstance().setSelectedChannelId(muteMenuTargetId);
 					ScreenManager::getInstance().pushScreen(ScreenType::MESSAGES);
+				} else if (tw == MENU_OPEN_THREADS) {
+					isMuteMenuOpen = false;
+					ScreenManager::getInstance().setForumChannelId(muteMenuTargetId);
+					ScreenManager::getInstance().pushScreen(ScreenType::FORUM_CHANNEL);
 				} else if (tw == MENU_MARK_READ) {
 					isMuteMenuOpen = false;
 					if (muteMenuIsChannel) {
@@ -1007,6 +1073,7 @@ void ServerListScreen::update() {
 		}
 
 		if (selectionChanged) {
+			subscribeTimer = 0;
 			sm.setLastServerIndex(selectedIndex);
 			sm.setLastServerScroll(scrollOffset);
 			refreshChannels();
@@ -1119,7 +1186,7 @@ void ServerListScreen::update() {
 					Discord::DiscordClient::getInstance().setSelectedChannelId(ch.id);
 					ScreenManager::getInstance().pushScreen(ScreenType::MESSAGES);
 				} else if (ch.type == 15) {
-					Discord::DiscordClient::getInstance().setSelectedChannelId(ch.id);
+					ScreenManager::getInstance().setForumChannelId(ch.id);
 					ScreenManager::getInstance().pushScreen(ScreenType::FORUM_CHANNEL);
 				} else if (ch.type == 2 || ch.type == 13) {
 					Discord::VoiceClient &voice = Discord::VoiceClient::getInstance();

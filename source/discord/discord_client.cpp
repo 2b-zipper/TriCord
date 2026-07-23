@@ -642,9 +642,10 @@ void DiscordClient::handleDispatch(const rapidjson::Document &doc) {
 		handleChannelCreateUpdate(d);
 	} else if (t == "THREAD_LIST_SYNC") {
 		if (d.HasMember("threads") && d["threads"].IsArray()) {
+			std::string syncGuildId = Utils::Json::getString(d, "guild_id");
 			const rapidjson::Value &threads = d["threads"];
 			for (rapidjson::SizeType i = 0; i < threads.Size(); i++) {
-				handleChannelCreateUpdate(threads[i]);
+				handleChannelCreateUpdate(threads[i], syncGuildId);
 			}
 		}
 	}
@@ -892,7 +893,7 @@ void DiscordClient::handleGuildCreate(const rapidjson::Value &d) {
 	guildDataDirty.store(true);
 }
 
-void DiscordClient::handleChannelCreateUpdate(const rapidjson::Value &d) {
+void DiscordClient::handleChannelCreateUpdate(const rapidjson::Value &d, const std::string &guildIdOverride) {
 	std::lock_guard<std::recursive_mutex> lock(clientMutex);
 
 	Channel channel;
@@ -912,8 +913,9 @@ void DiscordClient::handleChannelCreateUpdate(const rapidjson::Value &d) {
 		}
 		privateChannelsDirty.store(true);
 		Logger::log("Updated DM channel %s (%s)", channel.name.c_str(), channel.id.c_str());
-	} else if (d.HasMember("guild_id")) {
-		std::string guildId = Utils::Json::getString(d, "guild_id");
+	} else if (d.HasMember("guild_id") || !guildIdOverride.empty()) {
+		// Threads in a Thread List Sync carry the guild only on the envelope.
+		std::string guildId = guildIdOverride.empty() ? Utils::Json::getString(d, "guild_id") : guildIdOverride;
 
 		for (auto &guild : guilds) {
 			if (guild.id == guildId) {
@@ -2458,6 +2460,7 @@ void DiscordClient::fetchForumThreads(const std::string &channelId, ThreadsCallb
 								    }
 								    t.message_count = Utils::Json::getInt(tObj, "message_count");
 								    t.owner_id = Utils::Json::getString(tObj, "owner_id");
+								    t.viewable = true;
 								    t.is_archived = false;
 								    if (tObj.HasMember("thread_metadata") && tObj["thread_metadata"].IsObject()) {
 									    t.is_archived = Utils::Json::getBool(tObj["thread_metadata"], "archived");

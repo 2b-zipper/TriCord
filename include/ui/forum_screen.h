@@ -25,6 +25,7 @@ class ForumScreen : public Screen {
 	std::string channelName;
 	std::string truncatedChannelName;
 	std::string channelTopic;
+	int channelType = 15;
 	std::string guildId;
 	struct ThreadInfo {
 		Discord::Channel channel;
