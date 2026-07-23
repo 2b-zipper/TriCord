@@ -310,7 +310,31 @@ void MessageScreen::onEnter() {
 
 bool MessageScreen::hidesMenu() const { return bottomMode == BottomScreenMode::EMOJI_PICKER; }
 
+void MessageScreen::flushMemberFetches() {
+	if (queuedMemberFetches.empty()) {
+		return;
+	}
+
+	if (guildId.empty() || guildId == "DM") {
+		queuedMemberFetches.clear();
+		return;
+	}
+
+	Discord::DiscordClient::getInstance().requestMembers(guildId, queuedMemberFetches);
+
+	// The reply is a gateway event, not a per-request callback, so anything the
+	// chunk leaves out is retried after this cooldown rather than never.
+	uint64_t retryAt = osGetTime() + (30 * 1000);
+	for (const auto &uid : queuedMemberFetches) {
+		failedMemberFetches[uid] = retryAt;
+		pendingMemberFetches.erase(uid);
+	}
+	queuedMemberFetches.clear();
+}
+
 void MessageScreen::update() {
+	flushMemberFetches();
+
 	Discord::DiscordClient &client = Discord::DiscordClient::getInstance();
 	std::lock_guard<std::recursive_mutex> clientLock(client.getMutex());
 	std::unique_lock<std::recursive_mutex> updateLock(messageMutex);
@@ -1153,16 +1177,7 @@ float MessageScreen::drawAuthorHeader(const Discord::Message &msg, float x, floa
 
 				if (!onCooldown && pendingMemberFetches.find(msg.author.id) == pendingMemberFetches.end()) {
 					pendingMemberFetches.insert(msg.author.id);
-					std::string uid = msg.author.id;
-					client.fetchMember(guildId, uid, [this, uid, token = aliveToken](const Discord::Member &m) {
-						if (!*token) {
-							return;
-						}
-						if (m.user_id.empty()) {
-							this->failedMemberFetches[uid] = osGetTime() + (30 * 1000);
-						}
-						this->pendingMemberFetches.erase(uid);
-					});
+					queuedMemberFetches.push_back(msg.author.id);
 				}
 			}
 		}

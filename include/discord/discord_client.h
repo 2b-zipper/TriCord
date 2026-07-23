@@ -34,7 +34,6 @@ using SingleMessageCallback = std::function<void(const std::optional<Message> &)
 using SuccessCallback = std::function<void(bool success)>;
 using ThreadsCallback = std::function<void(const std::vector<Channel> &)>;
 using TokenCallback = std::function<void(const std::string &token)>;
-using MemberCallback = std::function<void(const Member &)>;
 using SendMessageCallback = std::function<void(const Message &msg, bool success, int code)>;
 using ReactionCallback = std::function<void(const std::string &channelId, const std::string &messageId,
                                             const std::string &userId, const Emoji &emoji)>;
@@ -170,7 +169,8 @@ class DiscordClient {
 	void fetchForumThreads(const std::string &channelId, ThreadsCallback cb);
 	void fetchGuildDetails(const std::string &guildId, std::function<void(bool)> cb = nullptr);
 	void exchangeTicketForToken(const std::string &ticket, TokenCallback cb);
-	void fetchMember(const std::string &guildId, const std::string &userId, MemberCallback cb);
+	// Replies arrive as Guild Members Chunk, not to the caller.
+	void requestMembers(const std::string &guildId, const std::vector<std::string> &userIds);
 
 	void triggerTypingIndicator(const std::string &channelId);
 	std::vector<TypingUser> getTypingUsers(const std::string &channelId);
@@ -231,6 +231,8 @@ class DiscordClient {
 	void handleResumed();
 	void handleGuildCreate(const rapidjson::Value &d);
 	void handleChannelCreateUpdate(const rapidjson::Value &d, const std::string &guildIdOverride = "");
+	void handleGuildMembersChunk(const rapidjson::Value &d);
+	void applyVoiceMemberName(const std::string &userId, const Member &member);
 	void handleChannelDelete(const rapidjson::Value &d);
 	void handleTypingStart(const rapidjson::Value &d);
 	void handleMessageCreate(const rapidjson::Value &d);
@@ -328,7 +330,6 @@ class DiscordClient {
 	std::map<std::string, std::string> voiceChannelByUser;
 	void applyVoiceState(const rapidjson::Value &state, const std::string &guildId);
 	void clearVoiceParticipant(const std::string &userId);
-	void resolveVoiceParticipant(const std::string &guildId, const std::string &userId);
 	std::set<std::string> voiceNameLookups;
 	std::function<void(const std::string &, const std::string &, const std::string &)> voiceServerCallback;
 	std::function<void(const Message &)> messageCallback;

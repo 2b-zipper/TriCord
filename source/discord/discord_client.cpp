@@ -567,6 +567,11 @@ void DiscordClient::handleDispatch(const rapidjson::Document &doc) {
 		return;
 	}
 
+	if (t == "GUILD_MEMBERS_CHUNK") {
+		handleGuildMembersChunk(d);
+		return;
+	}
+
 	if (t == "CALL_CREATE" || t == "CALL_UPDATE") {
 		std::string channelId = Utils::Json::getString(d, "channel_id");
 		std::string self = getCurrentUser().id;
@@ -2643,66 +2648,97 @@ void DiscordClient::exchangeTicketForToken(const std::string &ticket, TokenCallb
 	    {{"Content-Type", "application/json"}});
 }
 
-void DiscordClient::fetchMember(const std::string &guildId, const std::string &userId, MemberCallback cb) {
-	if (guildId.empty() || userId.empty()) {
-		if (cb) {
-			cb(Member());
-		}
+void DiscordClient::requestMembers(const std::string &guildId, const std::vector<std::string> &userIds) {
+	if (guildId.empty() || userIds.empty() || guildId == "DM") {
 		return;
 	}
 
-	std::string url = "https://discord.com/api/v10/guilds/" + guildId + "/members/" + userId;
+	rapidjson::StringBuffer s;
+	rapidjson::Writer<rapidjson::StringBuffer> writer(s);
+	writer.StartObject();
+	writer.Key("op");
+	writer.Int(8);
+	writer.Key("d");
+	writer.StartObject();
+	writer.Key("guild_id");
+	writer.String(guildId.c_str());
+	writer.Key("user_ids");
+	writer.StartArray();
+	// The gateway caps a request at 100 IDs.
+	for (size_t i = 0; i < userIds.size() && i < 100; i++) {
+		writer.String(userIds[i].c_str());
+	}
+	writer.EndArray();
+	writer.EndObject();
+	writer.EndObject();
 
-	Network::NetworkManager::getInstance().enqueue(url, "GET", "", Network::RequestPriority::BACKGROUND,
-	                                               [this, cb, userId, guildId](const Network::HttpResponse &resp) {
-		                                               if (!resp.success) {
-			                                               if (cb) {
-				                                               cb(Member());
-			                                               }
-			                                               return;
-		                                               }
+	queueSend(s.GetString());
+	Logger::log("[Gateway] Requested %zu members for guild %s", userIds.size(), guildId.c_str());
+}
 
-		                                               rapidjson::Document d;
-		                                               d.Parse(resp.body.c_str());
+void DiscordClient::applyVoiceMemberName(const std::string &userId, const Member &member) {
+	voiceNameLookups.erase(userId);
 
-		                                               if (d.HasParseError()) {
-			                                               if (cb) {
-				                                               cb(Member());
-			                                               }
-			                                               return;
-		                                               }
+	std::string name =
+	    !member.nickname.empty() ? member.nickname : (!member.globalName.empty() ? member.globalName : member.username);
+	if (name.empty()) {
+		return;
+	}
 
-		                                               std::string uid = (d.HasMember("user") && d["user"].IsObject())
-		                                                                     ? Utils::Json::getString(d["user"], "id")
-		                                                                     : userId;
-		                                               Member member = parseMemberObject(d, uid);
+	auto it = voiceChannelByUser.find(userId);
+	if (it == voiceChannelByUser.end()) {
+		return;
+	}
+	for (auto &p : voiceParticipants[it->second]) {
+		if (p.userId == userId) {
+			p.name = name;
+			p.avatar = member.avatar;
+			AvatarCache::getInstance().prefetchAvatar(userId, p.avatar, "0");
+			break;
+		}
+	}
+}
 
-		                                               {
-			                                               std::lock_guard<std::recursive_mutex> lock(clientMutex);
-			                                               for (auto &g : guilds) {
-				                                               if (g.id == guildId) {
+void DiscordClient::handleGuildMembersChunk(const rapidjson::Value &d) {
+	std::string guildId = Utils::Json::getString(d, "guild_id");
+	if (guildId.empty() || !d.HasMember("members") || !d["members"].IsArray()) {
+		return;
+	}
 
-					                                               bool found = false;
-					                                               for (auto &m : g.members) {
-						                                               if (m.user_id == member.user_id) {
-							                                               m = member;
-							                                               found = true;
-							                                               break;
-						                                               }
-					                                               }
-					                                               if (!found) {
-						                                               g.members.push_back(member);
-					                                               }
-					                                               break;
-				                                               }
-			                                               }
-		                                               }
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	for (auto &g : guilds) {
+		if (g.id != guildId) {
+			continue;
+		}
 
-		                                               if (cb) {
-			                                               cb(member);
-		                                               }
-	                                               },
-	                                               {{"Authorization", token}});
+		for (const auto &mObj : d["members"].GetArray()) {
+			if (!mObj.IsObject() || !mObj.HasMember("user") || !mObj["user"].IsObject()) {
+				continue;
+			}
+			std::string uid = Utils::Json::getString(mObj["user"], "id");
+			if (uid.empty()) {
+				continue;
+			}
+
+			Member member = parseMemberObject(mObj, uid);
+			bool found = false;
+			for (auto &m : g.members) {
+				if (m.user_id == uid) {
+					m = member;
+					found = true;
+					break;
+				}
+			}
+			if (!found) {
+				g.members.push_back(member);
+			}
+
+			applyVoiceMemberName(uid, member);
+		}
+		break;
+	}
+
+	guildDataDirty.store(true);
 }
 
 void DiscordClient::performLogin(const std::string &email, const std::string &password, LoginCallback cb) {
@@ -2990,50 +3026,21 @@ void DiscordClient::resolveVoiceNames(const std::string &guildId) {
 		return;
 	}
 
+	std::vector<std::string> unresolved;
 	for (const auto &entry : voiceParticipants) {
 		for (const auto &p : entry.second) {
 			if (p.guildId != guildId) {
 				continue;
 			}
-			if (p.name == p.userId) {
-				resolveVoiceParticipant(guildId, p.userId);
-			} else {
+			if (p.name != p.userId) {
 				AvatarCache::getInstance().prefetchAvatar(p.userId, p.avatar, "0");
+			} else if (voiceNameLookups.insert(p.userId).second) {
+				unresolved.push_back(p.userId);
 			}
 		}
 	}
-}
 
-void DiscordClient::resolveVoiceParticipant(const std::string &guildId, const std::string &userId) {
-	if (!voiceNameLookups.insert(userId).second) {
-		return;
-	}
-
-	fetchMember(guildId, userId, [this, userId](const Member &member) {
-		std::lock_guard<std::recursive_mutex> lock(clientMutex);
-		this->voiceNameLookups.erase(userId);
-
-		std::string name = !member.nickname.empty()
-		                       ? member.nickname
-		                       : (!member.globalName.empty() ? member.globalName : member.username);
-		if (name.empty()) {
-			return;
-		}
-
-		auto it = this->voiceChannelByUser.find(userId);
-		if (it == this->voiceChannelByUser.end()) {
-			return;
-		}
-		for (auto &p : this->voiceParticipants[it->second]) {
-			if (p.userId == userId) {
-				p.name = name;
-				p.avatar = member.avatar;
-				AvatarCache::getInstance().prefetchAvatar(userId, p.avatar, "0");
-				this->guildDataDirty.store(true);
-				break;
-			}
-		}
-	});
+	requestMembers(guildId, unresolved);
 }
 
 std::vector<VoiceParticipant> DiscordClient::getVoiceParticipants(const std::string &channelId) {

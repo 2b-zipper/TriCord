@@ -64,6 +64,8 @@ class MessageScreen : public Screen {
 	std::vector<std::string> menuOptions;
 	std::vector<std::string> menuActions;
 	std::set<std::string> pendingMemberFetches;
+	std::vector<std::string> queuedMemberFetches;
+	void flushMemberFetches();
 	std::map<std::string, uint64_t> failedMemberFetches;
 	std::shared_ptr<bool> aliveToken;
 	enum class BottomScreenMode { TOPIC, EMOJI_PICKER };
