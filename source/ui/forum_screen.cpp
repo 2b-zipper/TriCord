@@ -15,7 +15,7 @@ static std::set<std::string> forumPendingMemberFetches;
 
 ForumScreen::ForumScreen(const std::string &channelId, const std::string &channelName)
     : channelId(channelId), channelName(channelName), guildId(""), threads({}), activeThreadCount(0), repeatTimer(0),
-      lastKey(0), isLoading(true) {
+      lastKey(0), isLoading(true), aliveToken(std::make_shared<bool>(true)) {
 	auto &sm = ScreenManager::getInstance();
 	selectedIndex = sm.getLastForumIndex(channelId);
 	scrollOffset = sm.getLastForumScroll(channelId);
@@ -23,7 +23,7 @@ ForumScreen::ForumScreen(const std::string &channelId, const std::string &channe
 	truncatedChannelName = getTruncatedRichText(channelName, 380.0f, 0.52f, 0.52f);
 }
 
-ForumScreen::~ForumScreen() {}
+ForumScreen::~ForumScreen() { *aliveToken = false; }
 
 void ForumScreen::onEnter() {
 	Logger::log("Entered Forum Screen: %s", channelName.c_str());
@@ -44,7 +44,11 @@ void ForumScreen::onExit() {}
 void ForumScreen::fetchThreads() {
 	isLoading = true;
 	Discord::DiscordClient::getInstance().fetchForumThreads(
-	    channelId, [this](const std::vector<Discord::Channel> &fetchedThreads) {
+	    channelId, [this, token = aliveToken](const std::vector<Discord::Channel> &fetchedThreads) {
+		    if (!*token) {
+			    return;
+		    }
+
 		    std::vector<Discord::Channel> active;
 		    std::vector<Discord::Channel> archived;
 		    for (const auto &t : fetchedThreads) {

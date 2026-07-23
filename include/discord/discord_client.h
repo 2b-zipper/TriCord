@@ -283,7 +283,7 @@ class DiscordClient {
 	std::map<std::string, GuildNotificationSettings> notificationSettings;
 
 	std::string token;
-	ConnectionState state;
+	std::atomic<ConnectionState> state;
 
 	int heartbeatInterval;
 	uint64_t lastHeartbeat;

@@ -1,5 +1,6 @@
 #include "core/config.h"
 #include "discord/discord_client.h"
+#include "discord/voice_client.h"
 #include "log.h"
 #include "network/http_client.h"
 #include "network/network_manager.h"
@@ -72,10 +73,14 @@ int main(int argc, char **argv) {
 		UI::ScreenManager::getInstance().render();
 	}
 
+	// Its destructor would otherwise run after socExit and ndspExit.
+	Discord::VoiceClient::getInstance().disconnect();
+
+	// Network first: its workers run callbacks into everything below.
+	Network::NetworkManager::getInstance().shutdown();
+	Discord::DiscordClient::getInstance().shutdown();
 	UI::ScreenManager::getInstance().shutdown();
 	UI::ImageManager::getInstance().shutdown();
-	Discord::DiscordClient::getInstance().shutdown();
-	Network::NetworkManager::getInstance().shutdown();
 	Utils::SoundPlayer::getInstance().shutdown();
 	ndspExit();
 	psExit();

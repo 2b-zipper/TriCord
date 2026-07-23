@@ -3,6 +3,7 @@
 
 #include "discord/types.h"
 #include "ui/screen_manager.h"
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -43,6 +44,7 @@ class ForumScreen : public Screen {
 	static const int REPEAT_DELAY_CONTINUOUS = 6;
 
 	bool isLoading;
+	std::shared_ptr<bool> aliveToken;
 
 	void fetchThreads();
 	void renderThreadCard(int index, float y);

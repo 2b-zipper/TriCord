@@ -110,7 +110,7 @@ void DiscordClient::shutdown() {
 bool DiscordClient::connect(const std::string &token) {
 	std::lock_guard<std::recursive_mutex> lock(clientMutex);
 	if (state != ConnectionState::DISCONNECTED && state != ConnectionState::DISCONNECTED_ERROR) {
-		Logger::log("Connect called but state is %d", (int)state);
+		Logger::log("Connect called but state is %d", (int)state.load());
 		return false;
 	}
 
@@ -153,21 +153,21 @@ void DiscordClient::logout() {
 }
 
 void DiscordClient::disconnect() {
-	std::lock_guard<std::recursive_mutex> lock(clientMutex);
-	if (state == ConnectionState::DISCONNECTED) {
+	if (state.exchange(ConnectionState::DISCONNECTED) == ConnectionState::DISCONNECTED) {
 		return;
 	}
 
 	Logger::log("DiscordClient::disconnect called");
-
-	setState(ConnectionState::DISCONNECTED, "Disconnected");
+	setStatus("Disconnected");
 
 	ws.disconnect();
 
+	// Joined without clientMutex: the network thread takes it while parsing.
 	if (networkThread.joinable()) {
 		networkThread.join();
 	}
 
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
 	isConnecting = false;
 
 	{
@@ -432,10 +432,7 @@ void DiscordClient::removeReaction(const std::string &channelId, const std::stri
 }
 
 void DiscordClient::setState(ConnectionState newState, const std::string &message) {
-	{
-		std::lock_guard<std::recursive_mutex> lock(clientMutex);
-		state = newState;
-	}
+	state = newState;
 	setStatus(message);
 	Logger::log("[Gateway] State: %d, Msg: %s", (int)newState, message.c_str());
 }

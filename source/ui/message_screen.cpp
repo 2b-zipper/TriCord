@@ -2612,8 +2612,8 @@ void MessageScreen::catchUpMessages() {
 	}
 
 	Discord::DiscordClient::getInstance().fetchMessagesAsync(
-	    channelId, 50, [this](const std::vector<Discord::Message> &fetched) {
-		    if (fetched.empty()) {
+	    channelId, 50, [this, token = aliveToken](const std::vector<Discord::Message> &fetched) {
+		    if (!*token || fetched.empty()) {
 			    return;
 		    }
 
