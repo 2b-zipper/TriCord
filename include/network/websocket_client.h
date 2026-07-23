@@ -61,7 +61,14 @@ class WebSocketClient {
 	ErrorCallback onError;
 	CloseCallback onClose;
 
-	std::vector<uint8_t> receiveBuffer;
+	bool zlibStream = false;
+	void *inflateStream = nullptr;
+	std::vector<uint8_t> inflateInput;
+	std::vector<uint8_t> inflateChunk;
+
+	bool initInflate();
+	void freeInflate();
+	bool inflateBuffered(std::string &out);
 
 	void *sslContext;
 	void *sslConfig;

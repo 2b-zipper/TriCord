@@ -1809,6 +1809,9 @@ void DiscordClient::sendIdentify() {
 	                   "\"device\": \"Nintendo 3DS\""
 	                   "},"
 	                   "\"compress\": false,"
+	                   // LAZY_USER_NOTES | VERSIONED_READ_STATES |
+	                   // VERSIONED_USER_GUILD_SETTINGS | PRIORITIZED_READY_PAYLOAD
+	                   "\"capabilities\": 45,"
 	                   "\"large_threshold\": 50"
 	                   "}"
 	                   "}";

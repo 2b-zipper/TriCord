@@ -1,7 +1,7 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#define DISCORD_GATEWAY_URL "wss://gateway.discord.gg/?v=10&encoding=json"
+#define DISCORD_GATEWAY_URL "wss://gateway.discord.gg/?v=10&encoding=json&compress=zlib-stream"
 #define DISCORD_REMOTE_AUTH_URL "wss://remote-auth-gateway.discord.gg/?v=2"
 #define DISCORD_QR_BASE_URL "https://discord.com/ra/"
 
