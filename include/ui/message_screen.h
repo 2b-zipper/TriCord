@@ -66,6 +66,7 @@ class MessageScreen : public Screen {
 	std::set<std::string> pendingMemberFetches;
 	std::vector<std::string> queuedMemberFetches;
 	void flushMemberFetches();
+	u32 authorNameColor(const Discord::Message &msg);
 	std::map<std::string, uint64_t> failedMemberFetches;
 	std::shared_ptr<bool> aliveToken;
 	enum class BottomScreenMode { TOPIC, EMOJI_PICKER };

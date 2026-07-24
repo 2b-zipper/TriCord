@@ -942,7 +942,7 @@ float MessageScreen::drawSystemMessage(const Discord::Message &msg, float y, flo
 	std::string text = "";
 	std::string authorName = msg.author.global_name.empty() ? msg.author.username : msg.author.global_name;
 
-	u32 nameColor = ScreenManager::colorText();
+	u32 nameColor = authorNameColor(msg);
 
 	if (msg.type == 7 || msg.type == 1) {
 		std::string targetName = "";
@@ -1145,23 +1145,10 @@ float MessageScreen::drawForwardHeader(const Discord::Message &msg, float x, flo
 	return y + 15.0f;
 }
 
-float MessageScreen::drawAuthorHeader(const Discord::Message &msg, float x, float y, bool showHeader) {
-	if (!showHeader) {
-		return y;
-	}
-
+u32 MessageScreen::authorNameColor(const Discord::Message &msg) {
 	Discord::DiscordClient &client = Discord::DiscordClient::getInstance();
 
-	std::string displayName;
-	if (!msg.member.nickname.empty()) {
-		displayName = msg.member.nickname;
-	} else {
-		displayName = client.getMemberDisplayName(guildId, msg.author.id, msg.author);
-	}
-
-	u32 nameColor = ScreenManager::colorText();
 	int roleColor = 0;
-
 	if (!msg.member.role_ids.empty()) {
 		roleColor = client.getRoleColor(guildId, msg.member);
 	}
@@ -1183,12 +1170,27 @@ float MessageScreen::drawAuthorHeader(const Discord::Message &msg, float x, floa
 		}
 	}
 
-	if (roleColor != 0) {
-		int r = (roleColor >> 16) & 0xFF;
-		int g = (roleColor >> 8) & 0xFF;
-		int b = roleColor & 0xFF;
-		nameColor = C2D_Color32(r, g, b, 255);
+	if (roleColor == 0) {
+		return ScreenManager::colorText();
 	}
+	return C2D_Color32((roleColor >> 16) & 0xFF, (roleColor >> 8) & 0xFF, roleColor & 0xFF, 255);
+}
+
+float MessageScreen::drawAuthorHeader(const Discord::Message &msg, float x, float y, bool showHeader) {
+	if (!showHeader) {
+		return y;
+	}
+
+	Discord::DiscordClient &client = Discord::DiscordClient::getInstance();
+
+	std::string displayName;
+	if (!msg.member.nickname.empty()) {
+		displayName = msg.member.nickname;
+	} else {
+		displayName = client.getMemberDisplayName(guildId, msg.author.id, msg.author);
+	}
+
+	u32 nameColor = authorNameColor(msg);
 
 	float avatarX = 10.0f;
 	float avatarSize = 28.0f;
