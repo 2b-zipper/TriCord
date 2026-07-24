@@ -20,6 +20,15 @@
 #include "utils/color_utils.h"
 #include "utils/file_utils.h"
 
+namespace {
+bool defaultEchoCancellation() {
+	bool isNew3DS = false;
+	Result rc = APT_CheckNew3DS(&isNew3DS);
+	Logger::log("[Config] APT_CheckNew3DS rc=0x%08lX new3ds=%d", (unsigned long)rc, isNew3DS ? 1 : 0);
+	return R_SUCCEEDED(rc) && isNew3DS;
+}
+} // namespace
+
 Config::Config()
     : currentAccountIndex(-1), timezoneOffset(0), language("en_US"), themeType(0), typingIndicatorEnabled(true),
       echoCancellation(true), fileLoggingEnabled(false), disclaimerAccepted(false), sslVerificationDisabled(false),
@@ -197,6 +206,8 @@ void Config::save() {
 }
 
 void Config::loadSettings() {
+	echoCancellation = defaultEchoCancellation();
+
 	std::string settingsPath = std::string(CONFIG_DIR_PATH) + "/settings.json";
 	std::vector<char> buffer = Utils::File::readFile(settingsPath);
 
@@ -255,6 +266,7 @@ void Config::loadSettings() {
 		Core::I18n::getInstance().loadLanguage("en_US");
 	}
 	Logger::setFileLoggingEnabled(fileLoggingEnabled);
+	Logger::log("[Config] Echo cancellation %s", echoCancellation ? "on" : "off");
 }
 
 void Config::saveSettings() {
