@@ -164,6 +164,8 @@
     "poll.select_one": "回答を1件選択",
     "poll.vote": "投票",
     "poll.votes": "票",
+    "profile.bot": "BOT",
+    "profile.member_since": "Discord登録日: {0}",
     "notify.all": "すべてのメッセージ",
     "notify.default": "サーバーの設定に従う",
     "notify.mentions": "@メンションのみ",

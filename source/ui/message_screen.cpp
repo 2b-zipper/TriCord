@@ -111,6 +111,7 @@ void MessageScreen::onEnter() {
 	if (channel.type == 1 && !channel.recipients.empty()) {
 		const auto &r = channel.recipients[0];
 		Discord::AvatarCache::getInstance().prefetchAvatar(r.id, r.avatar, r.discriminator);
+		client.fetchUserProfile(r.id);
 	} else if (channel.type == 3 && !channel.icon.empty()) {
 		Discord::AvatarCache::getInstance().prefetchChannelIcon(channel.id, channel.icon);
 	}
@@ -1990,6 +1991,8 @@ void MessageScreen::renderBottom(C3D_RenderTarget *target) {
 	std::vector<Discord::VoiceParticipant> participants = callParticipants();
 	if (isCallActive() || !participants.empty()) {
 		renderCallParticipants(40.0f, participants);
+	} else if (channelType == 1) {
+		renderDmProfile(40.0f);
 	} else {
 		std::string displayTopic =
 		    channelTopic.empty() ? Core::I18n::getInstance().get("common.no_topic") : channelTopic;
@@ -2735,6 +2738,46 @@ std::vector<Discord::VoiceParticipant> MessageScreen::callParticipants() const {
 		return {};
 	}
 	return Discord::DiscordClient::getInstance().getVoiceParticipants(channelId);
+}
+
+void MessageScreen::renderDmProfile(float y) {
+	Discord::DiscordClient &client = Discord::DiscordClient::getInstance();
+	Discord::Channel channel = client.getChannel(channelId);
+	if (channel.recipients.empty()) {
+		return;
+	}
+	const Discord::User &user = channel.recipients[0];
+	Discord::UserProfile profile = client.getUserProfile(user.id);
+
+	float infoY = y;
+	std::string handle = "@" + user.username;
+	drawText(10.0f, infoY, 0.5f, 0.45f, 0.45f, ScreenManager::colorText(), handle);
+	if (user.bot) {
+		float handleW = UI::measureText(handle, 0.45f, 0.45f);
+		drawText(10.0f + handleW + 6.0f, infoY + 1.0f, 0.5f, 0.35f, 0.35f, ScreenManager::colorSelection(),
+		         TR("profile.bot"));
+	}
+	infoY += 16.0f;
+
+	if (!profile.pronouns.empty()) {
+		drawText(10.0f, infoY, 0.5f, 0.38f, 0.38f, ScreenManager::colorTextMuted(), profile.pronouns);
+		infoY += 15.0f;
+	}
+
+	infoY += 4.0f;
+
+	if (!profile.bio.empty()) {
+		const auto &bioLayout = UI::MarkdownRenderer::get(profile.bio, 300.0f, 0.4f, 13.0f / 0.4f);
+		UI::MarkdownRenderer::draw(bioLayout, 10.0f, infoY, 0.5f, ScreenManager::colorText(), 6);
+		infoY += UI::MarkdownRenderer::heightOf(bioLayout, 6) + 8.0f;
+	}
+
+	time_t created = MessageUtils::snowflakeToTimestamp(user.id);
+	if (created > 0) {
+		std::string since = MessageUtils::getLocalDateString(MessageUtils::getISOTimestamp(created));
+		drawText(10.0f, infoY, 0.5f, 0.35f, 0.35f, ScreenManager::colorTextMuted(),
+		         Core::I18n::format(TR("profile.member_since"), since));
+	}
 }
 
 void MessageScreen::renderCallParticipants(float y, const std::vector<Discord::VoiceParticipant> &participants) {

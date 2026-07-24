@@ -27,6 +27,13 @@ struct Overwrite {
 	uint64_t deny = 0;
 };
 
+struct UserProfile {
+	std::string userId;
+	std::string bio;
+	std::string pronouns;
+	bool loaded = false;
+};
+
 struct Channel {
 	std::string id;
 	std::string name;

@@ -174,6 +174,8 @@ class DiscordClient {
 	void deleteMessageAsync(const std::string &channelId, const std::string &messageId, SuccessCallback cb);
 	void fetchForumThreads(const std::string &channelId, ThreadsCallback cb);
 	void fetchGuildDetails(const std::string &guildId, std::function<void(bool)> cb = nullptr);
+	void fetchUserProfile(const std::string &userId);
+	UserProfile getUserProfile(const std::string &userId);
 	void exchangeTicketForToken(const std::string &ticket, TokenCallback cb);
 	// Replies arrive as Guild Members Chunk, not to the caller.
 	void requestMembers(const std::string &guildId, const std::vector<std::string> &userIds);
@@ -349,6 +351,7 @@ class DiscordClient {
 	PollVoteCallback pollVoteCallback;
 
 	std::map<std::string, std::vector<TypingUser>> typingUsers;
+	std::map<std::string, UserProfile> profileCache;
 };
 
 } // namespace Discord

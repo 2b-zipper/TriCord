@@ -115,6 +115,7 @@ class MessageScreen : public Screen {
 
 	void renderReactionIcon();
 	void renderCallParticipants(float y, const std::vector<Discord::VoiceParticipant> &participants);
+	void renderDmProfile(float y);
 	std::vector<Discord::VoiceParticipant> callParticipants() const;
 	bool isCallableChannel() const;
 	bool isCallActive() const;

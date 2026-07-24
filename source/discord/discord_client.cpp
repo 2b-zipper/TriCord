@@ -2230,6 +2230,60 @@ void DiscordClient::fetchGuildDetails(const std::string &guildId, std::function<
 	                                               {{"Authorization", token}});
 }
 
+UserProfile DiscordClient::getUserProfile(const std::string &userId) {
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	auto it = profileCache.find(userId);
+	if (it != profileCache.end()) {
+		return it->second;
+	}
+	return UserProfile();
+}
+
+void DiscordClient::fetchUserProfile(const std::string &userId) {
+	if (token.empty() || userId.empty()) {
+		return;
+	}
+	{
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		if (profileCache.count(userId)) {
+			return;
+		}
+		profileCache[userId].userId = userId;
+	}
+
+	std::string url = "https://discord.com/api/v10/users/" + userId + "/profile?with_mutual_guilds=false";
+	Network::NetworkManager::getInstance().enqueue(url, "GET", "", Network::RequestPriority::BACKGROUND,
+	                                               [this, userId](const Network::HttpResponse &resp) {
+		                                               if (!resp.success) {
+			                                               return;
+		                                               }
+		                                               rapidjson::Document doc;
+		                                               doc.Parse(resp.body.c_str());
+		                                               if (doc.HasParseError() || !doc.IsObject()) {
+			                                               return;
+		                                               }
+
+		                                               UserProfile profile;
+		                                               profile.userId = userId;
+		                                               profile.loaded = true;
+		                                               if (doc.HasMember("user") && doc["user"].IsObject()) {
+			                                               profile.bio = Utils::Json::getString(doc["user"], "bio");
+		                                               }
+		                                               if (doc.HasMember("user_profile") &&
+		                                                   doc["user_profile"].IsObject()) {
+			                                               const rapidjson::Value &up = doc["user_profile"];
+			                                               profile.pronouns = Utils::Json::getString(up, "pronouns");
+			                                               if (profile.bio.empty()) {
+				                                               profile.bio = Utils::Json::getString(up, "bio");
+			                                               }
+		                                               }
+
+		                                               std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		                                               profileCache[userId] = profile;
+	                                               },
+	                                               {{"Authorization", token}});
+}
+
 Message DiscordClient::parseSingleMessage(const std::string &json) {
 	rapidjson::Document doc;
 	std::string buffer = json;

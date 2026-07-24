@@ -164,6 +164,8 @@
     "poll.select_one": "Select one answer",
     "poll.vote": "Vote",
     "poll.votes": " votes",
+    "profile.bot": "BOT",
+    "profile.member_since": "Member since {0}",
     "notify.all": "All Messages",
     "notify.default": "Use Server Default",
     "notify.mentions": "Only @mentions",

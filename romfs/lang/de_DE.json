@@ -164,6 +164,8 @@
     "poll.select_one": "Eine Antwort wählen",
     "poll.vote": "Abstimmen",
     "poll.votes": " Stimmen",
+    "profile.bot": "BOT",
+    "profile.member_since": "Mitglied seit {0}",
     "notify.all": "Alle Nachrichten",
     "notify.default": "Serverstandard verwenden",
     "notify.mentions": "Nur @Erwähnungen",
