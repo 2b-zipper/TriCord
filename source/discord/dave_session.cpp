@@ -20,7 +20,10 @@ constexpr uint16_t DAVE_PROTOCOL_VERSION = 1;
 void daveLogSink(discord::dave::LoggingSeverity severity, const char *file, int line, const std::string &message) {
 	(void)file;
 	(void)line;
-	const char *level = (severity >= discord::dave::LS_ERROR) ? "ERR" : "inf";
+	if (severity < discord::dave::LS_WARNING) {
+		return;
+	}
+	const char *level = (severity >= discord::dave::LS_ERROR) ? "ERR" : "warn";
 	Logger::log("[libdave/%s] %.400s", level, message.c_str());
 }
 } // namespace

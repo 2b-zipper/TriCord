@@ -11,6 +11,7 @@ class EchoCanceller {
   public:
 	static constexpr int RATE = 16000;
 	static constexpr int CHUNK = 160; // AECM only accepts 80 or 160
+	static constexpr int MAX_DELAY_HINT_MS = 20;
 
 	bool start();
 	void stop();
@@ -20,7 +21,7 @@ class EchoCanceller {
 	bool isEnabled() const { return enabled; }
 
 	void bufferFarEnd(const int16_t *far, int count);
-	void setDelayMs(int ms) { delayMs = ms; }
+	void setDelayMs(int ms) { delayMs = ms < MAX_DELAY_HINT_MS ? ms : MAX_DELAY_HINT_MS; }
 	void process(int16_t *mic, int count);
 
   private:
