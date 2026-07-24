@@ -61,7 +61,7 @@
     "login.field.password_hint": "Toca para escribir tu contraseña",
     "login.generating": "Generando...",
     "login.loading.many_servers_warning": "If you are in many servers, it may crash (especially on Old 3DS).\nIf it crashes, delete sdmc:/3ds/TriCord/accounts\nand re-login with an account in fewer servers.",
-    "login.mfa.cancel": "Presiona \uE001 para cancelar",
+    "login.mfa.cancel": "Presiona  para cancelar",
     "login.mfa.desc": "Escribe el código de 6 dígitos de tu autenticador",
     "login.mfa.hint": "Toca para escribir el código",
     "login.mfa.required": "Se requiere un código MFA",
