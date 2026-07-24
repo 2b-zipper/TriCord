@@ -191,6 +191,20 @@ void SettingsScreen::onEnter() {
 	typing.onUpdate = [](int val) { Config::getInstance().setTypingIndicatorEnabled(val == 1); };
 	allItems.push_back(typing);
 
+	// VOICE
+	allItems.push_back({TR("settings.section.voice"), "", SettingItemType::SECTION_HEADER});
+
+	SettingItem echoCancel;
+	echoCancel.label = TR("settings.echo_cancellation");
+	echoCancel.description = TR("settings.desc.echo_cancellation");
+	echoCancel.type = SettingItemType::TOGGLE;
+	echoCancel.value = Config::getInstance().isEchoCancellationEnabled() ? 1 : 0;
+	echoCancel.min = 0;
+	echoCancel.max = 1;
+	echoCancel.valueFormatter = [](int val) { return (val == 1) ? TR("common.enabled") : TR("common.disabled"); };
+	echoCancel.onUpdate = [](int val) { Config::getInstance().setEchoCancellationEnabled(val == 1); };
+	allItems.push_back(echoCancel);
+
 	// DEVELOPER
 	SettingItem devSection;
 	devSection.label = "Developer Options";

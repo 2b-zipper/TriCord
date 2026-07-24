@@ -22,8 +22,9 @@
 
 Config::Config()
     : currentAccountIndex(-1), timezoneOffset(0), language("en_US"), themeType(0), typingIndicatorEnabled(true),
-      fileLoggingEnabled(false), disclaimerAccepted(false), sslVerificationDisabled(false), showAvatars(true),
-      showServerIcons(true), showHiddenChannels(false), customThemeEnabled(false), selectedThemeName("") {
+      echoCancellation(true), fileLoggingEnabled(false), disclaimerAccepted(false), sslVerificationDisabled(false),
+      showAvatars(true), showServerIcons(true), showHiddenChannels(false), customThemeEnabled(false),
+      selectedThemeName("") {
 	customTheme = getDarkPreset();
 	customTheme.name = "Custom Theme";
 }
@@ -216,6 +217,9 @@ void Config::loadSettings() {
 			if (doc.HasMember("typing_indicator") && doc["typing_indicator"].IsBool()) {
 				typingIndicatorEnabled = doc["typing_indicator"].GetBool();
 			}
+			if (doc.HasMember("echo_cancellation") && doc["echo_cancellation"].IsBool()) {
+				echoCancellation = doc["echo_cancellation"].GetBool();
+			}
 			if (doc.HasMember("file_logging") && doc["file_logging"].IsBool()) {
 				fileLoggingEnabled = doc["file_logging"].GetBool();
 			}
@@ -266,6 +270,8 @@ void Config::saveSettings() {
 	writer.String(language.c_str());
 	writer.Key("typing_indicator");
 	writer.Bool(typingIndicatorEnabled);
+	writer.Key("echo_cancellation");
+	writer.Bool(echoCancellation);
 	writer.Key("file_logging");
 	writer.Bool(fileLoggingEnabled);
 	writer.Key("disclaimer_accepted");
@@ -319,6 +325,11 @@ void Config::setThemeType(int type) {
 
 void Config::setTypingIndicatorEnabled(bool enabled) {
 	typingIndicatorEnabled = enabled;
+	saveSettings();
+}
+
+void Config::setEchoCancellationEnabled(bool enabled) {
+	echoCancellation = enabled;
 	saveSettings();
 }
 

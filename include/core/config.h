@@ -112,6 +112,8 @@ class Config {
 	void setThemeType(int type);
 	bool isTypingIndicatorEnabled() const { return typingIndicatorEnabled; }
 	void setTypingIndicatorEnabled(bool enabled);
+	bool isEchoCancellationEnabled() const { return echoCancellation; }
+	void setEchoCancellationEnabled(bool enabled);
 	bool isFileLoggingEnabled() const { return fileLoggingEnabled; }
 	void setFileLoggingEnabled(bool enabled);
 
@@ -142,6 +144,7 @@ class Config {
 	std::string language;
 	int themeType;
 	bool typingIndicatorEnabled;
+	bool echoCancellation;
 	bool fileLoggingEnabled;
 	bool disclaimerAccepted;
 	bool sslVerificationDisabled;

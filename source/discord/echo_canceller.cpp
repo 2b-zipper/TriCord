@@ -66,7 +66,7 @@ void EchoCanceller::setEnabled(bool on) {
 		Logger::log("[AEC] re-init failed");
 		stop();
 	}
-	Logger::log("[AEC] %s", on ? "enabled" : "bypassed (headphones)");
+	Logger::log("[AEC] %s", on ? "enabled" : "bypassed");
 }
 
 void EchoCanceller::bufferFarEnd(const int16_t *far, int count) {

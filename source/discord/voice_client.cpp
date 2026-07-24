@@ -1,4 +1,5 @@
 #include "discord/voice_client.h"
+#include "core/config.h"
 #include "discord/discord_client.h"
 #include "log.h"
 #include "utils/json_utils.h"
@@ -786,7 +787,7 @@ void VoiceClient::mediaThread() {
 
 		audio.pump();
 
-		echo.setEnabled(!osIsHeadsetConnected());
+		echo.setEnabled(Config::getInstance().isEchoCancellationEnabled() && !osIsHeadsetConnected());
 
 		pumpMicrophone(selfId);
 	}
