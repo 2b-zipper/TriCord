@@ -70,10 +70,6 @@ MessageScreen::~MessageScreen() {
 	Discord::DiscordClient::getInstance().setMessageDeleteCallback(nullptr);
 	Discord::DiscordClient::getInstance().setPollVoteCallback(nullptr);
 	Discord::DiscordClient::getInstance().setConnectionCallback(nullptr);
-	// Guarded so a screen that has already opened another channel keeps its id.
-	if (Discord::DiscordClient::getInstance().getSelectedChannelId() == channelId) {
-		Discord::DiscordClient::getInstance().setSelectedChannelId("");
-	}
 
 	embedHeightCache.clear();
 	revealedSpoilers.clear();
