@@ -66,6 +66,7 @@ class VoiceClient {
 	bool discoverExternalAddress();
 	void sendSelectProtocol();
 	void mediaThread();
+	void pumpMicrophone(const std::string &selfId);
 	static void mediaThreadEntry(void *arg);
 	void handleRtpPacket(uint8_t *packet, size_t len);
 	void sendAudioFrame(const uint8_t *opusData, size_t opusLen);

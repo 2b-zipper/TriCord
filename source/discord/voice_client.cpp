@@ -761,6 +761,8 @@ void VoiceClient::mediaThreadEntry(void *arg) { static_cast<VoiceClient *>(arg)-
 void VoiceClient::mediaThread() {
 	Logger::log("[Voice] Media thread started");
 
+	const std::string selfId = DiscordClient::getInstance().getCurrentUser().id;
+
 	while (!stopMedia) {
 		// The worker closes the socket on exit; FD_SET(-1) corrupts the fd_set.
 		int sock = udpSocket;
@@ -776,8 +778,8 @@ void VoiceClient::mediaThread() {
 
 		int ready = select(sock + 1, &readSet, nullptr, nullptr, &timeout);
 		if (ready > 0) {
-			int received = recv(sock, recvBuffer, sizeof(recvBuffer), 0);
-			if (received > 0) {
+			int received;
+			while ((received = recv(sock, recvBuffer, sizeof(recvBuffer), MSG_DONTWAIT)) > 0) {
 				handleRtpPacket(recvBuffer, (size_t)received);
 			}
 		}
@@ -786,11 +788,38 @@ void VoiceClient::mediaThread() {
 
 		echo.setEnabled(!osIsHeadsetConnected());
 
-		uint8_t frame[512];
-		int encoded = capture.poll(frame, sizeof(frame));
+		pumpMicrophone(selfId);
+	}
 
-		const bool daveReady = daveVersion == 0 || dave.hasGroup();
-		if (encoded > 0 && !daveReady && !daveWaitLogged) {
+	Logger::log("[Voice] Media thread stopped (decoded=%lu failures=%lu sent=%lu)", (unsigned long)packetsDecoded,
+	            (unsigned long)decryptFailures, (unsigned long)packetsSent);
+}
+
+void VoiceClient::pumpMicrophone(const std::string &selfId) {
+	const bool daveReady = daveVersion == 0 || dave.hasGroup();
+
+	auto setTransmitting = [&](bool active) {
+		if (active) {
+			markSpeaking(selfId);
+		}
+		if (active == speakingSent) {
+			return;
+		}
+		// Documented stop signal: five silence frames tell the far side the user
+		// stopped and stop Opus interpolating across the gap.
+		if (!active) {
+			for (int i = 0; i < OPUS_SILENCE_REPEATS; i++) {
+				sendAudioFrame(OPUS_SILENCE_FRAME, sizeof(OPUS_SILENCE_FRAME));
+			}
+		}
+		sendSpeaking(active);
+		speakingSent = active;
+	};
+
+	uint8_t frame[512];
+	int encoded;
+	while ((encoded = capture.poll(frame, sizeof(frame))) > 0) {
+		if (!daveReady && !daveWaitLogged) {
 			Logger::log("[Voice] Holding audio until the DAVE group is established");
 			daveWaitLogged = true;
 		}
@@ -800,32 +829,17 @@ void VoiceClient::mediaThread() {
 		}
 		const bool active = daveReady && !capture.isMuted() && osGetTime() < transmitUntil;
 
+		setTransmitting(active);
 		if (active) {
-			markSpeaking(DiscordClient::getInstance().getCurrentUser().id);
-		}
-		if (active != speakingSent) {
-			// Documented stop signal: five silence frames tell the far side the
-			// user stopped and stop Opus interpolating across the gap.
-			if (!active) {
-				for (int i = 0; i < OPUS_SILENCE_REPEATS; i++) {
-					sendAudioFrame(OPUS_SILENCE_FRAME, sizeof(OPUS_SILENCE_FRAME));
-				}
-			}
-			sendSpeaking(active);
-			speakingSent = active;
-		}
-
-		if (encoded > 0) {
-			if (active) {
-				sendAudioFrame(frame, (size_t)encoded);
-			} else {
-				sendTimestamp += OPUS_FRAME_TICKS;
-			}
+			sendAudioFrame(frame, (size_t)encoded);
+		} else {
+			sendTimestamp += OPUS_FRAME_TICKS;
 		}
 	}
 
-	Logger::log("[Voice] Media thread stopped (decoded=%lu failures=%lu sent=%lu)", (unsigned long)packetsDecoded,
-	            (unsigned long)decryptFailures, (unsigned long)packetsSent);
+	if (speakingSent && (capture.isMuted() || osGetTime() >= transmitUntil)) {
+		setTransmitting(false);
+	}
 }
 
 std::set<std::string> VoiceClient::recognizedUsers() const {
