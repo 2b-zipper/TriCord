@@ -395,6 +395,10 @@ void MessageScreen::update() {
 			return;
 		}
 
+		if (wasAtBottom && !isLoading && !isForumView && !messages.empty()) {
+			Discord::DiscordClient::getInstance().markChannelRead(channelId, messages.back().id);
+		}
+
 		Discord::DiscordClient::getInstance().setMessageCallback(nullptr);
 		Discord::DiscordClient::getInstance().setMessageDeleteCallback(nullptr);
 		Discord::DiscordClient::getInstance().setMessageReactionAddCallback(nullptr);
@@ -712,29 +716,6 @@ void MessageScreen::update() {
 				showMessageOptions();
 			}
 		}
-
-		if (kDown & KEY_B) {
-			if (wasAtBottom && !isLoading && !isForumView && !messages.empty()) {
-				Discord::DiscordClient::getInstance().markChannelRead(channelId, messages.back().id);
-			}
-			Discord::DiscordClient::getInstance().setMessageCallback(nullptr);
-			Discord::DiscordClient::getInstance().setMessageUpdateCallback(nullptr);
-			Discord::DiscordClient::getInstance().setMessageDeleteCallback(nullptr);
-			auto &client = Discord::DiscordClient::getInstance();
-			Discord::Channel ch = client.getChannel(channelId);
-			if (!ch.parent_id.empty()) {
-				Discord::Channel parent = client.getChannel(ch.parent_id);
-				client.setSelectedChannelId(ch.parent_id);
-				if (parent.type == 15) {
-					ScreenManager::getInstance().setScreen(ScreenType::FORUM_CHANNEL);
-				} else {
-					ScreenManager::getInstance().setScreen(ScreenType::MESSAGES);
-				}
-				return;
-			}
-			ScreenManager::getInstance().setScreen(ScreenType::GUILD_LIST);
-			return;
-		}
 	}
 
 	if (showNewMessageIndicator) {
@@ -754,7 +735,7 @@ void MessageScreen::update() {
 		const float SCREEN_HEIGHT = 240.0f;
 		float maxScroll = std::max(0.0f, totalContentHeight - SCREEN_HEIGHT);
 		bool atBottom = (targetScrollY >= maxScroll - 5.0f);
-		if (atBottom && !wasAtBottom) {
+		if (atBottom) {
 			Discord::DiscordClient::getInstance().markChannelRead(channelId, messages.back().id);
 		}
 		wasAtBottom = atBottom;

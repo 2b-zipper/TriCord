@@ -1081,11 +1081,6 @@ void DiscordClient::handleMessageCreate(const rapidjson::Value &d) {
 		return;
 	}
 
-	// MessageScreen acknowledges the channel the user is looking at.
-	if (msg.channelId == selectedChannelId) {
-		return;
-	}
-
 	std::string guildId = getGuildIdFromChannel(msg.channelId);
 	bool isPrivate = guildId.empty() || guildId == "DM";
 
