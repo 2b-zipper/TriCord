@@ -4,7 +4,6 @@
 #include <curl/curl.h>
 #include <map>
 #include <string>
-#include <vector>
 
 namespace Network {
 
@@ -21,7 +20,6 @@ class HttpClient {
 	HttpClient();
 	~HttpClient();
 
-	// Disable copy
 	HttpClient(const HttpClient &) = delete;
 	HttpClient &operator=(const HttpClient &) = delete;
 

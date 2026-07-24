@@ -1,7 +1,6 @@
 #include "ui/theme_manager_screen.h"
 #include "core/config.h"
 #include "core/i18n.h"
-#include "log.h"
 #include "network/http_client.h"
 #include "utils/file_utils.h"
 #include "utils/message_utils.h"

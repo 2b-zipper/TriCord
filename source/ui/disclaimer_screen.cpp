@@ -1,8 +1,6 @@
 #include "ui/disclaimer_screen.h"
 #include "core/config.h"
-#include "core/i18n.h"
 #include "discord/discord_client.h"
-#include "ui/image_manager.h"
 #include "ui/screen_manager.h"
 #include "utils/message_utils.h"
 #include <3ds.h>

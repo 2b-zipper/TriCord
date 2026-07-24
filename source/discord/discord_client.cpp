@@ -1,7 +1,7 @@
 #include "discord/discord_client.h"
 #include "core/config.h"
-#include "core/i18n.h"
 #include "discord/avatar_cache.h"
+#include "core/i18n.h"
 #include "log.h"
 #include "network/http_client.h"
 #include "network/network_manager.h"
@@ -110,7 +110,7 @@ void DiscordClient::shutdown() {
 bool DiscordClient::connect(const std::string &token) {
 	std::lock_guard<std::recursive_mutex> lock(clientMutex);
 	if (state != ConnectionState::DISCONNECTED && state != ConnectionState::DISCONNECTED_ERROR) {
-		Logger::log("Connect called but state is %d", (int)state);
+		Logger::log("Connect called but state is %d", (int)state.load());
 		return false;
 	}
 
@@ -153,21 +153,21 @@ void DiscordClient::logout() {
 }
 
 void DiscordClient::disconnect() {
-	std::lock_guard<std::recursive_mutex> lock(clientMutex);
-	if (state == ConnectionState::DISCONNECTED) {
+	if (state.exchange(ConnectionState::DISCONNECTED) == ConnectionState::DISCONNECTED) {
 		return;
 	}
 
 	Logger::log("DiscordClient::disconnect called");
-
-	setState(ConnectionState::DISCONNECTED, "Disconnected");
+	setStatus("Disconnected");
 
 	ws.disconnect();
 
+	// Joined without clientMutex: the network thread takes it while parsing.
 	if (networkThread.joinable()) {
 		networkThread.join();
 	}
 
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
 	isConnecting = false;
 
 	{
@@ -342,6 +342,48 @@ void DiscordClient::triggerTypingIndicator(const std::string &channelId) {
 	                                               [](const Network::HttpResponse &) {}, {{"Authorization", token}});
 }
 
+void DiscordClient::ringCall(const std::string &channelId) {
+	if (channelId.empty()) {
+		return;
+	}
+	std::string url = "https://discord.com/api/v10/channels/" + channelId + "/call/ring";
+	Network::NetworkManager::getInstance().enqueue(
+	    url, "POST", "{}", Network::RequestPriority::INTERACTIVE,
+	    [](const Network::HttpResponse &resp) { Logger::log("[Call] ring -> %d", resp.statusCode); },
+	    {{"Authorization", token}, {"Content-Type", "application/json"}});
+}
+
+void DiscordClient::stopRinging(const std::string &channelId) {
+	if (channelId.empty()) {
+		return;
+	}
+	{
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		if (incomingCallChannelId == channelId) {
+			incomingCallChannelId.clear();
+		}
+	}
+	std::string url = "https://discord.com/api/v10/channels/" + channelId + "/call/stop-ringing";
+	Network::NetworkManager::getInstance().enqueue(
+	    url, "POST", "{}", Network::RequestPriority::INTERACTIVE,
+	    [](const Network::HttpResponse &resp) { Logger::log("[Call] stop-ringing -> %d", resp.statusCode); },
+	    {{"Authorization", token}, {"Content-Type", "application/json"}});
+}
+
+std::string DiscordClient::getIncomingCallChannel() {
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	return incomingCallChannelId;
+}
+
+std::optional<int> DiscordClient::getCallRingingCount(const std::string &channelId) {
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	auto it = callRinging.find(channelId);
+	if (it == callRinging.end()) {
+		return std::nullopt;
+	}
+	return it->second;
+}
+
 std::vector<TypingUser> DiscordClient::getTypingUsers(const std::string &channelId) {
 	std::lock_guard<std::recursive_mutex> lock(clientMutex);
 	if (typingUsers.find(channelId) != typingUsers.end()) {
@@ -369,6 +411,32 @@ void DiscordClient::addReaction(const std::string &channelId, const std::string 
 	                                               {{"Authorization", getInstance().token}});
 }
 
+void DiscordClient::votePoll(const std::string &channelId, const std::string &messageId,
+                             const std::vector<int> &answerIds) {
+	if (channelId.empty() || messageId.empty()) {
+		return;
+	}
+
+	std::string body = "{\"answer_ids\":[";
+	for (size_t i = 0; i < answerIds.size(); i++) {
+		if (i > 0) {
+			body += ",";
+		}
+		body += std::to_string(answerIds[i]);
+	}
+	body += "]}";
+
+	std::string url = "https://discord.com/api/v10/channels/" + channelId + "/polls/" + messageId + "/answers/@me";
+	Network::NetworkManager::getInstance().enqueue(
+	    url, "PUT", body, Network::RequestPriority::INTERACTIVE,
+	    [](const Network::HttpResponse &resp) {
+		    if (!resp.success) {
+			    Logger::log("[Discord] Failed to vote on poll: %ld %s", resp.statusCode, resp.body.c_str());
+		    }
+	    },
+	    {{"Authorization", getInstance().token}, {"Content-Type", "application/json"}});
+}
+
 void DiscordClient::removeReaction(const std::string &channelId, const std::string &messageId,
                                    const std::string &emoji) {
 	if (channelId.empty() || messageId.empty() || emoji.empty()) {
@@ -390,10 +458,7 @@ void DiscordClient::removeReaction(const std::string &channelId, const std::stri
 }
 
 void DiscordClient::setState(ConnectionState newState, const std::string &message) {
-	{
-		std::lock_guard<std::recursive_mutex> lock(clientMutex);
-		state = newState;
-	}
+	state = newState;
 	setStatus(message);
 	Logger::log("[Gateway] State: %d, Msg: %s", (int)newState, message.c_str());
 }
@@ -498,6 +563,82 @@ void DiscordClient::handleDispatch(const rapidjson::Document &doc) {
 	}
 	const rapidjson::Value &d = doc["d"];
 
+	if (t == "VOICE_STATE_UPDATE") {
+		applyVoiceState(d, Utils::Json::getString(d, "guild_id"));
+		guildDataDirty = true;
+		if (Utils::Json::getString(d, "user_id") == currentUser.id) {
+			std::string voiceSession = Utils::Json::getString(d, "session_id");
+			bool serverMute = Utils::Json::getBool(d, "mute");
+			bool serverDeaf = Utils::Json::getBool(d, "deaf");
+			Logger::log("[Voice] VOICE_STATE_UPDATE session=%s mute=%d deaf=%d", voiceSession.c_str(), serverMute,
+			            serverDeaf);
+			if (voiceStateCallback) {
+				voiceStateCallback(voiceSession, serverMute, serverDeaf);
+			}
+		}
+		return;
+	}
+
+	if (t == "VOICE_SERVER_UPDATE") {
+		std::string token = Utils::Json::getString(d, "token");
+		std::string endpoint = Utils::Json::getString(d, "endpoint");
+		std::string serverId = Utils::Json::getString(d, "guild_id");
+		if (serverId.empty()) {
+			serverId = Utils::Json::getString(d, "channel_id");
+		}
+		Logger::log("[Voice] VOICE_SERVER_UPDATE endpoint=%s server=%s", endpoint.c_str(), serverId.c_str());
+		if (voiceServerCallback) {
+			voiceServerCallback(token, endpoint, serverId);
+		}
+		return;
+	}
+
+	if (t == "GUILD_MEMBERS_CHUNK") {
+		handleGuildMembersChunk(d);
+		return;
+	}
+
+	if (t == "CALL_CREATE" || t == "CALL_UPDATE") {
+		std::string channelId = Utils::Json::getString(d, "channel_id");
+		std::string self = getCurrentUser().id;
+		bool ringingUs = false;
+		int ringingCount = 0;
+		if (d.HasMember("ringing") && d["ringing"].IsArray()) {
+			for (const auto &r : d["ringing"].GetArray()) {
+				if (!r.IsString()) {
+					continue;
+				}
+				ringingCount++;
+				if (self == r.GetString()) {
+					ringingUs = true;
+				}
+			}
+		}
+
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		callRinging[channelId] = ringingCount;
+		if (ringingUs) {
+			if (incomingCallChannelId != channelId) {
+				Logger::log("[Call] Incoming call in %s", channelId.c_str());
+			}
+			incomingCallChannelId = channelId;
+		} else if (incomingCallChannelId == channelId) {
+			incomingCallChannelId.clear();
+		}
+		return;
+	}
+
+	if (t == "CALL_DELETE") {
+		std::string channelId = Utils::Json::getString(d, "channel_id");
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		callRinging[channelId] = 0;
+		if (incomingCallChannelId == channelId) {
+			Logger::log("[Call] Call in %s ended", channelId.c_str());
+			incomingCallChannelId.clear();
+		}
+		return;
+	}
+
 	if (t == "READY") {
 		handleReady(d);
 	} else if (t == "GUILD_CREATE") {
@@ -518,19 +659,28 @@ void DiscordClient::handleDispatch(const rapidjson::Document &doc) {
 		handleReactionAdd(d);
 	} else if (t == "MESSAGE_REACTION_REMOVE") {
 		handleReactionRemove(d);
+	} else if (t == "MESSAGE_POLL_VOTE_ADD") {
+		handlePollVote(d, true);
+	} else if (t == "MESSAGE_POLL_VOTE_REMOVE") {
+		handlePollVote(d, false);
 	} else if (t == "PRESENCE_UPDATE") {
 		handlePresenceUpdate(d);
 	} else if (t == "USER_SETTINGS_UPDATE") {
 		handleUserSettingsUpdate(d);
+	} else if (t == "MESSAGE_ACK") {
+		handleMessageAck(d);
+	} else if (t == "USER_GUILD_SETTINGS_UPDATE") {
+		handleUserGuildSettingsUpdate(d);
 	} else if (t == "SESSIONS_REPLACE") {
 		handleSessionsReplace(d);
 	} else if (t == "THREAD_CREATE" || t == "THREAD_UPDATE") {
 		handleChannelCreateUpdate(d);
 	} else if (t == "THREAD_LIST_SYNC") {
 		if (d.HasMember("threads") && d["threads"].IsArray()) {
+			std::string syncGuildId = Utils::Json::getString(d, "guild_id");
 			const rapidjson::Value &threads = d["threads"];
 			for (rapidjson::SizeType i = 0; i < threads.Size(); i++) {
-				handleChannelCreateUpdate(threads[i]);
+				handleChannelCreateUpdate(threads[i], syncGuildId);
 			}
 		}
 	}
@@ -553,12 +703,7 @@ void DiscordClient::handleReady(const rapidjson::Value &d) {
 	}
 
 	if (d.HasMember("user") && d["user"].IsObject()) {
-		const rapidjson::Value &user = d["user"];
-		newCurrentUser.id = Utils::Json::getString(user, "id");
-		newCurrentUser.username = Utils::Json::getString(user, "username");
-		newCurrentUser.global_name = Utils::Json::getString(user, "global_name");
-		newCurrentUser.avatar = Utils::Json::getString(user, "avatar");
-		newCurrentUser.discriminator = Utils::Json::getString(user, "discriminator");
+		newCurrentUser = parseUserObject(d["user"]);
 	}
 
 	if (d.HasMember("sessions") && d["sessions"].IsArray()) {
@@ -664,6 +809,45 @@ void DiscordClient::handleReady(const rapidjson::Value &d) {
 		}
 	}
 
+	std::map<std::string, GuildNotificationSettings> newNotificationSettings;
+	if (d.HasMember("user_guild_settings")) {
+		const rapidjson::Value &ugs = d["user_guild_settings"];
+		const rapidjson::Value *entries = nullptr;
+		if (ugs.IsArray()) {
+			entries = &ugs;
+		} else if (ugs.IsObject() && ugs.HasMember("entries") && ugs["entries"].IsArray()) {
+			entries = &ugs["entries"];
+		}
+		if (entries) {
+			parseUserGuildSettings(*entries, newNotificationSettings);
+			Logger::log("[Gateway] Parsed %zu guild notification settings", newNotificationSettings.size());
+		}
+	}
+
+	std::map<std::string, ReadState> newReadStates;
+	if (d.HasMember("read_state")) {
+		const rapidjson::Value &rsValue = d["read_state"];
+		const rapidjson::Value *entries = nullptr;
+		if (rsValue.IsArray()) {
+			entries = &rsValue;
+		} else if (rsValue.IsObject() && rsValue.HasMember("entries") && rsValue["entries"].IsArray()) {
+			entries = &rsValue["entries"];
+		}
+		if (entries) {
+			for (rapidjson::SizeType i = 0; i < entries->Size(); i++) {
+				const rapidjson::Value &entry = (*entries)[i];
+				ReadState rs;
+				rs.channelId = Utils::Json::getString(entry, "id");
+				rs.lastReadMessageId = Utils::Json::getString(entry, "last_message_id");
+				rs.mentionCount = Utils::Json::getInt(entry, "mention_count");
+				if (!rs.channelId.empty()) {
+					newReadStates[rs.channelId] = rs;
+				}
+			}
+		}
+		Logger::log("[Gateway] Parsed %zu read states", newReadStates.size());
+	}
+
 	setStatus("Finalizing login...");
 	Logger::log("[Gateway] Locking clientMutex to finalize READY...");
 	{
@@ -673,6 +857,24 @@ void DiscordClient::handleReady(const rapidjson::Value &d) {
 		guilds = std::move(newGuilds);
 		privateChannels = std::move(newPrivateChannels);
 		folders = std::move(newGuildFolders);
+		readStates = std::move(newReadStates);
+		notificationSettings = std::move(newNotificationSettings);
+
+		voiceParticipants.clear();
+		voiceChannelByUser.clear();
+		if (d.HasMember("guilds") && d["guilds"].IsArray()) {
+			for (const auto &gObj : d["guilds"].GetArray()) {
+				if (!gObj.IsObject() || !gObj.HasMember("voice_states") || !gObj["voice_states"].IsArray()) {
+					continue;
+				}
+				const std::string gid = Utils::Json::getString(gObj, "id");
+				for (const auto &vs : gObj["voice_states"].GetArray()) {
+					if (vs.IsObject()) {
+						applyVoiceState(vs, gid);
+					}
+				}
+			}
+		}
 
 		std::string accName = currentUser.username;
 		Config::getInstance().updateCurrentAccountName(accName);
@@ -686,6 +888,7 @@ void DiscordClient::handleGuildCreate(const rapidjson::Value &d) {
 
 	Guild guild;
 	parseGuildObject(d, guild, currentUser.id);
+	const std::string guildId = guild.id;
 
 	bool found = false;
 	for (auto &g : guilds) {
@@ -712,15 +915,26 @@ void DiscordClient::handleGuildCreate(const rapidjson::Value &d) {
 		guilds.push_back(std::move(guild));
 		Logger::log("Added new guild %s", guilds.back().name.c_str());
 	}
+
+	if (d.HasMember("voice_states") && d["voice_states"].IsArray()) {
+		const rapidjson::Value &states = d["voice_states"];
+		for (rapidjson::SizeType i = 0; i < states.Size(); i++) {
+			if (states[i].IsObject()) {
+				applyVoiceState(states[i], guildId);
+			}
+		}
+	}
+
+	guildDataDirty.store(true);
 }
 
-void DiscordClient::handleChannelCreateUpdate(const rapidjson::Value &d) {
+void DiscordClient::handleChannelCreateUpdate(const rapidjson::Value &d, const std::string &guildIdOverride) {
 	std::lock_guard<std::recursive_mutex> lock(clientMutex);
 
 	Channel channel;
 	parseChannelObject(d, channel);
 
-	if (channel.type == 1 || channel.type == 3) { // DM or Group DM
+	if (channel.type == 1 || channel.type == 3) {
 		bool found = false;
 		for (auto &pc : privateChannels) {
 			if (pc.id == channel.id) {
@@ -732,9 +946,11 @@ void DiscordClient::handleChannelCreateUpdate(const rapidjson::Value &d) {
 		if (!found) {
 			privateChannels.insert(privateChannels.begin(), channel);
 		}
+		privateChannelsDirty.store(true);
 		Logger::log("Updated DM channel %s (%s)", channel.name.c_str(), channel.id.c_str());
-	} else if (d.HasMember("guild_id")) {
-		std::string guildId = Utils::Json::getString(d, "guild_id");
+	} else if (d.HasMember("guild_id") || !guildIdOverride.empty()) {
+		// Threads in a Thread List Sync carry the guild only on the envelope.
+		std::string guildId = guildIdOverride.empty() ? Utils::Json::getString(d, "guild_id") : guildIdOverride;
 
 		for (auto &guild : guilds) {
 			if (guild.id == guildId) {
@@ -750,10 +966,7 @@ void DiscordClient::handleChannelCreateUpdate(const rapidjson::Value &d) {
 					guild.channels.push_back(channel);
 				}
 
-				// Recalculate viewable flag
 				uint64_t finalPerms = computeChannelPermissions(guild, channel, currentUser.id, guild.myRoles);
-
-				// Update the channel in the list again with the flag
 				for (auto &c : guild.channels) {
 					if (c.id == channel.id) {
 						c.viewable = (finalPerms & Permissions::VIEW_CHANNEL) != 0;
@@ -851,6 +1064,103 @@ void DiscordClient::handleMessageCreate(const rapidjson::Value &d) {
 			}
 		}
 	}
+
+	if (!msg.channelId.empty() && !msg.id.empty()) {
+		std::string gId = getGuildIdFromChannel(msg.channelId);
+		bool updatedChannel = false;
+		if (!gId.empty() && gId != "DM") {
+			for (auto &guild : guilds) {
+				if (guild.id != gId) {
+					continue;
+				}
+				for (auto &ch : guild.channels) {
+					if (ch.id == msg.channelId) {
+						ch.last_message_id = msg.id;
+						updatedChannel = true;
+						break;
+					}
+				}
+				break;
+			}
+		}
+		if (!updatedChannel) {
+			for (auto it = privateChannels.begin(); it != privateChannels.end(); ++it) {
+				if (it->id == msg.channelId) {
+					it->last_message_id = msg.id;
+					Channel ch = *it;
+					privateChannels.erase(it);
+					privateChannels.insert(privateChannels.begin(), ch);
+					privateChannelsDirty.store(true);
+					break;
+				}
+			}
+		}
+	}
+
+	if (msg.channelId.empty() || msg.id.empty()) {
+		return;
+	}
+
+	if (msg.author.id == currentUser.id) {
+		auto &rs = readStates[msg.channelId];
+		rs.channelId = msg.channelId;
+		rs.lastReadMessageId = msg.id;
+		rs.mentionCount = 0;
+		readStateDirtyChannelId = msg.channelId;
+		readStateDirty.store(true);
+		return;
+	}
+
+	std::string guildId = getGuildIdFromChannel(msg.channelId);
+	bool isPrivate = guildId.empty() || guildId == "DM";
+
+	bool mentioned = false;
+	for (const auto &user : msg.mentions) {
+		if (user.id == currentUser.id) {
+			mentioned = true;
+			break;
+		}
+	}
+
+	if (!mentioned && !isPrivate) {
+		const GuildNotificationSettings *gs = nullptr;
+		auto gsIt = notificationSettings.find(guildId);
+		if (gsIt != notificationSettings.end()) {
+			gs = &gsIt->second;
+		}
+
+		if (!(gs && gs->suppressEveryone) && Utils::Json::getBool(d, "mention_everyone")) {
+			mentioned = true;
+		}
+		if (!mentioned && !(gs && gs->suppressRoles) && d.HasMember("mention_roles") && d["mention_roles"].IsArray()) {
+			for (const auto &guild : guilds) {
+				if (guild.id != guildId) {
+					continue;
+				}
+				const rapidjson::Value &roles = d["mention_roles"];
+				for (rapidjson::SizeType i = 0; i < roles.Size() && !mentioned; i++) {
+					if (!roles[i].IsString()) {
+						continue;
+					}
+					for (const auto &myRole : guild.myRoles) {
+						if (myRole == roles[i].GetString()) {
+							mentioned = true;
+							break;
+						}
+					}
+				}
+				break;
+			}
+		}
+	}
+
+	// Any message in an unmuted private channel counts towards the badge.
+	if (mentioned || isPrivate) {
+		auto &rs = readStates[msg.channelId];
+		rs.channelId = msg.channelId;
+		rs.mentionCount++;
+	}
+	readStateDirty.store(true);
 }
 
 void DiscordClient::handleMessageUpdate(const rapidjson::Value &d) {
@@ -879,10 +1189,7 @@ void DiscordClient::handleReactionAdd(const rapidjson::Value &d) {
 
 	Emoji emoji;
 	if (d.HasMember("emoji") && d["emoji"].IsObject()) {
-		const rapidjson::Value &e = d["emoji"];
-		emoji.id = Utils::Json::getString(e, "id");
-		emoji.name = Utils::Json::getString(e, "name");
-		emoji.animated = e.HasMember("animated") && e["animated"].IsBool() && e["animated"].GetBool();
+		emoji = parseEmojiObject(d["emoji"]);
 	}
 
 	if (messageReactionAddCallback) {
@@ -898,15 +1205,21 @@ void DiscordClient::handleReactionRemove(const rapidjson::Value &d) {
 
 	Emoji emoji;
 	if (d.HasMember("emoji") && d["emoji"].IsObject()) {
-		const rapidjson::Value &e = d["emoji"];
-		emoji.id = Utils::Json::getString(e, "id");
-		emoji.name = Utils::Json::getString(e, "name");
-		emoji.animated = e.HasMember("animated") && e["animated"].IsBool() && e["animated"].GetBool();
+		emoji = parseEmojiObject(d["emoji"]);
 	}
 
 	if (messageReactionRemoveCallback) {
 		messageReactionRemoveCallback(channelId, messageId, userId, emoji);
 	}
+}
+
+void DiscordClient::handlePollVote(const rapidjson::Value &d, bool added) {
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	if (!pollVoteCallback) {
+		return;
+	}
+	pollVoteCallback(Utils::Json::getString(d, "channel_id"), Utils::Json::getString(d, "message_id"),
+	                 Utils::Json::getString(d, "user_id"), Utils::Json::getInt(d, "answer_id"), added);
 }
 
 void DiscordClient::handlePresenceUpdate(const rapidjson::Value &d) {
@@ -920,6 +1233,97 @@ void DiscordClient::handlePresenceUpdate(const rapidjson::Value &d) {
 		std::string statusStr = Utils::Json::getString(d, "status");
 		currentUser.status = stringToStatus(statusStr);
 		Logger::log("[Gateway] Own presence updated via PRESENCE_UPDATE to %s", statusStr.c_str());
+	}
+}
+
+static std::string parseMuteEndTime(const rapidjson::Value &obj) {
+	if (!obj.HasMember("mute_config") || !obj["mute_config"].IsObject()) {
+		return "";
+	}
+	const rapidjson::Value &mc = obj["mute_config"];
+	if (!mc.HasMember("end_time") || !mc["end_time"].IsString()) {
+		return "";
+	}
+	return mc["end_time"].GetString();
+}
+
+static void parseChannelOverride(const rapidjson::Value &ov, ChannelNotificationOverride &co) {
+	co.channelId = Utils::Json::getString(ov, "channel_id");
+	co.muted = Utils::Json::getBool(ov, "muted");
+	co.muteEndTime = parseMuteEndTime(ov);
+	co.messageNotifications = Utils::Json::getInt(ov, "message_notifications", 3);
+	co.flags = Utils::Json::getInt(ov, "flags", 0);
+}
+
+static void parseChannelOverrides(const rapidjson::Value &obj,
+                                  std::map<std::string, ChannelNotificationOverride> &out) {
+	if (!obj.HasMember("channel_overrides") || !obj["channel_overrides"].IsArray()) {
+		return;
+	}
+	const rapidjson::Value &overrides = obj["channel_overrides"];
+	for (rapidjson::SizeType j = 0; j < overrides.Size(); j++) {
+		ChannelNotificationOverride co;
+		parseChannelOverride(overrides[j], co);
+		if (!co.channelId.empty()) {
+			out[co.channelId] = co;
+		}
+	}
+}
+
+void DiscordClient::parseUserGuildSettings(const rapidjson::Value &arr,
+                                           std::map<std::string, GuildNotificationSettings> &out) {
+	if (!arr.IsArray()) {
+		return;
+	}
+	for (rapidjson::SizeType i = 0; i < arr.Size(); i++) {
+		const rapidjson::Value &entry = arr[i];
+		GuildNotificationSettings gs;
+		gs.guildId = Utils::Json::getString(entry, "guild_id");
+		gs.muted = Utils::Json::getBool(entry, "muted");
+		gs.muteEndTime = parseMuteEndTime(entry);
+		gs.messageNotifications = Utils::Json::getInt(entry, "message_notifications", 3);
+		gs.flags = Utils::Json::getInt(entry, "flags", 0);
+		gs.suppressEveryone = Utils::Json::getBool(entry, "suppress_everyone");
+		gs.suppressRoles = Utils::Json::getBool(entry, "suppress_roles");
+
+		parseChannelOverrides(entry, gs.channelOverrides);
+		if (!gs.guildId.empty()) {
+			out[gs.guildId] = std::move(gs);
+		}
+	}
+}
+
+void DiscordClient::handleUserGuildSettingsUpdate(const rapidjson::Value &d) {
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	GuildNotificationSettings gs;
+	gs.guildId = Utils::Json::getString(d, "guild_id");
+	gs.muted = Utils::Json::getBool(d, "muted");
+	gs.muteEndTime = parseMuteEndTime(d);
+	gs.messageNotifications = Utils::Json::getInt(d, "message_notifications", 3);
+	gs.flags = Utils::Json::getInt(d, "flags", 0);
+	gs.suppressEveryone = Utils::Json::getBool(d, "suppress_everyone");
+	gs.suppressRoles = Utils::Json::getBool(d, "suppress_roles");
+
+	parseChannelOverrides(d, gs.channelOverrides);
+	if (!gs.guildId.empty()) {
+		auto it = notificationSettings.find(gs.guildId);
+		if (gs.muted && gs.muteEndTime.empty() && it != notificationSettings.end() && it->second.muted &&
+		    !it->second.muteEndTime.empty()) {
+			gs.muteEndTime = it->second.muteEndTime;
+		}
+		if (it != notificationSettings.end()) {
+			for (auto &[chId, co] : gs.channelOverrides) {
+				if (co.muted && co.muteEndTime.empty()) {
+					auto coIt = it->second.channelOverrides.find(chId);
+					if (coIt != it->second.channelOverrides.end() && coIt->second.muted &&
+					    !coIt->second.muteEndTime.empty()) {
+						co.muteEndTime = coIt->second.muteEndTime;
+					}
+				}
+			}
+		}
+		Logger::log("[Gateway] Updated notification settings for guild %s", gs.guildId.c_str());
+		notificationSettings[gs.guildId] = std::move(gs);
 	}
 }
 
@@ -954,6 +1358,304 @@ void DiscordClient::handleResumed() {
 	}
 }
 
+void DiscordClient::handleMessageAck(const rapidjson::Value &d) {
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	std::string channelId = Utils::Json::getString(d, "channel_id");
+	std::string messageId = Utils::Json::getString(d, "message_id");
+	if (channelId.empty()) {
+		return;
+	}
+	auto &rs = readStates[channelId];
+	rs.channelId = channelId;
+	if (!messageId.empty()) {
+		// A manual ack may move the cursor backwards ("mark as unread").
+		bool manual = Utils::Json::getBool(d, "manual");
+		if (manual || UI::MessageUtils::isNewerSnowflake(messageId, rs.lastReadMessageId)) {
+			rs.lastReadMessageId = messageId;
+		}
+	}
+	int mentionCount = Utils::Json::getInt(d, "mention_count", -1);
+	if (mentionCount >= 0) {
+		rs.mentionCount = mentionCount;
+	} else {
+		rs.mentionCount = 0;
+	}
+	readStateDirtyChannelId = channelId;
+	readStateDirty.store(true);
+}
+
+void DiscordClient::markChannelRead(const std::string &channelId, const std::string &messageId) {
+	if (channelId.empty() || messageId.empty() || token.empty()) {
+		return;
+	}
+	std::string storedToken;
+	int lastViewed = 0;
+	int flags = 0;
+	{
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		auto &rs = readStates[channelId];
+		rs.channelId = channelId;
+
+		if (!UI::MessageUtils::isNewerSnowflake(messageId, rs.lastReadMessageId)) {
+			return;
+		}
+		rs.lastReadMessageId = messageId;
+		rs.mentionCount = 0;
+		storedToken = rs.ackToken;
+		readStateDirtyChannelId = channelId;
+		readStateDirty.store(true);
+
+		// last_viewed: days since 2015-01-01 (Discord epoch)
+		lastViewed = static_cast<int>((time(nullptr) - 1420070400LL) / 86400);
+
+		// Read state flags: 1=GUILD_CHANNEL, 2=THREAD (types 10/11/12)
+		auto gIt = channelToGuildCache.find(channelId);
+		if (gIt != channelToGuildCache.end() && !gIt->second.empty()) {
+			flags |= 1;
+			for (const auto &guild : guilds) {
+				if (guild.id != gIt->second) {
+					continue;
+				}
+				for (const auto &ch : guild.channels) {
+					if (ch.id != channelId) {
+						continue;
+					}
+					if (ch.type == 10 || ch.type == 11 || ch.type == 12) {
+						flags |= 2;
+					}
+					break;
+				}
+				break;
+			}
+		}
+	}
+
+	std::string tokenJson = storedToken.empty() ? "null" : "\"" + storedToken + "\"";
+	std::string body = "{\"token\":" + tokenJson + ",\"last_viewed\":" + std::to_string(lastViewed) +
+	                   ",\"flags\":" + std::to_string(flags) + "}";
+	std::string url = "https://discord.com/api/v10/channels/" + channelId + "/messages/" + messageId + "/ack";
+	Network::NetworkManager::getInstance().enqueue(
+	    url, "POST", body, Network::RequestPriority::BACKGROUND,
+	    [this, channelId](const Network::HttpResponse &resp) {
+		    if (resp.success && resp.statusCode == 200 && !resp.body.empty()) {
+			    rapidjson::Document doc;
+			    doc.Parse(resp.body.c_str());
+			    if (!doc.HasParseError() && doc.IsObject() && doc.HasMember("token") && doc["token"].IsString()) {
+				    std::string newToken = doc["token"].GetString();
+				    if (!newToken.empty()) {
+					    std::lock_guard<std::recursive_mutex> lock(clientMutex);
+					    readStates[channelId].ackToken = newToken;
+				    }
+			    }
+		    } else if (!resp.success || resp.statusCode != 200) {
+			    Logger::log("[ACK] Channel %s mark failed: %d %s", channelId.c_str(), resp.statusCode,
+			                resp.error.c_str());
+		    }
+	    },
+	    {{"Authorization", token}, {"Content-Type", "application/json"}});
+}
+
+void DiscordClient::markChannelReadLatest(const std::string &channelId) {
+	std::string lastMsgId;
+	{
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		auto gIt = channelToGuildCache.find(channelId);
+		if (gIt != channelToGuildCache.end() && !gIt->second.empty()) {
+			for (const auto &guild : guilds) {
+				if (guild.id != gIt->second) {
+					continue;
+				}
+				for (const auto &ch : guild.channels) {
+					if (ch.id == channelId) {
+						lastMsgId = ch.last_message_id;
+						break;
+					}
+				}
+				break;
+			}
+		} else {
+			for (const auto &ch : privateChannels) {
+				if (ch.id == channelId) {
+					lastMsgId = ch.last_message_id;
+					break;
+				}
+			}
+		}
+	}
+	if (!lastMsgId.empty()) {
+		markChannelRead(channelId, lastMsgId);
+	}
+}
+
+void DiscordClient::markGuildRead(const std::string &guildId) {
+	if (token.empty() || guildId.empty()) {
+		return;
+	}
+
+	rapidjson::Document doc;
+	doc.SetObject();
+	auto &alloc = doc.GetAllocator();
+	rapidjson::Value rsArray(rapidjson::kArrayType);
+
+	{
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		for (const auto &guild : guilds) {
+			if (guild.id != guildId) {
+				continue;
+			}
+			for (const auto &ch : guild.channels) {
+				if (ch.type == 2 || ch.type == 4 || ch.type == 13) {
+					continue;
+				}
+				if (ch.last_message_id.empty()) {
+					continue;
+				}
+
+				auto rsIt = readStates.find(ch.id);
+				bool isUnread = (rsIt == readStates.end()) ||
+				                UI::MessageUtils::isNewerSnowflake(ch.last_message_id, rsIt->second.lastReadMessageId);
+				if (!isUnread) {
+					continue;
+				}
+
+				rapidjson::Value item(rapidjson::kObjectType);
+				item.AddMember("channel_id", rapidjson::Value(ch.id.c_str(), alloc), alloc);
+				item.AddMember("message_id", rapidjson::Value(ch.last_message_id.c_str(), alloc), alloc);
+				item.AddMember("read_state_type", 0, alloc);
+				rsArray.PushBack(item, alloc);
+
+				auto &rs = readStates[ch.id];
+				rs.channelId = ch.id;
+				rs.lastReadMessageId = ch.last_message_id;
+				rs.mentionCount = 0;
+			}
+			break;
+		}
+		readStateDirty.store(true);
+	}
+
+	if (rsArray.Empty()) {
+		return;
+	}
+
+	doc.AddMember("read_states", rsArray, alloc);
+	rapidjson::StringBuffer buf;
+	rapidjson::Writer<rapidjson::StringBuffer> writer(buf);
+	doc.Accept(writer);
+
+	Network::NetworkManager::getInstance().enqueue(
+	    "https://discord.com/api/v10/read-states/ack-bulk", "POST", buf.GetString(),
+	    Network::RequestPriority::INTERACTIVE,
+	    [guildId](const Network::HttpResponse &resp) {
+		    if (resp.success) {
+			    Logger::log("[API] Guild %s marked as read", guildId.c_str());
+		    } else {
+			    Logger::log("[API] Failed to mark guild as read: %d %s", resp.statusCode, resp.error.c_str());
+		    }
+	    },
+	    {{"Authorization", token}, {"Content-Type", "application/json"}});
+}
+
+User DiscordClient::parseUserObject(const rapidjson::Value &uObj) {
+	User u;
+	u.id = Utils::Json::getString(uObj, "id");
+	u.username = Utils::Json::getString(uObj, "username");
+	u.global_name = Utils::Json::getString(uObj, "global_name");
+	u.avatar = Utils::Json::getString(uObj, "avatar");
+	u.discriminator = Utils::Json::getString(uObj, "discriminator");
+	u.bot = Utils::Json::getBool(uObj, "bot");
+	return u;
+}
+
+Member DiscordClient::parseMemberObject(const rapidjson::Value &mObj, const std::string &userId) {
+	Member member;
+	member.user_id = userId;
+	member.nickname = Utils::Json::getString(mObj, "nick");
+	if (mObj.HasMember("user") && mObj["user"].IsObject()) {
+		const rapidjson::Value &user = mObj["user"];
+		member.username = Utils::Json::getString(user, "username");
+		member.globalName = Utils::Json::getString(user, "global_name");
+		member.avatar = Utils::Json::getString(user, "avatar");
+	}
+	if (mObj.HasMember("roles") && mObj["roles"].IsArray()) {
+		const rapidjson::Value &roles = mObj["roles"];
+		for (rapidjson::SizeType i = 0; i < roles.Size(); i++) {
+			if (roles[i].IsString()) {
+				member.role_ids.push_back(roles[i].GetString());
+			}
+		}
+	}
+	return member;
+}
+
+Embed DiscordClient::parseEmbedObject(const rapidjson::Value &eObj) {
+	Embed embed;
+	embed.title = Utils::Json::getString(eObj, "title");
+	embed.description = Utils::Json::getString(eObj, "description");
+	embed.url = Utils::Json::getString(eObj, "url");
+	embed.type = Utils::Json::getString(eObj, "type");
+	embed.color = Utils::Json::getInt(eObj, "color");
+	embed.timestamp = Utils::Json::getString(eObj, "timestamp");
+	if (eObj.HasMember("author") && eObj["author"].IsObject()) {
+		embed.author_name = Utils::Json::getString(eObj["author"], "name");
+		embed.author_icon_url = Utils::Json::getString(eObj["author"], "icon_url");
+	}
+	if (eObj.HasMember("footer") && eObj["footer"].IsObject()) {
+		embed.footer_text = Utils::Json::getString(eObj["footer"], "text");
+		embed.footer_icon_url = Utils::Json::getString(eObj["footer"], "icon_url");
+	}
+	if (eObj.HasMember("provider") && eObj["provider"].IsObject()) {
+		embed.provider_name = Utils::Json::getString(eObj["provider"], "name");
+	}
+	if (eObj.HasMember("image") && eObj["image"].IsObject()) {
+		const rapidjson::Value &img = eObj["image"];
+		embed.image_url = Utils::Json::getString(img, "url");
+		embed.image_proxy_url = Utils::Json::getString(img, "proxy_url");
+		embed.image_width = Utils::Json::getInt(img, "width");
+		embed.image_height = Utils::Json::getInt(img, "height");
+	}
+	if (eObj.HasMember("thumbnail") && eObj["thumbnail"].IsObject()) {
+		const rapidjson::Value &thumb = eObj["thumbnail"];
+		embed.thumbnail_url = Utils::Json::getString(thumb, "url");
+		embed.thumbnail_proxy_url = Utils::Json::getString(thumb, "proxy_url");
+		embed.thumbnail_width = Utils::Json::getInt(thumb, "width");
+		embed.thumbnail_height = Utils::Json::getInt(thumb, "height");
+	}
+	if (eObj.HasMember("fields") && eObj["fields"].IsArray()) {
+		const rapidjson::Value &fields = eObj["fields"];
+		for (rapidjson::SizeType f = 0; f < fields.Size() && f < 10; f++) {
+			const rapidjson::Value &fObj = fields[f];
+			EmbedField field;
+			field.name = Utils::Json::getString(fObj, "name");
+			field.value = Utils::Json::getString(fObj, "value");
+			field.isInline = fObj.HasMember("inline") && fObj["inline"].IsBool() ? fObj["inline"].GetBool() : false;
+			embed.fields.push_back(field);
+		}
+	}
+	return embed;
+}
+
+Attachment DiscordClient::parseAttachmentObject(const rapidjson::Value &aObj) {
+	Attachment attachment;
+	attachment.id = Utils::Json::getString(aObj, "id");
+	attachment.filename = Utils::Json::getString(aObj, "filename");
+	attachment.url = Utils::Json::getString(aObj, "url");
+	attachment.proxy_url = Utils::Json::getString(aObj, "proxy_url");
+	attachment.size = Utils::Json::getInt(aObj, "size");
+	attachment.width = Utils::Json::getInt(aObj, "width");
+	attachment.height = Utils::Json::getInt(aObj, "height");
+	attachment.content_type = Utils::Json::getString(aObj, "content_type");
+	return attachment;
+}
+
+Emoji DiscordClient::parseEmojiObject(const rapidjson::Value &eObj) {
+	Emoji emoji;
+	emoji.id = Utils::Json::getString(eObj, "id");
+	emoji.name = Utils::Json::getString(eObj, "name");
+	emoji.animated = eObj.HasMember("animated") && eObj["animated"].IsBool() && eObj["animated"].GetBool();
+	return emoji;
+}
+
 Message DiscordClient::parseSingleMessage(const rapidjson::Value &d) {
 	Message msg;
 	msg.id = Utils::Json::getString(d, "id");
@@ -964,101 +1666,52 @@ Message DiscordClient::parseSingleMessage(const rapidjson::Value &d) {
 	msg.nonce = Utils::Json::getString(d, "nonce");
 
 	if (d.HasMember("author") && d["author"].IsObject()) {
-		const rapidjson::Value &author = d["author"];
-		msg.author.id = Utils::Json::getString(author, "id");
-		msg.author.username = Utils::Json::getString(author, "username");
-		msg.author.global_name = Utils::Json::getString(author, "global_name");
-		msg.author.avatar = Utils::Json::getString(author, "avatar");
-		msg.author.discriminator = Utils::Json::getString(author, "discriminator");
+		msg.author = parseUserObject(d["author"]);
 	}
 
-	// Parse partial member data from message (for role colors)
 	if (d.HasMember("member") && d["member"].IsObject()) {
-		const rapidjson::Value &memObj = d["member"];
-		msg.member.user_id = msg.author.id;
-		msg.member.nickname = Utils::Json::getString(memObj, "nick");
-
-		if (memObj.HasMember("roles") && memObj["roles"].IsArray()) {
-			const rapidjson::Value &rIds = memObj["roles"];
-			for (rapidjson::SizeType r = 0; r < rIds.Size(); r++) {
-				if (rIds[r].IsString()) {
-					msg.member.role_ids.push_back(rIds[r].GetString());
-				}
-			}
-		}
+		msg.member = parseMemberObject(d["member"], msg.author.id);
 	}
 
 	if (d.HasMember("embeds") && d["embeds"].IsArray()) {
 		const rapidjson::Value &embeds = d["embeds"];
 		for (rapidjson::SizeType e = 0; e < embeds.Size(); e++) {
-			const rapidjson::Value &eObj = embeds[e];
-			Embed embed;
-			embed.title = Utils::Json::getString(eObj, "title");
-			embed.description = Utils::Json::getString(eObj, "description");
-			embed.url = Utils::Json::getString(eObj, "url");
-			embed.type = Utils::Json::getString(eObj, "type");
-			embed.color = Utils::Json::getInt(eObj, "color");
-			embed.timestamp = Utils::Json::getString(eObj, "timestamp");
-
-			if (eObj.HasMember("author") && eObj["author"].IsObject()) {
-				embed.author_name = Utils::Json::getString(eObj["author"], "name");
-				embed.author_icon_url = Utils::Json::getString(eObj["author"], "icon_url");
-			}
-			if (eObj.HasMember("footer") && eObj["footer"].IsObject()) {
-				embed.footer_text = Utils::Json::getString(eObj["footer"], "text");
-				embed.footer_icon_url = Utils::Json::getString(eObj["footer"], "icon_url");
-			}
-			if (eObj.HasMember("provider") && eObj["provider"].IsObject()) {
-				embed.provider_name = Utils::Json::getString(eObj["provider"], "name");
-			}
-			if (eObj.HasMember("image") && eObj["image"].IsObject()) {
-				const rapidjson::Value &img = eObj["image"];
-				embed.image_url = Utils::Json::getString(img, "url");
-				embed.image_proxy_url = Utils::Json::getString(img, "proxy_url");
-				embed.image_width = Utils::Json::getInt(img, "width");
-				embed.image_height = Utils::Json::getInt(img, "height");
-			}
-			if (eObj.HasMember("thumbnail") && eObj["thumbnail"].IsObject()) {
-				const rapidjson::Value &thumb = eObj["thumbnail"];
-				embed.thumbnail_url = Utils::Json::getString(thumb, "url");
-				embed.thumbnail_proxy_url = Utils::Json::getString(thumb, "proxy_url");
-				embed.thumbnail_width = Utils::Json::getInt(thumb, "width");
-				embed.thumbnail_height = Utils::Json::getInt(thumb, "height");
-			}
-			if (eObj.HasMember("fields") && eObj["fields"].IsArray()) {
-				const rapidjson::Value &fields = eObj["fields"];
-				for (rapidjson::SizeType f = 0; f < fields.Size() && f < 10; f++) {
-					const rapidjson::Value &fObj = fields[f];
-					EmbedField field;
-					field.name = Utils::Json::getString(fObj, "name");
-					field.value = Utils::Json::getString(fObj, "value");
-					field.isInline =
-					    fObj.HasMember("inline") && fObj["inline"].IsBool() ? fObj["inline"].GetBool() : false;
-					embed.fields.push_back(field);
-				}
-			}
-			msg.embeds.push_back(embed);
+			msg.embeds.push_back(parseEmbedObject(embeds[e]));
 		}
+	}
+
+	for (const auto &embed : msg.embeds) {
+		if (embed.type != "poll_result") {
+			continue;
+		}
+		msg.hasPollResult = true;
+		for (const auto &field : embed.fields) {
+			if (field.name == "poll_question_text") {
+				msg.pollResult.question = field.value;
+			} else if (field.name == "total_votes") {
+				msg.pollResult.totalVotes = atoi(field.value.c_str());
+			} else if (field.name == "victor_answer_text") {
+				msg.pollResult.winnerText = field.value;
+				msg.pollResult.hasWinner = true;
+			} else if (field.name == "victor_answer_votes") {
+				msg.pollResult.winnerVotes = atoi(field.value.c_str());
+			} else if (field.name == "victor_answer_emoji_id") {
+				msg.pollResult.winnerEmoji.id = field.value;
+			} else if (field.name == "victor_answer_emoji_name") {
+				msg.pollResult.winnerEmoji.name = field.value;
+			}
+		}
+		msg.embeds.clear();
+		break;
 	}
 
 	if (d.HasMember("attachments") && d["attachments"].IsArray()) {
 		const rapidjson::Value &attachments = d["attachments"];
 		for (rapidjson::SizeType a = 0; a < attachments.Size(); a++) {
-			const rapidjson::Value &aObj = attachments[a];
-			Attachment attachment;
-			attachment.id = Utils::Json::getString(aObj, "id");
-			attachment.filename = Utils::Json::getString(aObj, "filename");
-			attachment.url = Utils::Json::getString(aObj, "url");
-			attachment.proxy_url = Utils::Json::getString(aObj, "proxy_url");
-			attachment.size = Utils::Json::getInt(aObj, "size");
-			attachment.width = Utils::Json::getInt(aObj, "width");
-			attachment.height = Utils::Json::getInt(aObj, "height");
-			attachment.content_type = Utils::Json::getString(aObj, "content_type");
-			msg.attachments.push_back(attachment);
+			msg.attachments.push_back(parseAttachmentObject(attachments[a]));
 		}
 	}
 
-	// Parse stickers
 	if (d.HasMember("sticker_items") && d["sticker_items"].IsArray()) {
 		const rapidjson::Value &stickers = d["sticker_items"];
 		for (rapidjson::SizeType s = 0; s < stickers.Size(); s++) {
@@ -1098,22 +1751,60 @@ Message DiscordClient::parseSingleMessage(const rapidjson::Value &d) {
 		}
 	}
 
-	// Parse mentions
-	if (d.HasMember("mentions") && d["mentions"].IsArray()) {
-		const rapidjson::Value &mentions = d["mentions"];
-		for (rapidjson::SizeType i = 0; i < mentions.Size(); i++) {
-			const rapidjson::Value &mObj = mentions[i];
-			User user;
-			user.id = Utils::Json::getString(mObj, "id");
-			user.username = Utils::Json::getString(mObj, "username");
-			user.global_name = Utils::Json::getString(mObj, "global_name");
-			user.avatar = Utils::Json::getString(mObj, "avatar");
-			user.discriminator = Utils::Json::getString(mObj, "discriminator");
-			msg.mentions.push_back(user);
+	if (d.HasMember("poll") && d["poll"].IsObject()) {
+		const rapidjson::Value &pObj = d["poll"];
+		msg.hasPoll = true;
+		msg.poll.expiry = Utils::Json::getString(pObj, "expiry");
+		msg.poll.allowMultiselect = Utils::Json::getBool(pObj, "allow_multiselect");
+		if (pObj.HasMember("question") && pObj["question"].IsObject()) {
+			msg.poll.question = Utils::Json::getString(pObj["question"], "text");
+		}
+
+		if (pObj.HasMember("answers") && pObj["answers"].IsArray()) {
+			const rapidjson::Value &answers = pObj["answers"];
+			for (rapidjson::SizeType i = 0; i < answers.Size(); i++) {
+				const rapidjson::Value &aObj = answers[i];
+				PollAnswer answer;
+				answer.id = Utils::Json::getInt(aObj, "answer_id", (int)i + 1);
+				if (aObj.HasMember("poll_media") && aObj["poll_media"].IsObject()) {
+					const rapidjson::Value &mObj = aObj["poll_media"];
+					answer.text = Utils::Json::getString(mObj, "text");
+					if (mObj.HasMember("emoji") && mObj["emoji"].IsObject()) {
+						answer.emoji.id = Utils::Json::getString(mObj["emoji"], "id");
+						answer.emoji.name = Utils::Json::getString(mObj["emoji"], "name");
+					}
+				}
+				msg.poll.answers.push_back(answer);
+			}
+		}
+
+		if (pObj.HasMember("results") && pObj["results"].IsObject()) {
+			const rapidjson::Value &rObj = pObj["results"];
+			msg.poll.finalized = Utils::Json::getBool(rObj, "is_finalized");
+			if (rObj.HasMember("answer_counts") && rObj["answer_counts"].IsArray()) {
+				const rapidjson::Value &counts = rObj["answer_counts"];
+				for (rapidjson::SizeType i = 0; i < counts.Size(); i++) {
+					int id = Utils::Json::getInt(counts[i], "id");
+					for (auto &answer : msg.poll.answers) {
+						if (answer.id != id) {
+							continue;
+						}
+						answer.count = Utils::Json::getInt(counts[i], "count");
+						answer.meVoted = Utils::Json::getBool(counts[i], "me_voted");
+						break;
+					}
+				}
+			}
 		}
 	}
 
-	// Parse message type and reply reference
+	if (d.HasMember("mentions") && d["mentions"].IsArray()) {
+		const rapidjson::Value &mentions = d["mentions"];
+		for (rapidjson::SizeType i = 0; i < mentions.Size(); i++) {
+			msg.mentions.push_back(parseUserObject(mentions[i]));
+		}
+	}
+
 	msg.type = Utils::Json::getInt(d, "type");
 
 	if (d.HasMember("message_snapshots") && d["message_snapshots"].IsArray()) {
@@ -1134,70 +1825,14 @@ Message DiscordClient::parseSingleMessage(const rapidjson::Value &d) {
 			if (innerMsg.HasMember("embeds") && innerMsg["embeds"].IsArray()) {
 				const rapidjson::Value &innerEmbeds = innerMsg["embeds"];
 				for (rapidjson::SizeType e = 0; e < innerEmbeds.Size(); e++) {
-					const rapidjson::Value &eObj = innerEmbeds[e];
-					Embed embed;
-					embed.title = Utils::Json::getString(eObj, "title");
-					embed.description = Utils::Json::getString(eObj, "description");
-					embed.url = Utils::Json::getString(eObj, "url");
-					embed.type = Utils::Json::getString(eObj, "type");
-					embed.color = Utils::Json::getInt(eObj, "color");
-					embed.timestamp = Utils::Json::getString(eObj, "timestamp");
-
-					if (eObj.HasMember("author") && eObj["author"].IsObject()) {
-						embed.author_name = Utils::Json::getString(eObj["author"], "name");
-						embed.author_icon_url = Utils::Json::getString(eObj["author"], "icon_url");
-					}
-					if (eObj.HasMember("footer") && eObj["footer"].IsObject()) {
-						embed.footer_text = Utils::Json::getString(eObj["footer"], "text");
-						embed.footer_icon_url = Utils::Json::getString(eObj["footer"], "icon_url");
-					}
-					if (eObj.HasMember("provider") && eObj["provider"].IsObject()) {
-						embed.provider_name = Utils::Json::getString(eObj["provider"], "name");
-					}
-					if (eObj.HasMember("image") && eObj["image"].IsObject()) {
-						const rapidjson::Value &img = eObj["image"];
-						embed.image_url = Utils::Json::getString(img, "url");
-						embed.image_proxy_url = Utils::Json::getString(img, "proxy_url");
-						embed.image_width = Utils::Json::getInt(img, "width");
-						embed.image_height = Utils::Json::getInt(img, "height");
-					}
-					if (eObj.HasMember("thumbnail") && eObj["thumbnail"].IsObject()) {
-						const rapidjson::Value &thumb = eObj["thumbnail"];
-						embed.thumbnail_url = Utils::Json::getString(thumb, "url");
-						embed.thumbnail_proxy_url = Utils::Json::getString(thumb, "proxy_url");
-						embed.thumbnail_width = Utils::Json::getInt(thumb, "width");
-						embed.thumbnail_height = Utils::Json::getInt(thumb, "height");
-					}
-					if (eObj.HasMember("fields") && eObj["fields"].IsArray()) {
-						const rapidjson::Value &fields = eObj["fields"];
-						for (rapidjson::SizeType f = 0; f < fields.Size() && f < 10; f++) {
-							const rapidjson::Value &fObj = fields[f];
-							EmbedField field;
-							field.name = Utils::Json::getString(fObj, "name");
-							field.value = Utils::Json::getString(fObj, "value");
-							field.isInline =
-							    fObj.HasMember("inline") && fObj["inline"].IsBool() ? fObj["inline"].GetBool() : false;
-							embed.fields.push_back(field);
-						}
-					}
-					msg.embeds.push_back(embed);
+					msg.embeds.push_back(parseEmbedObject(innerEmbeds[e]));
 				}
 			}
 
 			if (innerMsg.HasMember("attachments") && innerMsg["attachments"].IsArray()) {
 				const rapidjson::Value &innerAtts = innerMsg["attachments"];
 				for (rapidjson::SizeType a = 0; a < innerAtts.Size(); a++) {
-					const rapidjson::Value &aObj = innerAtts[a];
-					Attachment attachment;
-					attachment.id = Utils::Json::getString(aObj, "id");
-					attachment.filename = Utils::Json::getString(aObj, "filename");
-					attachment.url = Utils::Json::getString(aObj, "url");
-					attachment.proxy_url = Utils::Json::getString(aObj, "proxy_url");
-					attachment.size = Utils::Json::getInt(aObj, "size");
-					attachment.width = Utils::Json::getInt(aObj, "width");
-					attachment.height = Utils::Json::getInt(aObj, "height");
-					attachment.content_type = Utils::Json::getString(aObj, "content_type");
-					msg.attachments.push_back(attachment);
+					msg.attachments.push_back(parseAttachmentObject(innerAtts[a]));
 				}
 			}
 		}
@@ -1284,6 +1919,9 @@ void DiscordClient::sendIdentify() {
 	                   "\"device\": \"Nintendo 3DS\""
 	                   "},"
 	                   "\"compress\": false,"
+	                   // LAZY_USER_NOTES | VERSIONED_READ_STATES |
+	                   // VERSIONED_USER_GUILD_SETTINGS | PRIORITIZED_READY_PAYLOAD
+	                   "\"capabilities\": 45,"
 	                   "\"large_threshold\": 50"
 	                   "}"
 	                   "}";
@@ -1592,6 +2230,60 @@ void DiscordClient::fetchGuildDetails(const std::string &guildId, std::function<
 	                                               {{"Authorization", token}});
 }
 
+UserProfile DiscordClient::getUserProfile(const std::string &userId) {
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	auto it = profileCache.find(userId);
+	if (it != profileCache.end()) {
+		return it->second;
+	}
+	return UserProfile();
+}
+
+void DiscordClient::fetchUserProfile(const std::string &userId) {
+	if (token.empty() || userId.empty()) {
+		return;
+	}
+	{
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		if (profileCache.count(userId)) {
+			return;
+		}
+		profileCache[userId].userId = userId;
+	}
+
+	std::string url = "https://discord.com/api/v10/users/" + userId + "/profile?with_mutual_guilds=false";
+	Network::NetworkManager::getInstance().enqueue(url, "GET", "", Network::RequestPriority::BACKGROUND,
+	                                               [this, userId](const Network::HttpResponse &resp) {
+		                                               if (!resp.success) {
+			                                               return;
+		                                               }
+		                                               rapidjson::Document doc;
+		                                               doc.Parse(resp.body.c_str());
+		                                               if (doc.HasParseError() || !doc.IsObject()) {
+			                                               return;
+		                                               }
+
+		                                               UserProfile profile;
+		                                               profile.userId = userId;
+		                                               profile.loaded = true;
+		                                               if (doc.HasMember("user") && doc["user"].IsObject()) {
+			                                               profile.bio = Utils::Json::getString(doc["user"], "bio");
+		                                               }
+		                                               if (doc.HasMember("user_profile") &&
+		                                                   doc["user_profile"].IsObject()) {
+			                                               const rapidjson::Value &up = doc["user_profile"];
+			                                               profile.pronouns = Utils::Json::getString(up, "pronouns");
+			                                               if (profile.bio.empty()) {
+				                                               profile.bio = Utils::Json::getString(up, "bio");
+			                                               }
+		                                               }
+
+		                                               std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		                                               profileCache[userId] = profile;
+	                                               },
+	                                               {{"Authorization", token}});
+}
+
 Message DiscordClient::parseSingleMessage(const std::string &json) {
 	rapidjson::Document doc;
 	std::string buffer = json;
@@ -1613,7 +2305,6 @@ uint64_t DiscordClient::calcBasePermissions(const Guild &guild, const std::strin
 
 	uint64_t permissions = 0;
 
-	// 1. @everyone role (ID == Guild ID)
 	for (const auto &role : guild.roles) {
 		if (role.id == guild.id) {
 			permissions |= role.permissions;
@@ -1621,7 +2312,6 @@ uint64_t DiscordClient::calcBasePermissions(const Guild &guild, const std::strin
 		}
 	}
 
-	// 2. Member roles
 	for (const auto &roleId : memberRoleIds) {
 		for (const auto &role : guild.roles) {
 			if (role.id == roleId) {
@@ -1631,9 +2321,8 @@ uint64_t DiscordClient::calcBasePermissions(const Guild &guild, const std::strin
 		}
 	}
 
-	// 3. Administrator check
 	if (permissions & Permissions::ADMINISTRATOR) {
-		return ~0ULL; // Grant all permissions
+		return ~0ULL;
 	}
 
 	return permissions;
@@ -1643,14 +2332,12 @@ uint64_t DiscordClient::computeChannelPermissions(const Guild &guild, const Chan
                                                   const std::vector<std::string> &memberRoleIds) {
 	uint64_t basePerms = calcBasePermissions(guild, userId, memberRoleIds);
 
-	// Administrator overrides everything
 	if (basePerms & Permissions::ADMINISTRATOR) {
 		return ~0ULL;
 	}
 
 	uint64_t perms = basePerms;
 
-	// 1. Apply Category Overwrites if exists
 	if (!channel.parent_id.empty()) {
 		for (const auto &cat : guild.channels) {
 			if (cat.id == channel.parent_id) {
@@ -1660,7 +2347,6 @@ uint64_t DiscordClient::computeChannelPermissions(const Guild &guild, const Chan
 		}
 	}
 
-	// 2. Apply Channel Overwrites
 	perms = computeOverwrites(perms, guild.id, userId, memberRoleIds, channel.permission_overwrites);
 
 	return perms;
@@ -1693,7 +2379,6 @@ uint64_t DiscordClient::computeOverwrites(uint64_t basePermissions, const std::s
                                           const std::string &memberId, const std::vector<std::string> &memberRoleIds,
                                           const std::vector<Overwrite> &overwrites) {
 
-	// Administrator overrides everything
 	if (basePermissions & Permissions::ADMINISTRATOR) {
 		return ~0ULL;
 	}
@@ -1705,12 +2390,11 @@ uint64_t DiscordClient::computeOverwrites(uint64_t basePermissions, const std::s
 	bool hasMemberOverwrite = false;
 
 	for (const auto &ow : overwrites) {
-		if (ow.type == 0) {         // Role
-			if (ow.id == guildId) { // @everyone
+		if (ow.type == 0) {
+			if (ow.id == guildId) {
 				everyoneAllow = ow.allow;
 				everyoneDeny = ow.deny;
 			} else {
-				// Check if user has this role
 				for (const auto &rId : memberRoleIds) {
 					if (rId == ow.id) {
 						roleAllow |= ow.allow;
@@ -1719,7 +2403,7 @@ uint64_t DiscordClient::computeOverwrites(uint64_t basePermissions, const std::s
 					}
 				}
 			}
-		} else if (ow.type == 1) { // Member
+		} else if (ow.type == 1) {
 			if (ow.id == memberId) {
 				memberAllow = ow.allow;
 				memberDeny = ow.deny;
@@ -1728,15 +2412,10 @@ uint64_t DiscordClient::computeOverwrites(uint64_t basePermissions, const std::s
 		}
 	}
 
-	// Apply @everyone
 	permissions &= ~everyoneDeny;
 	permissions |= everyoneAllow;
-
-	// Apply roles
 	permissions &= ~roleDeny;
 	permissions |= roleAllow;
-
-	// Apply member
 	if (hasMemberOverwrite) {
 		permissions &= ~memberDeny;
 		permissions |= memberAllow;
@@ -1940,19 +2619,16 @@ void DiscordClient::fetchForumThreads(const std::string &channelId, ThreadsCallb
 							    for (rapidjson::SizeType i = 0; i < threadArray.Size(); i++) {
 								    const rapidjson::Value &tObj = threadArray[i];
 								    Channel t;
-								    t.id = Utils::Json::getString(tObj, "id");
-								    t.name = Utils::Json::getString(tObj, "name");
-								    t.parent_id = Utils::Json::getString(tObj, "parent_id");
-								    t.type = Utils::Json::getInt(tObj, "type", 11);
-								    t.flags = Utils::Json::getInt(tObj, "flags");
+								    parseChannelObject(tObj, t);
+								    if (!tObj.HasMember("type")) {
+									    t.type = 11;
+								    }
 								    t.message_count = Utils::Json::getInt(tObj, "message_count");
-								    t.last_message_id = Utils::Json::getString(tObj, "last_message_id");
 								    t.owner_id = Utils::Json::getString(tObj, "owner_id");
-
+								    t.viewable = true;
 								    t.is_archived = false;
 								    if (tObj.HasMember("thread_metadata") && tObj["thread_metadata"].IsObject()) {
-									    const auto &meta = tObj["thread_metadata"];
-									    t.is_archived = Utils::Json::getBool(meta, "archived");
+									    t.is_archived = Utils::Json::getBool(tObj["thread_metadata"], "archived");
 								    }
 
 								    ctx->threads.push_back(t);
@@ -2132,79 +2808,97 @@ void DiscordClient::exchangeTicketForToken(const std::string &ticket, TokenCallb
 	    {{"Content-Type", "application/json"}});
 }
 
-void DiscordClient::fetchMember(const std::string &guildId, const std::string &userId, MemberCallback cb) {
-	if (guildId.empty() || userId.empty()) {
-		if (cb) {
-			cb(Member());
-		}
+void DiscordClient::requestMembers(const std::string &guildId, const std::vector<std::string> &userIds) {
+	if (guildId.empty() || userIds.empty() || guildId == "DM") {
 		return;
 	}
 
-	std::string url = "https://discord.com/api/v10/guilds/" + guildId + "/members/" + userId;
+	rapidjson::StringBuffer s;
+	rapidjson::Writer<rapidjson::StringBuffer> writer(s);
+	writer.StartObject();
+	writer.Key("op");
+	writer.Int(8);
+	writer.Key("d");
+	writer.StartObject();
+	writer.Key("guild_id");
+	writer.String(guildId.c_str());
+	writer.Key("user_ids");
+	writer.StartArray();
+	// The gateway caps a request at 100 IDs.
+	for (size_t i = 0; i < userIds.size() && i < 100; i++) {
+		writer.String(userIds[i].c_str());
+	}
+	writer.EndArray();
+	writer.EndObject();
+	writer.EndObject();
 
-	Network::NetworkManager::getInstance().enqueue(url, "GET", "", Network::RequestPriority::BACKGROUND,
-	                                               [this, cb, userId, guildId](const Network::HttpResponse &resp) {
-		                                               if (!resp.success) {
-			                                               if (cb) {
-				                                               cb(Member());
-			                                               }
-			                                               return;
-		                                               }
+	queueSend(s.GetString());
+	Logger::log("[Gateway] Requested %zu members for guild %s", userIds.size(), guildId.c_str());
+}
 
-		                                               rapidjson::Document d;
-		                                               d.Parse(resp.body.c_str());
+void DiscordClient::applyVoiceMemberName(const std::string &userId, const Member &member) {
+	voiceNameLookups.erase(userId);
 
-		                                               if (d.HasParseError()) {
-			                                               if (cb) {
-				                                               cb(Member());
-			                                               }
-			                                               return;
-		                                               }
+	std::string name =
+	    !member.nickname.empty() ? member.nickname : (!member.globalName.empty() ? member.globalName : member.username);
+	if (name.empty()) {
+		return;
+	}
 
-		                                               Member member;
+	auto it = voiceChannelByUser.find(userId);
+	if (it == voiceChannelByUser.end()) {
+		return;
+	}
+	for (auto &p : voiceParticipants[it->second]) {
+		if (p.userId == userId) {
+			p.name = name;
+			p.avatar = member.avatar;
+			AvatarCache::getInstance().prefetchAvatar(userId, p.avatar, "0");
+			break;
+		}
+	}
+}
 
-		                                               if (d.HasMember("user") && d["user"].IsObject()) {
-			                                               member.user_id = Utils::Json::getString(d["user"], "id");
-		                                               } else {
-			                                               member.user_id = userId;
-		                                               }
+void DiscordClient::handleGuildMembersChunk(const rapidjson::Value &d) {
+	std::string guildId = Utils::Json::getString(d, "guild_id");
+	if (guildId.empty() || !d.HasMember("members") || !d["members"].IsArray()) {
+		return;
+	}
 
-		                                               member.nickname = Utils::Json::getString(d, "nick");
-		                                               if (d.HasMember("roles") && d["roles"].IsArray()) {
-			                                               const rapidjson::Value &roles = d["roles"];
-			                                               for (rapidjson::SizeType i = 0; i < roles.Size(); i++) {
-				                                               if (roles[i].IsString()) {
-					                                               member.role_ids.push_back(roles[i].GetString());
-				                                               }
-			                                               }
-		                                               }
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	for (auto &g : guilds) {
+		if (g.id != guildId) {
+			continue;
+		}
 
-		                                               {
-			                                               std::lock_guard<std::recursive_mutex> lock(clientMutex);
-			                                               for (auto &g : guilds) {
-				                                               if (g.id == guildId) {
+		for (const auto &mObj : d["members"].GetArray()) {
+			if (!mObj.IsObject() || !mObj.HasMember("user") || !mObj["user"].IsObject()) {
+				continue;
+			}
+			std::string uid = Utils::Json::getString(mObj["user"], "id");
+			if (uid.empty()) {
+				continue;
+			}
 
-					                                               bool found = false;
-					                                               for (auto &m : g.members) {
-						                                               if (m.user_id == member.user_id) {
-							                                               m = member;
-							                                               found = true;
-							                                               break;
-						                                               }
-					                                               }
-					                                               if (!found) {
-						                                               g.members.push_back(member);
-					                                               }
-					                                               break;
-				                                               }
-			                                               }
-		                                               }
+			Member member = parseMemberObject(mObj, uid);
+			bool found = false;
+			for (auto &m : g.members) {
+				if (m.user_id == uid) {
+					m = member;
+					found = true;
+					break;
+				}
+			}
+			if (!found) {
+				g.members.push_back(member);
+			}
 
-		                                               if (cb) {
-			                                               cb(member);
-		                                               }
-	                                               },
-	                                               {{"Authorization", token}});
+			applyVoiceMemberName(uid, member);
+		}
+		break;
+	}
+
+	guildDataDirty.store(true);
 }
 
 void DiscordClient::performLogin(const std::string &email, const std::string &password, LoginCallback cb) {
@@ -2382,6 +3076,178 @@ void DiscordClient::sendLazyRequest(const std::string &guildId, const std::strin
 	std::string json = s.GetString();
 	queueSend(json);
 	Logger::log("[Gateway] Sent Lazy Request (Op 14) for Guild %s Channel %s", guildId.c_str(), channelId.c_str());
+}
+
+void DiscordClient::clearVoiceParticipant(const std::string &userId) {
+	auto prev = voiceChannelByUser.find(userId);
+	if (prev == voiceChannelByUser.end()) {
+		return;
+	}
+
+	auto &list = voiceParticipants[prev->second];
+	for (auto it = list.begin(); it != list.end(); ++it) {
+		if (it->userId == userId) {
+			list.erase(it);
+			break;
+		}
+	}
+	if (list.empty()) {
+		voiceParticipants.erase(prev->second);
+	}
+	voiceChannelByUser.erase(prev);
+}
+
+void DiscordClient::applyVoiceState(const rapidjson::Value &state, const std::string &guildId) {
+	std::string uid = Utils::Json::getString(state, "user_id");
+	if (uid.empty()) {
+		return;
+	}
+
+	clearVoiceParticipant(uid);
+
+	if (!state.HasMember("channel_id") || !state["channel_id"].IsString()) {
+		return;
+	}
+	std::string channelId = state["channel_id"].GetString();
+
+	VoiceParticipant p;
+	p.userId = uid;
+	p.guildId = guildId;
+	p.selfMute = Utils::Json::getBool(state, "self_mute");
+	p.selfDeaf = Utils::Json::getBool(state, "self_deaf");
+	p.mute = Utils::Json::getBool(state, "mute");
+	p.deaf = Utils::Json::getBool(state, "deaf");
+
+	// The gateway guild object omits `member`, so a state seen at GUILD_CREATE
+	// only carries the user ID and has to be resolved against the member list.
+	if (state.HasMember("member") && state["member"].IsObject()) {
+		const rapidjson::Value &member = state["member"];
+		p.name = Utils::Json::getString(member, "nick");
+		if (member.HasMember("user") && member["user"].IsObject()) {
+			const rapidjson::Value &user = member["user"];
+			p.avatar = Utils::Json::getString(user, "avatar");
+			if (p.name.empty()) {
+				p.name = Utils::Json::getString(user, "global_name");
+			}
+			if (p.name.empty()) {
+				p.name = Utils::Json::getString(user, "username");
+			}
+		}
+	} else if (!guildId.empty()) {
+		for (const auto &g : guilds) {
+			if (g.id != guildId) {
+				continue;
+			}
+			for (const auto &m : g.members) {
+				if (m.user_id != uid) {
+					continue;
+				}
+				p.name = !m.nickname.empty() ? m.nickname : (!m.globalName.empty() ? m.globalName : m.username);
+				p.avatar = m.avatar;
+				break;
+			}
+			break;
+		}
+	}
+
+	if (p.name.empty()) {
+		if (uid == currentUser.id) {
+			p.name = currentUser.global_name.empty() ? currentUser.username : currentUser.global_name;
+			p.avatar = currentUser.avatar;
+		} else {
+			for (const auto &pc : privateChannels) {
+				if (pc.id != channelId) {
+					continue;
+				}
+				for (const auto &r : pc.recipients) {
+					if (r.id == uid) {
+						p.name = r.global_name.empty() ? r.username : r.global_name;
+						p.avatar = r.avatar;
+						break;
+					}
+				}
+				break;
+			}
+		}
+	}
+
+	// resolveVoiceNames() replaces this once the user looks at that guild.
+	if (p.name.empty()) {
+		p.name = uid;
+	}
+
+	voiceParticipants[channelId].push_back(std::move(p));
+	voiceChannelByUser[uid] = channelId;
+}
+
+void DiscordClient::resolveVoiceNames(const std::string &guildId) {
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	if (guildId.empty()) {
+		return;
+	}
+
+	std::vector<std::string> unresolved;
+	for (const auto &entry : voiceParticipants) {
+		for (const auto &p : entry.second) {
+			if (p.guildId != guildId) {
+				continue;
+			}
+			if (p.name != p.userId) {
+				AvatarCache::getInstance().prefetchAvatar(p.userId, p.avatar, "0");
+			} else if (voiceNameLookups.insert(p.userId).second) {
+				unresolved.push_back(p.userId);
+			}
+		}
+	}
+
+	requestMembers(guildId, unresolved);
+}
+
+std::vector<VoiceParticipant> DiscordClient::getVoiceParticipants(const std::string &channelId) {
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	auto it = voiceParticipants.find(channelId);
+	if (it == voiceParticipants.end()) {
+		return {};
+	}
+	return it->second;
+}
+
+void DiscordClient::updateVoiceState(const std::string &guildId, const std::string &channelId, bool selfMute,
+                                     bool selfDeaf) {
+	rapidjson::StringBuffer s;
+	rapidjson::Writer<rapidjson::StringBuffer> writer(s);
+	writer.StartObject();
+	writer.Key("op");
+	writer.Int(4);
+	writer.Key("d");
+	writer.StartObject();
+
+	writer.Key("guild_id");
+	if (guildId.empty() || guildId == "DM") {
+		writer.Null();
+	} else {
+		writer.String(guildId.c_str());
+	}
+
+	writer.Key("channel_id");
+	if (channelId.empty()) {
+		writer.Null();
+	} else {
+		writer.String(channelId.c_str());
+	}
+
+	writer.Key("self_mute");
+	writer.Bool(selfMute);
+	writer.Key("self_deaf");
+	writer.Bool(selfDeaf);
+	writer.Key("self_video");
+	writer.Bool(false);
+
+	writer.EndObject();
+	writer.EndObject();
+
+	queueSend(s.GetString());
+	Logger::log("[Voice] Sent Update Voice State (Op 4) guild=%s channel=%s", guildId.c_str(), channelId.c_str());
 }
 
 void DiscordClient::updatePresence(UserStatus status) {
@@ -2577,19 +3443,12 @@ void DiscordClient::parseChannelObject(const rapidjson::Value &cObj, Channel &ch
 		const rapidjson::Value &recipients = cObj["recipients"];
 		std::string generatedName;
 		for (rapidjson::SizeType r = 0; r < recipients.Size(); r++) {
-			const rapidjson::Value &userVal = recipients[r];
-			User u;
-			u.id = Utils::Json::getString(userVal, "id");
-			u.username = Utils::Json::getString(userVal, "username");
-			u.global_name = Utils::Json::getString(userVal, "global_name");
-			u.avatar = Utils::Json::getString(userVal, "avatar");
-			u.discriminator = Utils::Json::getString(userVal, "discriminator");
-			channel.recipients.push_back(std::move(u));
-
+			User u = parseUserObject(recipients[r]);
 			if (!generatedName.empty()) {
 				generatedName += ", ";
 			}
 			generatedName += u.global_name.empty() ? u.username : u.global_name;
+			channel.recipients.push_back(std::move(u));
 		}
 
 		if (channel.name.empty()) {
@@ -2615,6 +3474,162 @@ void DiscordClient::parseOverwrites(const rapidjson::Value &ows, std::vector<Ove
 		overwrite.deny = Utils::Json::getUint64(ow, "deny");
 		overwrites.push_back(std::move(overwrite));
 	}
+}
+
+static std::string computeMuteEndTime(bool muted, int timeWindowMinutes) {
+	if (!muted || timeWindowMinutes <= 0) {
+		return "";
+	}
+	time_t endUnix = time(nullptr) + (time_t)timeWindowMinutes * 60;
+	struct tm gmt;
+	if (!gmtime_r(&endUnix, &gmt)) {
+		return "";
+	}
+	char buf[64];
+	snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02d.000000+00:00", gmt.tm_year + 1900, gmt.tm_mon + 1,
+	         gmt.tm_mday, gmt.tm_hour, gmt.tm_min, gmt.tm_sec);
+	return buf;
+}
+
+// mute_config.selected_time_window is in seconds, or -1 for an indefinite mute.
+static std::string muteConfigJson(bool muted, int timeWindowMinutes, const std::string &endTime) {
+	if (!muted) {
+		return "{\"muted\":false,\"mute_config\":null}";
+	}
+	if (timeWindowMinutes <= 0 || endTime.empty()) {
+		return "{\"muted\":true,\"mute_config\":{\"selected_time_window\":-1,\"end_time\":null}}";
+	}
+	return "{\"muted\":true,\"mute_config\":{\"selected_time_window\":" + std::to_string(timeWindowMinutes * 60) +
+	       ",\"end_time\":\"" + endTime + "\"}}";
+}
+
+void DiscordClient::setGuildMuted(const std::string &guildId, bool muted, int timeWindowMinutes) {
+	if (token.empty() || guildId.empty()) {
+		return;
+	}
+
+	std::string endTime = computeMuteEndTime(muted, timeWindowMinutes);
+
+	{
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		auto &gs = notificationSettings[guildId];
+		gs.guildId = guildId;
+		gs.muted = muted;
+		gs.muteEndTime = endTime;
+	}
+
+	std::string url = "https://discord.com/api/v10/users/@me/guilds/" + guildId + "/settings";
+	std::string body = muteConfigJson(muted, timeWindowMinutes, endTime);
+
+	Network::NetworkManager::getInstance().enqueue(
+	    url, "PATCH", body, Network::RequestPriority::INTERACTIVE,
+	    [guildId, muted](const Network::HttpResponse &resp) {
+		    if (resp.success) {
+			    Logger::log("[API] Guild %s mute set to %s", guildId.c_str(), muted ? "true" : "false");
+		    } else {
+			    Logger::log("[API] Failed to set guild mute: %d %s", resp.statusCode, resp.error.c_str());
+		    }
+	    },
+	    {{"Authorization", token}, {"Content-Type", "application/json"}});
+}
+
+void DiscordClient::setChannelMuted(const std::string &channelId, bool muted, int timeWindowMinutes) {
+	if (token.empty() || channelId.empty()) {
+		return;
+	}
+	std::string guildId = getGuildIdFromChannel(channelId);
+	if (guildId.empty()) {
+		return;
+	}
+
+	std::string endTime = computeMuteEndTime(muted, timeWindowMinutes);
+
+	{
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		auto &co = notificationSettings[guildId].channelOverrides[channelId];
+		co.channelId = channelId;
+		co.muted = muted;
+		co.muteEndTime = endTime;
+	}
+
+	// Modify takes channel_overrides as a map, unlike the array returned when reading.
+	std::string body =
+	    "{\"channel_overrides\":{\"" + channelId + "\":" + muteConfigJson(muted, timeWindowMinutes, endTime) + "}}";
+
+	std::string url = "https://discord.com/api/v10/users/@me/guilds/" + guildId + "/settings";
+	Network::NetworkManager::getInstance().enqueue(
+	    url, "PATCH", body, Network::RequestPriority::INTERACTIVE,
+	    [channelId, muted](const Network::HttpResponse &resp) {
+		    if (resp.success) {
+			    Logger::log("[API] Channel %s mute set to %s", channelId.c_str(), muted ? "true" : "false");
+		    } else {
+			    Logger::log("[API] Failed to set channel mute: %d %s", resp.statusCode, resp.error.c_str());
+		    }
+	    },
+	    {{"Authorization", token}, {"Content-Type", "application/json"}});
+}
+
+void DiscordClient::setGuildNotificationLevel(const std::string &guildId, int messageNotifications) {
+	if (token.empty() || guildId.empty() || messageNotifications < 0 || messageNotifications > 2) {
+		return;
+	}
+
+	{
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		auto &gs = notificationSettings[guildId];
+		gs.guildId = guildId;
+		gs.messageNotifications = messageNotifications;
+		// The flag bits would otherwise keep overriding message_notifications.
+		gs.flags &= ~((1 << 11) | (1 << 12));
+	}
+
+	std::string url = "https://discord.com/api/v10/users/@me/guilds/" + guildId + "/settings";
+	std::string body = "{\"message_notifications\":" + std::to_string(messageNotifications) + "}";
+
+	Network::NetworkManager::getInstance().enqueue(
+	    url, "PATCH", body, Network::RequestPriority::INTERACTIVE,
+	    [guildId, messageNotifications](const Network::HttpResponse &resp) {
+		    if (resp.success) {
+			    Logger::log("[API] Guild %s notification level set to %d", guildId.c_str(), messageNotifications);
+		    } else {
+			    Logger::log("[API] Failed to set guild notification level: %d %s", resp.statusCode, resp.error.c_str());
+		    }
+	    },
+	    {{"Authorization", token}, {"Content-Type", "application/json"}});
+}
+
+void DiscordClient::setChannelNotificationLevel(const std::string &channelId, int messageNotifications) {
+	if (token.empty() || channelId.empty() || messageNotifications < 0 || messageNotifications > 3) {
+		return;
+	}
+	std::string guildId = getGuildIdFromChannel(channelId);
+	if (guildId.empty() || guildId == "DM") {
+		return;
+	}
+
+	{
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		auto &co = notificationSettings[guildId].channelOverrides[channelId];
+		co.channelId = channelId;
+		co.messageNotifications = messageNotifications;
+		co.flags &= ~((1 << 9) | (1 << 10));
+	}
+
+	std::string url = "https://discord.com/api/v10/users/@me/guilds/" + guildId + "/settings";
+	std::string body = "{\"channel_overrides\":{\"" + channelId +
+	                   "\":{\"message_notifications\":" + std::to_string(messageNotifications) + "}}}";
+
+	Network::NetworkManager::getInstance().enqueue(
+	    url, "PATCH", body, Network::RequestPriority::INTERACTIVE,
+	    [channelId, messageNotifications](const Network::HttpResponse &resp) {
+		    if (resp.success) {
+			    Logger::log("[API] Channel %s notification level set to %d", channelId.c_str(), messageNotifications);
+		    } else {
+			    Logger::log("[API] Failed to set channel notification level: %d %s", resp.statusCode,
+			                resp.error.c_str());
+		    }
+	    },
+	    {{"Authorization", token}, {"Content-Type", "application/json"}});
 }
 
 } // namespace Discord

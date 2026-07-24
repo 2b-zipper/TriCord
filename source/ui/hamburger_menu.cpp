@@ -6,7 +6,6 @@
 #include "discord/discord_client.h"
 #include "ui/image_manager.h"
 #include "ui/screen_manager.h"
-#include "ui/server_list_screen.h"
 #include "utils/utf8_utils.h"
 #include <3ds.h>
 #include <citro2d.h>
@@ -24,7 +23,6 @@ HamburgerMenu::HamburgerMenu()
 
 void HamburgerMenu::refreshStrings() {
 	items.clear();
-	items.push_back({TR("menu.direct_messages"), MenuItemType::DIRECT_MESSAGES});
 	items.push_back({TR("menu.servers"), MenuItemType::SERVER_LIST});
 	items.push_back({TR("menu.settings"), MenuItemType::SETTINGS});
 	items.push_back({TR("menu.about"), MenuItemType::ABOUT});
@@ -119,10 +117,6 @@ void HamburgerMenu::update() {
 				switch (item.type) {
 				case MenuItemType::SERVER_LIST:
 					sm.setScreen(ScreenType::GUILD_LIST);
-					close();
-					return;
-				case MenuItemType::DIRECT_MESSAGES:
-					sm.setScreen(ScreenType::DM_LIST);
 					close();
 					return;
 				case MenuItemType::SETTINGS:
@@ -225,7 +219,6 @@ void HamburgerMenu::update() {
 				Logger::log("[HamburgerMenu] Deleting account %d", accountSelectionIndex);
 				Config::getInstance().removeAccount(accountSelectionIndex);
 
-				// Adjust selection
 				const auto &newAccounts = Config::getInstance().getAccounts();
 
 				if (newAccounts.empty()) {
@@ -467,11 +460,9 @@ void HamburgerMenu::drawAccountCard(float x, float y, float alpha) {
 	Discord::User self = Discord::DiscordClient::getInstance().getCurrentUser();
 	float cardH = 55.0f;
 
-	// Highlight if selected
 	if (accountCardSelected) {
 		drawRoundedRect(x + 8, y, 0.975f, MENU_WIDTH - 16, cardH - 5, 8.0f, ScreenManager::colorSelection());
 	} else {
-		// Subtle separator line
 		C2D_DrawRectSolid(x + 10, y, 0.975f, MENU_WIDTH - 20, 1.0f, ScreenManager::colorBackgroundLight());
 	}
 
@@ -526,14 +517,12 @@ void HamburgerMenu::drawAccountCard(float x, float y, float alpha) {
 		break;
 	}
 
-	// Status Icon
 	C3D_Tex *statTex = ImageManager::getInstance().getLocalImage(iconPath);
 	if (statTex) {
 		float sSize = 10.0f;
 		Tex3DS_SubTexture subtex = {(u16)statTex->width, (u16)statTex->height, 0.0f, 1.0f, 1.0f, 0.0f};
 		C2D_Image img = {statTex, &subtex};
 
-		// Draw background circle for the icon to stand out
 		C2D_DrawCircleSolid(avatarX + avatarSize - 2, avatarY + avatarSize - 2, 0.985f, 6,
 		                    ScreenManager::colorBackgroundDark());
 

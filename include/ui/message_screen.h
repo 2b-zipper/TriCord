@@ -1,14 +1,13 @@
 #ifndef MESSAGE_SCREEN_H
 #define MESSAGE_SCREEN_H
 
-#include "discord/discord_client.h"
 #include "discord/types.h"
 #include "ui/screen_manager.h"
 #include "ui/emoji_picker.h"
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
-#include <thread>
 #include <unordered_set>
 #include <vector>
 
@@ -43,6 +42,7 @@ class MessageScreen : public Screen {
 	bool showNewMessageIndicator;
 	int newMessageCount;
 	bool isForumView;
+	bool isHiddenChannel = false;
 	bool hasMoreHistory;
 	uint32_t lastImageGeneration;
 
@@ -53,15 +53,22 @@ class MessageScreen : public Screen {
 	std::vector<float> messagePositions;
 	std::vector<float> messageHeights;
 	std::unordered_map<size_t, float> embedHeightCache;
+	std::set<std::string> revealedSpoilers;
 	float targetScrollY;
 	float currentScrollY;
 	float totalContentHeight;
 
 	bool isMenuOpen;
 	int menuIndex;
+	bool pollMode = false;
+	int pollAnswerIndex = 0;
+	bool wasAtBottom = false;
 	std::vector<std::string> menuOptions;
 	std::vector<std::string> menuActions;
 	std::set<std::string> pendingMemberFetches;
+	std::vector<std::string> queuedMemberFetches;
+	void flushMemberFetches();
+	u32 authorNameColor(const Discord::Message &msg);
 	std::map<std::string, uint64_t> failedMemberFetches;
 	std::shared_ptr<bool> aliveToken;
 	enum class BottomScreenMode { TOPIC, EMOJI_PICKER };
@@ -76,7 +83,7 @@ class MessageScreen : public Screen {
 	void fetchOlderMessages();
 	float drawMessage(const Discord::Message &msg, float y, float maxWidth, bool isSelected, bool showHeader);
 	float drawForumMessage(const Discord::Message &msg, float y, bool isSelected);
-	float drawSystemMessage(const Discord::Message &msg, float y, float topMargin, float height);
+	float drawSystemMessage(const Discord::Message &msg, float y, float topMargin, float height, bool isSelected);
 	float drawReplyPreview(const Discord::Message &msg, float x, float y);
 	float drawForwardHeader(const Discord::Message &msg, float x, float y);
 	float drawAuthorHeader(const Discord::Message &msg, float x, float y, bool showHeader);
@@ -84,6 +91,9 @@ class MessageScreen : public Screen {
 	float drawAttachments(const Discord::Message &msg, float x, float y, float maxWidth);
 	float drawStickers(const Discord::Message &msg, float x, float y, float maxWidth);
 	float drawReactions(const Discord::Message &msg, float x, float y, bool isSelected);
+	float drawPoll(const Discord::Message &msg, float x, float y, float maxWidth, bool isSelected);
+	float calculatePollHeight(const Discord::Poll &poll, float maxWidth);
+	void submitPollVote(int answerIndex);
 	float calculateMessageHeight(const Discord::Message &msg, bool showHeader);
 	float calculateEmbedHeight(const Discord::Embed &embed, float maxWidth);
 	float renderEmbed(const Discord::Embed &embed, float x, float y, float maxWidth);
@@ -94,6 +104,8 @@ class MessageScreen : public Screen {
 	void rebuildLayoutCache();
 	void ensureSelectionVisible();
 	void catchUpMessages();
+	bool isAtBottom() const;
+	void syncScrollAfterRebuild(bool wasAtBottom, bool updateSelection = false);
 
 	struct KeyboardResult {
 		int button;
@@ -102,6 +114,12 @@ class MessageScreen : public Screen {
 	KeyboardResult runKeyboard(const std::string &hint, const std::string &initialText = "");
 
 	void renderReactionIcon();
+	void renderCallParticipants(float y, const std::vector<Discord::VoiceParticipant> &participants);
+	void renderDmProfile(float y);
+	std::vector<Discord::VoiceParticipant> callParticipants() const;
+	bool isCallableChannel() const;
+	bool isCallActive() const;
+	void startCall();
 };
 
 } // namespace UI

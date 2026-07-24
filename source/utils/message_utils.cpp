@@ -1,7 +1,6 @@
 #include "utils/message_utils.h"
 #include "core/config.h"
 #include "core/i18n.h"
-#include "log.h"
 #include "ui/screen_manager.h"
 #include "utils/string_utils.h"
 #include "utils/utf8_utils.h"
@@ -62,6 +61,18 @@ void syncClock(const std::string &dateStr) {
 
 time_t getUtcNow() { return time(NULL); }
 
+s64 get3DSLocalTimeOffset() { return (s64)Config::getInstance().getTimezoneOffset() * 3600LL; }
+
+bool getLocalTm(const std::string &timestamp, struct tm &out) {
+	time_t utc = parseISO8601(timestamp);
+	if (utc == 0) {
+		return false;
+	}
+	time_t local = utc + (time_t)get3DSLocalTimeOffset();
+	gmtime_r(&local, &out);
+	return true;
+}
+
 time_t parseISO8601(const std::string &timestamp) {
 	int year, month, day, hour, min, sec;
 	if (sscanf(timestamp.c_str(), "%d-%d-%dT%d:%d:%d", &year, &month, &day, &hour, &min, &sec) != 6) {
@@ -99,77 +110,82 @@ time_t snowflakeToTimestamp(const std::string &snowflake) {
 	return (time_t)(((id >> 22) + 1420070400000ULL) / 1000);
 }
 
-std::string formatTimestamp(const std::string &timestamp) {
+bool isNewerSnowflake(const std::string &a, const std::string &b) {
+	if (b.empty()) {
+		return !a.empty();
+	}
+	if (a.empty()) {
+		return false;
+	}
+	return (a.length() > b.length()) || (a.length() == b.length() && a > b);
+}
+
+static bool isUtf8Continuation(unsigned char c) { return (c & 0xC0) == 0x80; }
+
+static bool translatePendingStatus(const std::string &timestamp, std::string &out) {
 	if (timestamp == "Sending...") {
-		return TR("message.status.sending");
+		out = TR("message.status.sending");
+		return true;
 	}
 	if (timestamp == "Failed") {
-		return TR("message.status.failed");
+		out = TR("message.status.failed");
+		return true;
+	}
+	return false;
+}
+
+std::string formatTimestamp(const std::string &timestamp) {
+	std::string pending;
+	if (translatePendingStatus(timestamp, pending)) {
+		return pending;
 	}
 	time_t msg_utc = parseISO8601(timestamp);
 	if (msg_utc == 0) {
 		return timestamp;
 	}
-
-	int offsetSeconds = Config::getInstance().getTimezoneOffset() * 3600;
-
-	time_t now_utc = getUtcNow();
-	time_t now_local = now_utc + offsetSeconds;
-	time_t msg_local = msg_utc + offsetSeconds;
-
-	struct tm now_tm;
+	s64 offset = get3DSLocalTimeOffset();
+	time_t msg_local = msg_utc + (time_t)offset;
 	struct tm msg_tm;
-	gmtime_r(&now_local, &now_tm);
 	gmtime_r(&msg_local, &msg_tm);
 
-	struct tm today_start_tm = now_tm;
-	today_start_tm.tm_hour = 0;
-	today_start_tm.tm_min = 0;
-	today_start_tm.tm_sec = 0;
+	time_t now_local = getUtcNow() + (time_t)offset;
+	struct tm now_tm;
+	gmtime_r(&now_local, &now_tm);
 
+	struct tm today_start_tm = now_tm;
+	today_start_tm.tm_hour = today_start_tm.tm_min = today_start_tm.tm_sec = 0;
 	time_t today_start_local = mktime(&today_start_tm);
 
 	char buffer[64];
 	if (msg_tm.tm_year == now_tm.tm_year && msg_tm.tm_mon == now_tm.tm_mon && msg_tm.tm_mday == now_tm.tm_mday) {
 		snprintf(buffer, sizeof(buffer), "%02d:%02d", msg_tm.tm_hour, msg_tm.tm_min);
-	} else {
-		if (msg_local >= (today_start_local - 86400) && msg_local < today_start_local) {
-			std::string yesterday_at = Core::I18n::getInstance().get("time.yesterday_at");
-			std::string timeStr = (msg_tm.tm_hour < 10 ? "0" : "") + std::to_string(msg_tm.tm_hour) + ":" +
-			                      (msg_tm.tm_min < 10 ? "0" : "") + std::to_string(msg_tm.tm_min);
-			size_t pos = yesterday_at.find("{0}");
-			if (pos != std::string::npos) {
-				yesterday_at.replace(pos, 3, timeStr);
-			}
-			return yesterday_at;
-		} else {
-			snprintf(buffer, sizeof(buffer), "%04d/%02d/%02d %02d:%02d", msg_tm.tm_year + 1900, msg_tm.tm_mon + 1,
-			         msg_tm.tm_mday, msg_tm.tm_hour, msg_tm.tm_min);
+	} else if (msg_local >= (today_start_local - 86400) && msg_local < today_start_local) {
+		std::string timeStr = (msg_tm.tm_hour < 10 ? "0" : "") + std::to_string(msg_tm.tm_hour) + ":" +
+		                      (msg_tm.tm_min < 10 ? "0" : "") + std::to_string(msg_tm.tm_min);
+		std::string yesterday_at = TR("time.yesterday_at");
+		size_t pos = yesterday_at.find("{0}");
+		if (pos != std::string::npos) {
+			yesterday_at.replace(pos, 3, timeStr);
 		}
+		return yesterday_at;
+	} else {
+		snprintf(buffer, sizeof(buffer), "%04d/%02d/%02d %02d:%02d", msg_tm.tm_year + 1900, msg_tm.tm_mon + 1,
+		         msg_tm.tm_mday, msg_tm.tm_hour, msg_tm.tm_min);
 	}
-
 	return std::string(buffer);
 }
 
 std::string formatTimeOnly(const std::string &timestamp) {
-	if (timestamp == "Sending...") {
+	std::string pending;
+	if (translatePendingStatus(timestamp, pending)) {
 		return "";
 	}
-	time_t utc_epoch = parseISO8601(timestamp);
-	if (utc_epoch == 0) {
+	struct tm msg_tm;
+	if (!getLocalTm(timestamp, msg_tm)) {
 		return timestamp.substr(11, 5);
 	}
-
-	s64 offset_ms = (s64)Config::getInstance().getTimezoneOffset() * 3600LL * 1000LL;
-
-	time_t local_epoch = utc_epoch + (offset_ms / 1000);
-	struct tm *ltime = gmtime(&local_epoch);
-	if (!ltime) {
-		return timestamp.substr(11, 5);
-	}
-
 	char buffer[16];
-	snprintf(buffer, sizeof(buffer), "%02d:%02d", ltime->tm_hour, ltime->tm_min);
+	snprintf(buffer, sizeof(buffer), "%02d:%02d", msg_tm.tm_hour, msg_tm.tm_min);
 	return std::string(buffer);
 }
 
@@ -196,9 +212,7 @@ std::vector<std::string> wrapText(const std::string &text, float maxWidth, float
 
 				size_t guessLen = std::min(remaining, (size_t)30);
 
-				// Ensure guessLen lands on a UTF-8 character boundary (start of char or
-				// end of string)
-				while (guessLen < remaining && (text[start + innerPos + guessLen] & 0xC0) == 0x80) {
+				while (guessLen < remaining && isUtf8Continuation(text[start + innerPos + guessLen])) {
 					guessLen++;
 				}
 
@@ -208,8 +222,7 @@ std::vector<std::string> wrapText(const std::string &text, float maxWidth, float
 				if (currentW > maxWidth) {
 					while (guessLen > 1 && currentW > maxWidth) {
 						guessLen--;
-						// Align to UTF-8 start
-						while (guessLen > 0 && (text[start + innerPos + guessLen] & 0xC0) == 0x80) {
+						while (guessLen > 0 && isUtf8Continuation(text[start + innerPos + guessLen])) {
 							guessLen--;
 						}
 						if (guessLen == 0) {
@@ -221,13 +234,12 @@ std::vector<std::string> wrapText(const std::string &text, float maxWidth, float
 					}
 				} else {
 					while (guessLen < remaining) {
-						// Add small batch of chars (e.g. up to 6 bytes)
 						int charsAdded = 0;
 						size_t bytesAdded = 0;
 						while (guessLen + bytesAdded < remaining && charsAdded < 3) {
 							bytesAdded++;
 							while (guessLen + bytesAdded < remaining &&
-							       (text[start + innerPos + guessLen + bytesAdded] & 0xC0) == 0x80) {
+							       isUtf8Continuation(text[start + innerPos + guessLen + bytesAdded])) {
 								bytesAdded++;
 							}
 							charsAdded++;
@@ -243,7 +255,7 @@ std::vector<std::string> wrapText(const std::string &text, float maxWidth, float
 							while (tempPos < nextStep) {
 								size_t charLen = 1;
 								while (tempPos + charLen < nextStep &&
-								       (text[start + innerPos + guessLen + tempPos + charLen] & 0xC0) == 0x80) {
+								       isUtf8Continuation(text[start + innerPos + guessLen + tempPos + charLen])) {
 									charLen++;
 								}
 
@@ -277,7 +289,7 @@ std::vector<std::string> wrapText(const std::string &text, float maxWidth, float
 
 				if (guessLen == 0) {
 					size_t charLen = 1;
-					while (innerPos + charLen < remaining && (text[start + innerPos + charLen] & 0xC0) == 0x80) {
+					while (innerPos + charLen < remaining && isUtf8Continuation(text[start + innerPos + charLen])) {
 						charLen++;
 					}
 					guessLen = charLen;
@@ -444,21 +456,12 @@ std::string getRelativeTime(time_t targetEpoch) {
 }
 
 std::string getLocalDateString(const std::string &timestamp) {
-	time_t utc = parseISO8601(timestamp);
-	if (utc == 0) {
+	struct tm lt;
+	if (!getLocalTm(timestamp, lt)) {
 		return timestamp.substr(0, 10);
 	}
-
-	s64 offset_s = (s64)Config::getInstance().getTimezoneOffset() * 3600LL;
-	time_t local = utc + offset_s;
-
-	struct tm *lt = gmtime(&local);
-	if (!lt) {
-		return timestamp.substr(0, 10);
-	}
-
 	char buffer[32];
-	snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d", lt->tm_year + 1900, lt->tm_mon + 1, lt->tm_mday);
+	snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d", lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday);
 	return std::string(buffer);
 }
 

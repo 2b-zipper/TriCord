@@ -1,7 +1,7 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#define DISCORD_GATEWAY_URL "wss://gateway.discord.gg/?v=10&encoding=json"
+#define DISCORD_GATEWAY_URL "wss://gateway.discord.gg/?v=10&encoding=json&compress=zlib-stream"
 #define DISCORD_REMOTE_AUTH_URL "wss://remote-auth-gateway.discord.gg/?v=2"
 #define DISCORD_QR_BASE_URL "https://discord.com/ra/"
 
@@ -112,6 +112,8 @@ class Config {
 	void setThemeType(int type);
 	bool isTypingIndicatorEnabled() const { return typingIndicatorEnabled; }
 	void setTypingIndicatorEnabled(bool enabled);
+	bool isEchoCancellationEnabled() const { return echoCancellation; }
+	void setEchoCancellationEnabled(bool enabled);
 	bool isFileLoggingEnabled() const { return fileLoggingEnabled; }
 	void setFileLoggingEnabled(bool enabled);
 
@@ -119,6 +121,8 @@ class Config {
 	void setShowAvatarsEnabled(bool enabled);
 	bool isShowServerIconsEnabled() const { return showServerIcons; }
 	void setShowServerIconsEnabled(bool enabled);
+	bool isShowHiddenChannelsEnabled() const { return showHiddenChannels; }
+	void setShowHiddenChannelsEnabled(bool enabled);
 
 	bool isDisclaimerAccepted() const { return disclaimerAccepted; }
 	void setDisclaimerAccepted(bool accepted);
@@ -140,11 +144,13 @@ class Config {
 	std::string language;
 	int themeType;
 	bool typingIndicatorEnabled;
+	bool echoCancellation;
 	bool fileLoggingEnabled;
 	bool disclaimerAccepted;
 	bool sslVerificationDisabled;
 	bool showAvatars;
 	bool showServerIcons;
+	bool showHiddenChannels;
 
 	bool customThemeEnabled;
 	std::string selectedThemeName;
