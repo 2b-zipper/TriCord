@@ -29,6 +29,8 @@ constexpr float VOICE_BTN_Y = 240.0f - VoiceControls::BUTTON_SIZE - 10.0f;
 float bottomButtonY() {
 	return VoiceControls::visible() ? VOICE_BTN_Y - VoiceControls::BUTTON_SIZE - 8.0f : VOICE_BTN_Y;
 }
+
+bool pollEnded(const Discord::Poll &poll);
 } // namespace
 
 MessageScreen::MessageScreen(const std::string &channelId, const std::string &channelName)
@@ -66,6 +68,7 @@ MessageScreen::~MessageScreen() {
 	Discord::DiscordClient::getInstance().setMessageCallback(nullptr);
 	Discord::DiscordClient::getInstance().setMessageUpdateCallback(nullptr);
 	Discord::DiscordClient::getInstance().setMessageDeleteCallback(nullptr);
+	Discord::DiscordClient::getInstance().setPollVoteCallback(nullptr);
 	Discord::DiscordClient::getInstance().setConnectionCallback(nullptr);
 	// Guarded so a screen that has already opened another channel keeps its id.
 	if (Discord::DiscordClient::getInstance().getSelectedChannelId() == channelId) {
@@ -239,6 +242,29 @@ void MessageScreen::onEnter() {
 		}
 	});
 
+	client.setPollVoteCallback([this](const std::string &channelId, const std::string &messageId,
+	                                  const std::string &userId, int answerId, bool added) {
+		if (channelId != this->channelId) {
+			return;
+		}
+		if (userId == Discord::DiscordClient::getInstance().getCurrentUser().id) {
+			return;
+		}
+		std::lock_guard<std::recursive_mutex> lock(messageMutex);
+		for (auto &msg : this->messages) {
+			if (msg.id != messageId || !msg.hasPoll) {
+				continue;
+			}
+			for (auto &answer : msg.poll.answers) {
+				if (answer.id == answerId) {
+					answer.count = std::max(0, answer.count + (added ? 1 : -1));
+					break;
+				}
+			}
+			break;
+		}
+	});
+
 	client.setConnectionCallback([this]() {
 		Logger::log("[UI] Gateway reconnected, catching up messages...");
 		catchUpMessages();
@@ -395,6 +421,11 @@ void MessageScreen::update() {
 			return;
 		}
 
+		if (pollMode) {
+			pollMode = false;
+			return;
+		}
+
 		if (wasAtBottom && !isLoading && !isForumView && !messages.empty()) {
 			Discord::DiscordClient::getInstance().markChannelRead(channelId, messages.back().id);
 		}
@@ -403,6 +434,7 @@ void MessageScreen::update() {
 		Discord::DiscordClient::getInstance().setMessageDeleteCallback(nullptr);
 		Discord::DiscordClient::getInstance().setMessageReactionAddCallback(nullptr);
 		Discord::DiscordClient::getInstance().setMessageReactionRemoveCallback(nullptr);
+		Discord::DiscordClient::getInstance().setPollVoteCallback(nullptr);
 
 		{
 			std::lock_guard<std::recursive_mutex> lock(client.getMutex());
@@ -421,6 +453,11 @@ void MessageScreen::update() {
 
 	if (isLoading) {
 		return;
+	}
+
+	if (pollMode && (selectedIndex < 0 || selectedIndex >= (int)this->messages.size() ||
+	                 !this->messages[selectedIndex].hasPoll || pollEnded(this->messages[selectedIndex].poll))) {
+		pollMode = false;
 	}
 
 	if (isMenuOpen) {
@@ -642,6 +679,19 @@ void MessageScreen::update() {
 			keyRepeatTimer = 0;
 		}
 
+		if (pollMode && (shouldMoveDown || shouldMoveUp)) {
+			int answerCount = 0;
+			if (selectedIndex >= 0 && selectedIndex < (int)this->messages.size()) {
+				answerCount = (int)this->messages[selectedIndex].poll.answers.size();
+			}
+			if (answerCount > 0) {
+				pollAnswerIndex += shouldMoveDown ? 1 : -1;
+				pollAnswerIndex = std::clamp(pollAnswerIndex, 0, answerCount - 1);
+			}
+			shouldMoveDown = false;
+			shouldMoveUp = false;
+		}
+
 		if (!isManualScrolling && (shouldMoveDown || shouldMoveUp)) {
 			if (shouldMoveDown) {
 				bool visible = false;
@@ -697,6 +747,13 @@ void MessageScreen::update() {
 				if (isForumView) {
 					Discord::DiscordClient::getInstance().setSelectedChannelId(msg.id);
 					ScreenManager::getInstance().setScreen(ScreenType::MESSAGES);
+					return;
+				} else if (pollMode) {
+					submitPollVote(pollAnswerIndex);
+					return;
+				} else if (msg.hasPoll && !msg.poll.answers.empty() && !pollEnded(msg.poll)) {
+					pollMode = true;
+					pollAnswerIndex = 0;
 					return;
 				} else {
 					bottomMode = BottomScreenMode::EMOJI_PICKER;
@@ -761,6 +818,9 @@ float MessageScreen::calculateMessageHeight(const Discord::Message &msg, bool sh
 
 	if (msg.type != 0 && msg.type != 19) {
 		totalH = 22.0f;
+		if (msg.hasPollResult) {
+			totalH += 26.0f;
+		}
 	} else {
 		if (msg.type == 19 && !msg.referencedAuthorName.empty()) {
 			totalH += 12.0f;
@@ -788,6 +848,10 @@ float MessageScreen::calculateMessageHeight(const Discord::Message &msg, bool sh
 					totalH += 12.0f;
 				}
 			}
+		}
+
+		if (msg.hasPoll) {
+			totalH += calculatePollHeight(msg.poll, 400.0f - 42.0f - 10.0f) + 6.0f;
 		}
 
 		if (!msg.embeds.empty()) {
@@ -914,9 +978,17 @@ float MessageScreen::drawForumMessage(const Discord::Message &msg, float y, bool
 	return 45.0f;
 }
 
-float MessageScreen::drawSystemMessage(const Discord::Message &msg, float y, float topMargin, float height) {
+namespace {
+bool drawEmojiGlyph(const Discord::Emoji &emoji, float x, float y, float box, float z);
+}
+
+float MessageScreen::drawSystemMessage(const Discord::Message &msg, float y, float topMargin, float height,
+                                       bool isSelected) {
 	float blockHeight = 14.0f;
 	float drawY = y + topMargin + ((height - topMargin - blockHeight) / 2.0f);
+	if (msg.hasPollResult) {
+		drawY = y + topMargin + 4.0f;
+	}
 
 	u32 iconColor = ScreenManager::colorSuccess();
 	std::string icon = "->";
@@ -955,6 +1027,9 @@ float MessageScreen::drawSystemMessage(const Discord::Message &msg, float y, flo
 	} else if (msg.type == 3) {
 		iconColor = C2D_Color32(55, 151, 93, 255);
 		text = TR("message.system.call");
+	} else if (msg.type == 46) {
+		iconColor = ScreenManager::colorTextMuted();
+		text = Core::I18n::format(TR("message.system.poll_ended"), msg.pollResult.question);
 	} else {
 		return height;
 	}
@@ -973,6 +1048,8 @@ float MessageScreen::drawSystemMessage(const Discord::Message &msg, float y, flo
 			iconPath = "romfs:/discord-icons/boostgem.png";
 		} else if (msg.type == 3) {
 			iconPath = "romfs:/discord-icons/phone.png";
+		} else if (msg.type == 46) {
+			iconPath = "romfs:/discord-icons/polls.png";
 		} else {
 			iconPath = "romfs:/discord-icons/chat.png";
 		}
@@ -1033,6 +1110,33 @@ float MessageScreen::drawSystemMessage(const Discord::Message &msg, float y, flo
 	} else {
 		drawRichText(currentX, drawY, 0.5f, 0.42f, 0.42f, ScreenManager::colorTextMuted(), text);
 	}
+
+	if (msg.hasPollResult) {
+		const Discord::PollResult &pr = msg.pollResult;
+		float cardX = textOffsetX;
+		float cardY = drawY + 16.0f;
+		u32 cardColor = isSelected ? ScreenManager::colorBackgroundDark() : ScreenManager::colorBackgroundLight();
+		drawRoundedRect(cardX, cardY, 0.44f, 300.0f, 28.0f, 5.0f, cardColor);
+
+		float labelX = cardX + 8.0f;
+		int pct = pr.totalVotes > 0 ? (pr.winnerVotes * 100 / pr.totalVotes) : 0;
+		if (pr.hasWinner) {
+			if ((!pr.winnerEmoji.id.empty() || !pr.winnerEmoji.name.empty()) &&
+			    drawEmojiGlyph(pr.winnerEmoji, labelX, cardY + 4.0f, 16.0f, 0.46f)) {
+				labelX += 20.0f;
+			}
+			drawText(labelX, cardY + 3.0f, 0.46f, 0.42f, 0.42f, ScreenManager::colorText(), pr.winnerText);
+			std::string sub = TR("poll.winning_answer") + " ・ " + std::to_string(pct) + "%";
+			drawText(cardX + 8.0f, cardY + 15.0f, 0.46f, 0.33f, 0.33f, ScreenManager::colorTextMuted(), sub);
+		} else if (pr.totalVotes > 0) {
+			drawText(labelX, cardY + 3.0f, 0.46f, 0.42f, 0.42f, ScreenManager::colorText(), TR("poll.tie"));
+			drawText(cardX + 8.0f, cardY + 15.0f, 0.46f, 0.33f, 0.33f, ScreenManager::colorTextMuted(),
+			         std::to_string(pct) + "%");
+		} else {
+			drawText(labelX, cardY + 8.0f, 0.46f, 0.4f, 0.4f, ScreenManager::colorTextMuted(), TR("poll.no_winner"));
+		}
+	}
+
 	return height;
 }
 
@@ -1369,6 +1473,191 @@ float MessageScreen::drawStickers(const Discord::Message &msg, float x, float y,
 	return newY;
 }
 
+namespace {
+constexpr float POLL_PAD = 8.0f;
+constexpr float POLL_ROW_H = 24.0f;
+constexpr float POLL_ROW_GAP = 4.0f;
+constexpr float POLL_LINE_H = 14.0f;
+
+bool drawEmojiGlyph(const Discord::Emoji &emoji, float x, float y, float box, float z) {
+	UI::EmojiManager &mgr = UI::EmojiManager::getInstance();
+	EmojiManager::EmojiInfo info =
+	    emoji.id.empty() ? mgr.getTwemojiInfo(Utils::Utf8::utf8ToHex(emoji.name)) : mgr.getEmojiInfo(emoji.id);
+
+	if (info.tex) {
+		float uMax = (float)info.originalW / info.tex->width;
+		float vMax = (float)info.originalH / info.tex->height;
+		Tex3DS_SubTexture subtex = {(u16)info.originalW, (u16)info.originalH, 0.0f, 1.0f, uMax, 1.0f - vMax};
+		float scale = std::min(box / info.originalW, box / info.originalH);
+		float dx = x + (box - info.originalW * scale) / 2.0f;
+		float dy = y + (box - info.originalH * scale) / 2.0f;
+		C2D_DrawImageAt({info.tex, &subtex}, dx, dy, z, nullptr, scale, scale);
+		return true;
+	}
+
+	if (!emoji.id.empty()) {
+		mgr.prefetchEmoji(emoji.id);
+	}
+	return false;
+}
+
+bool pollEnded(const Discord::Poll &poll) {
+	return !poll.expiry.empty() &&
+	       difftime(UI::MessageUtils::parseISO8601(poll.expiry), UI::MessageUtils::getUtcNow()) <= 0;
+}
+
+std::string pollTimeLeft(const Discord::Poll &poll) {
+	if (poll.expiry.empty()) {
+		return "";
+	}
+	double remaining = difftime(UI::MessageUtils::parseISO8601(poll.expiry), UI::MessageUtils::getUtcNow());
+	if (remaining <= 0) {
+		return TR("poll.closed");
+	}
+	if (remaining < 3600) {
+		return Core::I18n::getInstance().format(TR("poll.minutes_left"), std::to_string((int)(remaining / 60) + 1));
+	}
+	if (remaining < 86400 * 2) {
+		return Core::I18n::getInstance().format(TR("poll.hours_left"), std::to_string((int)(remaining / 3600)));
+	}
+	return Core::I18n::getInstance().format(TR("poll.days_left"), std::to_string((int)(remaining / 86400)));
+}
+} // namespace
+
+float MessageScreen::calculatePollHeight(const Discord::Poll &poll, float maxWidth) {
+	float innerWidth = maxWidth - POLL_PAD * 2.0f;
+	float h = POLL_PAD;
+	h += UI::MessageUtils::wrapText(poll.question, innerWidth, 0.45f).size() * POLL_LINE_H;
+	h += POLL_LINE_H;
+	h += poll.answers.size() * (POLL_ROW_H + POLL_ROW_GAP);
+	h += POLL_LINE_H + 3.0f;
+	return h;
+}
+
+float MessageScreen::drawPoll(const Discord::Message &msg, float x, float y, float maxWidth, bool isSelected) {
+	const Discord::Poll &poll = msg.poll;
+	float height = calculatePollHeight(poll, maxWidth);
+	float innerWidth = maxWidth - POLL_PAD * 2.0f;
+
+	u32 cardColor = isSelected ? ScreenManager::colorBackgroundDark() : ScreenManager::colorBackgroundLight();
+	u32 rowColor = isSelected ? ScreenManager::colorBackgroundLight() : ScreenManager::colorBackgroundDark();
+
+	drawRoundedRect(x, y, 0.44f, maxWidth, height, 6.0f, cardColor);
+
+	float textY = y + POLL_PAD;
+	for (const auto &line : UI::MessageUtils::wrapText(poll.question, innerWidth, 0.45f)) {
+		drawText(x + POLL_PAD, textY, 0.45f, 0.45f, 0.45f, ScreenManager::colorText(), line);
+		textY += POLL_LINE_H;
+	}
+
+	drawText(x + POLL_PAD, textY, 0.45f, 0.35f, 0.35f, ScreenManager::colorTextMuted(),
+	         TR(poll.allowMultiselect ? "poll.select_multiple" : "poll.select_one"));
+	textY += POLL_LINE_H;
+
+	int totalVotes = 0;
+	for (const auto &answer : poll.answers) {
+		totalVotes += answer.count;
+	}
+
+	bool voted = false;
+	for (const auto &answer : poll.answers) {
+		if (answer.meVoted) {
+			voted = true;
+			break;
+		}
+	}
+	bool showResults = voted || poll.finalized;
+
+	bool active = pollMode && isSelected;
+
+	for (size_t i = 0; i < poll.answers.size(); i++) {
+		const Discord::PollAnswer &answer = poll.answers[i];
+		bool highlighted = active && (int)i == pollAnswerIndex;
+
+		if (highlighted) {
+			drawRoundedRect(x + POLL_PAD - 2.0f, textY - 2.0f, 0.45f, innerWidth + 4.0f, POLL_ROW_H + 4.0f, 5.0f,
+			                ScreenManager::colorAccent());
+		}
+
+		drawRoundedRect(x + POLL_PAD, textY, 0.451f, innerWidth, POLL_ROW_H, 4.0f, rowColor);
+
+		if (showResults && totalVotes > 0) {
+			float ratio = (float)answer.count / totalVotes;
+			if (ratio > 0.0f) {
+				drawRoundedRect(x + POLL_PAD, textY, 0.46f, std::max(8.0f, innerWidth * ratio), POLL_ROW_H, 4.0f,
+				                answer.meVoted ? ScreenManager::colorAccent() : ScreenManager::colorSelection());
+			}
+		}
+
+		float labelX = x + POLL_PAD + 6.0f;
+		if (!answer.emoji.name.empty() || !answer.emoji.id.empty()) {
+			drawEmojiGlyph(answer.emoji, labelX, textY + 4.0f, 16.0f, 0.48f);
+			labelX += 20.0f;
+		}
+
+		std::string countStr = showResults ? std::to_string(answer.count) : "";
+		float countW = countStr.empty() ? 0.0f : UI::measureText(countStr, 0.4f, 0.4f);
+		float labelMax = x + POLL_PAD + innerWidth - countW - 10.0f - labelX;
+		auto lines = UI::MessageUtils::wrapText(answer.text, labelMax, 0.4f);
+		drawText(labelX, textY + 6.0f, 0.48f, 0.4f, 0.4f, ScreenManager::colorText(),
+		         lines.empty() ? answer.text : lines.front());
+
+		if (!countStr.empty()) {
+			drawText(x + POLL_PAD + innerWidth - countW - 6.0f, textY + 6.0f, 0.48f, 0.4f, 0.4f,
+			         answer.meVoted ? ScreenManager::colorText() : ScreenManager::colorTextMuted(), countStr);
+		}
+
+		textY += POLL_ROW_H + POLL_ROW_GAP;
+	}
+
+	std::string footer = std::to_string(totalVotes) + TR("poll.votes");
+	std::string timeLeft = pollTimeLeft(poll);
+	if (!timeLeft.empty()) {
+		footer += "  ・  " + timeLeft;
+	}
+	drawText(x + POLL_PAD, textY, 0.45f, 0.35f, 0.35f, ScreenManager::colorTextMuted(), footer);
+
+	return y + height;
+}
+
+void MessageScreen::submitPollVote(int answerIndex) {
+	if (selectedIndex < 0 || selectedIndex >= (int)messages.size()) {
+		return;
+	}
+
+	Discord::Message &msg = messages[selectedIndex];
+	if (!msg.hasPoll || answerIndex < 0 || answerIndex >= (int)msg.poll.answers.size()) {
+		return;
+	}
+	if (pollEnded(msg.poll)) {
+		return;
+	}
+
+	Discord::PollAnswer &target = msg.poll.answers[answerIndex];
+	bool select = !target.meVoted;
+
+	if (!msg.poll.allowMultiselect) {
+		for (auto &answer : msg.poll.answers) {
+			if (answer.meVoted && &answer != &target) {
+				answer.meVoted = false;
+				answer.count = std::max(0, answer.count - 1);
+			}
+		}
+	}
+	target.meVoted = select;
+	target.count = std::max(0, target.count + (select ? 1 : -1));
+
+	std::vector<int> answerIds;
+	for (const auto &answer : msg.poll.answers) {
+		if (answer.meVoted) {
+			answerIds.push_back(answer.id);
+		}
+	}
+
+	Discord::DiscordClient::getInstance().votePoll(channelId, msg.id, answerIds);
+	rebuildLayoutCache();
+}
+
 float MessageScreen::drawReactions(const Discord::Message &msg, float x, float y, bool isSelected) {
 	if (msg.reactions.empty()) {
 		return y;
@@ -1419,35 +1708,17 @@ float MessageScreen::drawReactions(const Discord::Message &msg, float x, float y
 		reactionX += boxW + gap;
 	}
 
-	UI::EmojiManager &emojiMgr = UI::EmojiManager::getInstance();
-
 	for (const auto &info : drawInfos) {
 		float emojiX = info.x + 4.0f;
 		float emojiY = info.y + 2.0f;
 		const auto &react = *info.react;
 
-		EmojiManager::EmojiInfo emojiInfo;
-		if (!react.emoji.id.empty()) {
-			emojiInfo = emojiMgr.getEmojiInfo(react.emoji.id);
-		} else {
-			std::string hex = Utils::Utf8::utf8ToHex(react.emoji.name);
-			emojiInfo = emojiMgr.getTwemojiInfo(hex);
-		}
-
-		if (emojiInfo.tex) {
-			float uMax = (float)emojiInfo.originalW / emojiInfo.tex->width;
-			float vMax = (float)emojiInfo.originalH / emojiInfo.tex->height;
-			Tex3DS_SubTexture subtex = {
-			    (u16)emojiInfo.originalW, (u16)emojiInfo.originalH, 0.0f, 1.0f, uMax, 1.0f - vMax};
-			float scale = std::min(16.0f / emojiInfo.originalW, 16.0f / emojiInfo.originalH);
-			float dx = emojiX + (16.0f - emojiInfo.originalW * scale) / 2.0f;
-			float dy = emojiY + (16.0f - emojiInfo.originalH * scale) / 2.0f;
-			C2D_DrawImageAt({emojiInfo.tex, &subtex}, dx, dy, 0.47f, nullptr, scale, scale);
-		} else if (!react.emoji.id.empty()) {
-			emojiMgr.prefetchEmoji(react.emoji.id);
-			drawText(emojiX, emojiY + 2.0f, 0.47f, 0.4f, 0.4f, ScreenManager::colorTextMuted(), "?");
-		} else {
-			drawText(emojiX, emojiY + 2.0f, 0.47f, 0.5f, 0.5f, ScreenManager::colorText(), react.emoji.name);
+		if (!drawEmojiGlyph(react.emoji, emojiX, emojiY, 16.0f, 0.47f)) {
+			if (!react.emoji.id.empty()) {
+				drawText(emojiX, emojiY + 2.0f, 0.47f, 0.4f, 0.4f, ScreenManager::colorTextMuted(), "?");
+			} else {
+				drawText(emojiX, emojiY + 2.0f, 0.47f, 0.5f, 0.5f, ScreenManager::colorText(), react.emoji.name);
+			}
 		}
 
 		std::string countStr = std::to_string(react.count);
@@ -1475,7 +1746,7 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y, float max
 	}
 
 	if (msg.type != 0 && msg.type != 19) {
-		drawSystemMessage(msg, y, topMargin, height);
+		drawSystemMessage(msg, y, topMargin, height, isSelected);
 		drawReactions(msg, textOffsetX, y + topMargin + 18.0f, isSelected);
 		return height;
 	}
@@ -1495,6 +1766,11 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y, float max
 	}
 
 	contentY = drawMessageContent(msg, textOffsetX, contentY);
+
+	if (msg.hasPoll) {
+		contentY = drawPoll(msg, textOffsetX, contentY, 400.0f - textOffsetX - 10.0f, isSelected);
+		contentY += 6.0f;
+	}
 
 	if (!msg.embeds.empty()) {
 		for (const auto &embed : msg.embeds) {
@@ -1738,6 +2014,8 @@ void MessageScreen::renderBottom(C3D_RenderTarget *target) {
 	std::string hints = "\uE079\uE07A: " + TR("common.navigate") + "  ";
 	if (isMenuOpen) {
 		hints += "\uE000: " + TR("common.select") + "  \uE001: " + TR("common.close");
+	} else if (pollMode) {
+		hints += "\uE000: " + TR("poll.vote") + "  \uE001: " + TR("common.close");
 	} else if (isForumView) {
 		hints += "\uE000: " + TR("common.open") + "  \uE001: " + TR("common.back");
 	} else {

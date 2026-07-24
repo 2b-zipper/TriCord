@@ -193,6 +193,31 @@ struct Reaction {
 	bool me = false;
 };
 
+struct PollAnswer {
+	int id = 0;
+	std::string text;
+	Emoji emoji;
+	int count = 0;
+	bool meVoted = false;
+};
+
+struct Poll {
+	std::string question;
+	std::vector<PollAnswer> answers;
+	std::string expiry;
+	bool allowMultiselect = false;
+	bool finalized = false;
+};
+
+struct PollResult {
+	std::string question;
+	std::string winnerText;
+	Emoji winnerEmoji;
+	int totalVotes = 0;
+	int winnerVotes = 0;
+	bool hasWinner = false;
+};
+
 struct Message {
 	std::string id;
 	std::string content;
@@ -218,6 +243,12 @@ struct Message {
 	std::string originalAuthorName;
 	std::string originalAuthorAvatar;
 	std::string nonce;
+
+	bool hasPoll = false;
+	Poll poll;
+
+	bool hasPollResult = false;
+	PollResult pollResult;
 };
 
 } // namespace Discord

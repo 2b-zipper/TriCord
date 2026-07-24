@@ -37,6 +37,8 @@ using TokenCallback = std::function<void(const std::string &token)>;
 using SendMessageCallback = std::function<void(const Message &msg, bool success, int code)>;
 using ReactionCallback = std::function<void(const std::string &channelId, const std::string &messageId,
                                             const std::string &userId, const Emoji &emoji)>;
+using PollVoteCallback = std::function<void(const std::string &channelId, const std::string &messageId,
+                                            const std::string &userId, int answerId, bool added)>;
 using LoginCallback = std::function<void(bool success, const std::string &token, bool mfaRequired,
                                          const std::string &ticket, const std::string &error)>;
 
@@ -106,6 +108,10 @@ class DiscordClient {
 	void setMessageReactionRemoveCallback(ReactionCallback cb) {
 		std::lock_guard<std::recursive_mutex> lock(clientMutex);
 		messageReactionRemoveCallback = cb;
+	}
+	void setPollVoteCallback(PollVoteCallback cb) {
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		pollVoteCallback = cb;
 	}
 	void setConnectionCallback(std::function<void()> cb) {
 		std::lock_guard<std::recursive_mutex> lock(clientMutex);
@@ -188,6 +194,8 @@ class DiscordClient {
 
 	void sendLazyRequest(const std::string &guildId, const std::string &channelId);
 
+	void votePoll(const std::string &channelId, const std::string &messageId, const std::vector<int> &answerIds);
+
 	bool canSendMessage(const std::string &channelId);
 	bool canManageMessages(const std::string &channelId);
 
@@ -241,6 +249,7 @@ class DiscordClient {
 	void handleMessageAck(const rapidjson::Value &d);
 	void handleReactionAdd(const rapidjson::Value &d);
 	void handleReactionRemove(const rapidjson::Value &d);
+	void handlePollVote(const rapidjson::Value &d, bool added);
 	void handlePresenceUpdate(const rapidjson::Value &d);
 	void handleUserSettingsUpdate(const rapidjson::Value &d);
 	void handleUserGuildSettingsUpdate(const rapidjson::Value &d);
@@ -337,6 +346,7 @@ class DiscordClient {
 	std::function<void(const std::string &)> messageDeleteCallback;
 	ReactionCallback messageReactionAddCallback;
 	ReactionCallback messageReactionRemoveCallback;
+	PollVoteCallback pollVoteCallback;
 
 	std::map<std::string, std::vector<TypingUser>> typingUsers;
 };

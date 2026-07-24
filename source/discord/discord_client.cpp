@@ -411,6 +411,32 @@ void DiscordClient::addReaction(const std::string &channelId, const std::string 
 	                                               {{"Authorization", getInstance().token}});
 }
 
+void DiscordClient::votePoll(const std::string &channelId, const std::string &messageId,
+                             const std::vector<int> &answerIds) {
+	if (channelId.empty() || messageId.empty()) {
+		return;
+	}
+
+	std::string body = "{\"answer_ids\":[";
+	for (size_t i = 0; i < answerIds.size(); i++) {
+		if (i > 0) {
+			body += ",";
+		}
+		body += std::to_string(answerIds[i]);
+	}
+	body += "]}";
+
+	std::string url = "https://discord.com/api/v10/channels/" + channelId + "/polls/" + messageId + "/answers/@me";
+	Network::NetworkManager::getInstance().enqueue(
+	    url, "PUT", body, Network::RequestPriority::INTERACTIVE,
+	    [](const Network::HttpResponse &resp) {
+		    if (!resp.success) {
+			    Logger::log("[Discord] Failed to vote on poll: %ld %s", resp.statusCode, resp.body.c_str());
+		    }
+	    },
+	    {{"Authorization", getInstance().token}, {"Content-Type", "application/json"}});
+}
+
 void DiscordClient::removeReaction(const std::string &channelId, const std::string &messageId,
                                    const std::string &emoji) {
 	if (channelId.empty() || messageId.empty() || emoji.empty()) {
@@ -633,6 +659,10 @@ void DiscordClient::handleDispatch(const rapidjson::Document &doc) {
 		handleReactionAdd(d);
 	} else if (t == "MESSAGE_REACTION_REMOVE") {
 		handleReactionRemove(d);
+	} else if (t == "MESSAGE_POLL_VOTE_ADD") {
+		handlePollVote(d, true);
+	} else if (t == "MESSAGE_POLL_VOTE_REMOVE") {
+		handlePollVote(d, false);
 	} else if (t == "PRESENCE_UPDATE") {
 		handlePresenceUpdate(d);
 	} else if (t == "USER_SETTINGS_UPDATE") {
@@ -1183,6 +1213,15 @@ void DiscordClient::handleReactionRemove(const rapidjson::Value &d) {
 	}
 }
 
+void DiscordClient::handlePollVote(const rapidjson::Value &d, bool added) {
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	if (!pollVoteCallback) {
+		return;
+	}
+	pollVoteCallback(Utils::Json::getString(d, "channel_id"), Utils::Json::getString(d, "message_id"),
+	                 Utils::Json::getString(d, "user_id"), Utils::Json::getInt(d, "answer_id"), added);
+}
+
 void DiscordClient::handlePresenceUpdate(const rapidjson::Value &d) {
 	std::lock_guard<std::recursive_mutex> lock(clientMutex);
 	if (!d.HasMember("user") || !d["user"].IsObject()) {
@@ -1641,6 +1680,31 @@ Message DiscordClient::parseSingleMessage(const rapidjson::Value &d) {
 		}
 	}
 
+	for (const auto &embed : msg.embeds) {
+		if (embed.type != "poll_result") {
+			continue;
+		}
+		msg.hasPollResult = true;
+		for (const auto &field : embed.fields) {
+			if (field.name == "poll_question_text") {
+				msg.pollResult.question = field.value;
+			} else if (field.name == "total_votes") {
+				msg.pollResult.totalVotes = atoi(field.value.c_str());
+			} else if (field.name == "victor_answer_text") {
+				msg.pollResult.winnerText = field.value;
+				msg.pollResult.hasWinner = true;
+			} else if (field.name == "victor_answer_votes") {
+				msg.pollResult.winnerVotes = atoi(field.value.c_str());
+			} else if (field.name == "victor_answer_emoji_id") {
+				msg.pollResult.winnerEmoji.id = field.value;
+			} else if (field.name == "victor_answer_emoji_name") {
+				msg.pollResult.winnerEmoji.name = field.value;
+			}
+		}
+		msg.embeds.clear();
+		break;
+	}
+
 	if (d.HasMember("attachments") && d["attachments"].IsArray()) {
 		const rapidjson::Value &attachments = d["attachments"];
 		for (rapidjson::SizeType a = 0; a < attachments.Size(); a++) {
@@ -1684,6 +1748,53 @@ Message DiscordClient::parseSingleMessage(const rapidjson::Value &d) {
 				reaction.emoji.name = Utils::Json::getString(eObj, "name");
 			}
 			msg.reactions.push_back(reaction);
+		}
+	}
+
+	if (d.HasMember("poll") && d["poll"].IsObject()) {
+		const rapidjson::Value &pObj = d["poll"];
+		msg.hasPoll = true;
+		msg.poll.expiry = Utils::Json::getString(pObj, "expiry");
+		msg.poll.allowMultiselect = Utils::Json::getBool(pObj, "allow_multiselect");
+		if (pObj.HasMember("question") && pObj["question"].IsObject()) {
+			msg.poll.question = Utils::Json::getString(pObj["question"], "text");
+		}
+
+		if (pObj.HasMember("answers") && pObj["answers"].IsArray()) {
+			const rapidjson::Value &answers = pObj["answers"];
+			for (rapidjson::SizeType i = 0; i < answers.Size(); i++) {
+				const rapidjson::Value &aObj = answers[i];
+				PollAnswer answer;
+				answer.id = Utils::Json::getInt(aObj, "answer_id", (int)i + 1);
+				if (aObj.HasMember("poll_media") && aObj["poll_media"].IsObject()) {
+					const rapidjson::Value &mObj = aObj["poll_media"];
+					answer.text = Utils::Json::getString(mObj, "text");
+					if (mObj.HasMember("emoji") && mObj["emoji"].IsObject()) {
+						answer.emoji.id = Utils::Json::getString(mObj["emoji"], "id");
+						answer.emoji.name = Utils::Json::getString(mObj["emoji"], "name");
+					}
+				}
+				msg.poll.answers.push_back(answer);
+			}
+		}
+
+		if (pObj.HasMember("results") && pObj["results"].IsObject()) {
+			const rapidjson::Value &rObj = pObj["results"];
+			msg.poll.finalized = Utils::Json::getBool(rObj, "is_finalized");
+			if (rObj.HasMember("answer_counts") && rObj["answer_counts"].IsArray()) {
+				const rapidjson::Value &counts = rObj["answer_counts"];
+				for (rapidjson::SizeType i = 0; i < counts.Size(); i++) {
+					int id = Utils::Json::getInt(counts[i], "id");
+					for (auto &answer : msg.poll.answers) {
+						if (answer.id != id) {
+							continue;
+						}
+						answer.count = Utils::Json::getInt(counts[i], "count");
+						answer.meVoted = Utils::Json::getBool(counts[i], "me_voted");
+						break;
+					}
+				}
+			}
 		}
 	}
 

@@ -60,6 +60,8 @@ class MessageScreen : public Screen {
 
 	bool isMenuOpen;
 	int menuIndex;
+	bool pollMode = false;
+	int pollAnswerIndex = 0;
 	bool wasAtBottom = false;
 	std::vector<std::string> menuOptions;
 	std::vector<std::string> menuActions;
@@ -81,7 +83,7 @@ class MessageScreen : public Screen {
 	void fetchOlderMessages();
 	float drawMessage(const Discord::Message &msg, float y, float maxWidth, bool isSelected, bool showHeader);
 	float drawForumMessage(const Discord::Message &msg, float y, bool isSelected);
-	float drawSystemMessage(const Discord::Message &msg, float y, float topMargin, float height);
+	float drawSystemMessage(const Discord::Message &msg, float y, float topMargin, float height, bool isSelected);
 	float drawReplyPreview(const Discord::Message &msg, float x, float y);
 	float drawForwardHeader(const Discord::Message &msg, float x, float y);
 	float drawAuthorHeader(const Discord::Message &msg, float x, float y, bool showHeader);
@@ -89,6 +91,9 @@ class MessageScreen : public Screen {
 	float drawAttachments(const Discord::Message &msg, float x, float y, float maxWidth);
 	float drawStickers(const Discord::Message &msg, float x, float y, float maxWidth);
 	float drawReactions(const Discord::Message &msg, float x, float y, bool isSelected);
+	float drawPoll(const Discord::Message &msg, float x, float y, float maxWidth, bool isSelected);
+	float calculatePollHeight(const Discord::Poll &poll, float maxWidth);
+	void submitPollVote(int answerIndex);
 	float calculateMessageHeight(const Discord::Message &msg, bool showHeader);
 	float calculateEmbedHeight(const Discord::Embed &embed, float maxWidth);
 	float renderEmbed(const Discord::Embed &embed, float x, float y, float maxWidth);
