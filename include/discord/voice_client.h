@@ -62,6 +62,7 @@ class VoiceClient {
 
 	bool openUdp();
 	void closeUdp();
+	void resetGcm();
 	bool discoverExternalAddress();
 	void sendSelectProtocol();
 	void mediaThread();

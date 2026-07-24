@@ -418,6 +418,14 @@ bool VoiceClient::openUdp() {
 	return true;
 }
 
+void VoiceClient::resetGcm() {
+	if (gcm) {
+		mbedtls_gcm_free(gcm);
+		delete gcm;
+		gcm = nullptr;
+	}
+}
+
 void VoiceClient::closeUdp() {
 	if (udpSocket >= 0) {
 		close(udpSocket);
@@ -754,15 +762,21 @@ void VoiceClient::mediaThread() {
 	Logger::log("[Voice] Media thread started");
 
 	while (!stopMedia) {
+		// The worker closes the socket on exit; FD_SET(-1) corrupts the fd_set.
+		int sock = udpSocket;
+		if (sock < 0) {
+			break;
+		}
+
 		fd_set readSet;
 		FD_ZERO(&readSet);
-		FD_SET(udpSocket, &readSet);
+		FD_SET(sock, &readSet);
 		timeval timeout{};
 		timeout.tv_usec = 10000;
 
-		int ready = select(udpSocket + 1, &readSet, nullptr, nullptr, &timeout);
+		int ready = select(sock + 1, &readSet, nullptr, nullptr, &timeout);
 		if (ready > 0) {
-			int received = recv(udpSocket, recvBuffer, sizeof(recvBuffer), 0);
+			int received = recv(sock, recvBuffer, sizeof(recvBuffer), 0);
 			if (received > 0) {
 				handleRtpPacket(recvBuffer, (size_t)received);
 			}
@@ -1045,11 +1059,7 @@ void VoiceClient::handlePayload(const std::string &message) {
 			invalidGroupRetries = 0;
 		}
 
-		if (gcm) {
-			mbedtls_gcm_free(gcm);
-			delete gcm;
-			gcm = nullptr;
-		}
+		resetGcm();
 		gcm = new mbedtls_gcm_context;
 		mbedtls_gcm_init(gcm);
 		if (mbedtls_gcm_setkey(gcm, MBEDTLS_CIPHER_ID_AES, secretKey.data(), 256) != 0) {
@@ -1081,7 +1091,7 @@ void VoiceClient::handlePayload(const std::string &message) {
 		packetsSent = 0;
 
 		stopMedia = false;
-		if (!media) {
+		if (!media && !stopWorker) {
 			media = threadCreate(mediaThreadEntry, this, MEDIA_STACK_SIZE, 0x3F, 0, false);
 			if (!media) {
 				Logger::log("[Voice] Media thread creation failed");
@@ -1197,7 +1207,13 @@ void VoiceClient::disconnect() {
 		Utils::SoundPlayer::getInstance().play(Utils::Sound::VOICE_LEFT);
 	}
 
+	// The worker spawns the media thread, so it must stop first.
+	stopWorker = true;
 	stopMedia = true;
+	if (worker.joinable()) {
+		worker.join();
+	}
+
 	if (media) {
 		threadJoin(media, U64_MAX);
 		threadFree(media);
@@ -1209,16 +1225,7 @@ void VoiceClient::disconnect() {
 	audio.setEchoCanceller(nullptr);
 	echo.stop();
 
-	stopWorker = true;
-	if (worker.joinable()) {
-		worker.join();
-	}
-
-	if (gcm) {
-		mbedtls_gcm_free(gcm);
-		delete gcm;
-		gcm = nullptr;
-	}
+	resetGcm();
 	ssrcToUser.clear();
 
 	DiscordClient &client = DiscordClient::getInstance();
