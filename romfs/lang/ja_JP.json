@@ -61,7 +61,7 @@
     "login.field.password_hint": "タップしてパスワードを入力",
     "login.generating": "生成中...",
     "login.loading.many_servers_warning": "サーバー数が多いとクラッシュするかもしれません（特にO3DSで）。\nクラッシュした場合は sdmc:/3ds/TriCord/accounts を削除して、\nサーバー数の少ない別アカウントで再ログインしてください。",
-    "login.mfa.cancel": "\uE001ボタンでキャンセル",
+    "login.mfa.cancel": "ボタンでキャンセル",
     "login.mfa.desc": "認証アプリの6桁のコードを入力してください",
     "login.mfa.hint": "タップしてコードを入力",
     "login.mfa.required": "MFAコードが必要です",
