@@ -6,6 +6,7 @@
 #include <rapidjson/writer.h>
 #include <utils/base64_utils.h>
 #include <utils/message_utils.h>
+#include <utils/system_utils.h>
 
 namespace Network {
 
@@ -77,11 +78,11 @@ void HttpClient::updateSuperProperties() {
 
 	writer.StartObject();
 	writer.Key("os");
-	writer.String("Nintendo 3DS");
+	writer.String(Utils::System::getDeviceModelName().c_str());
 	writer.Key("browser");
 	writer.String("TriCord");
 	writer.Key("device");
-	writer.String("Nintendo 3DS");
+	writer.String(Utils::System::getDeviceModelName().c_str());
 	writer.Key("system_locale");
 	writer.String(locale.c_str());
 	writer.Key("has_client_mods");

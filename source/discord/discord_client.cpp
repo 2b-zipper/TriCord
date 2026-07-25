@@ -7,6 +7,7 @@
 #include "network/network_manager.h"
 #include "utils/json_utils.h"
 #include "utils/message_utils.h"
+#include "utils/system_utils.h"
 #include <3ds.h>
 #include <cstdio>
 #include <cstring>
@@ -1922,9 +1923,13 @@ void DiscordClient::sendIdentify() {
 	                   token +
 	                   "\","
 	                   "\"properties\": {"
-	                   "\"os\": \"Nintendo 3DS\","
+	                   "\"os\": \"" +
+	                   Utils::System::getDeviceModelName() +
+	                   "\","
 	                   "\"browser\": \"TriCord\","
-	                   "\"device\": \"Nintendo 3DS\""
+	                   "\"device\": \"" +
+	                   Utils::System::getDeviceModelName() +
+	                   "\""
 	                   "},"
 	                   "\"compress\": false,"
 	                   // LAZY_USER_NOTES | VERSIONED_READ_STATES |
