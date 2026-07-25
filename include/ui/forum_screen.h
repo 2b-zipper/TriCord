@@ -1,9 +1,9 @@
 #ifndef FORUM_SCREEN_H
 #define FORUM_SCREEN_H
 
-#include "discord/discord_client.h"
 #include "discord/types.h"
 #include "ui/screen_manager.h"
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -25,6 +25,7 @@ class ForumScreen : public Screen {
 	std::string channelName;
 	std::string truncatedChannelName;
 	std::string channelTopic;
+	int channelType = 15;
 	std::string guildId;
 	struct ThreadInfo {
 		Discord::Channel channel;
@@ -44,6 +45,7 @@ class ForumScreen : public Screen {
 	static const int REPEAT_DELAY_CONTINUOUS = 6;
 
 	bool isLoading;
+	std::shared_ptr<bool> aliveToken;
 
 	void fetchThreads();
 	void renderThreadCard(int index, float y);

@@ -5,4 +5,6 @@
 *.lst
 build/
 
+.cache
 .vscode/
+compile_commands.json

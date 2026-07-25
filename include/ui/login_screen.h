@@ -23,7 +23,6 @@ class LoginScreen : public Screen {
 	std::string statusMessage;
 	std::string qrCodeUrl;
 
-	// Email Login
 	std::string email;
 	std::string password;
 	std::string mfaTicket;

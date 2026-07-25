@@ -30,6 +30,7 @@ void ImageManager::shutdown() {
 		stopDecoder = true;
 	}
 	decodeCv.notify_all();
+	pendingCv.notify_all();
 	if (decoderThread.joinable()) {
 		decoderThread.join();
 	}
@@ -48,13 +49,24 @@ void ImageManager::clear() {
 	textureCache.clear();
 	lruList.clear();
 	fetchingUrls.clear();
-	pendingTextures.clear();
+	freePendingLocked();
 	currentCacheBytes = 0;
 	{
 		std::lock_guard<std::mutex> lock(decodeMutex);
 		decodeQueue.clear();
 	}
 	currentSessionId++;
+}
+
+void ImageManager::freePendingLocked() {
+	for (auto &pending : pendingTextures) {
+		if (pending.tiled.pixels) {
+			free(pending.tiled.pixels);
+			pending.tiled.pixels = nullptr;
+		}
+	}
+	pendingTextures.clear();
+	pendingCv.notify_all();
 }
 
 void ImageManager::touchImage(const std::string &url) {
@@ -111,7 +123,7 @@ void ImageManager::clearRemote() {
 	}
 	lruList.clear();
 	fetchingUrls.clear();
-	pendingTextures.clear();
+	freePendingLocked();
 	{
 		std::lock_guard<std::mutex> lock2(decodeMutex);
 		decodeQueue.clear();
@@ -223,8 +235,8 @@ void ImageManager::prefetch(const std::string &url, int origW, int origH, Networ
 
 	if (optimizedUrl.find("media.discordapp.net") != std::string::npos ||
 	    optimizedUrl.find("images-ext-") != std::string::npos) {
-		int targetW = 512;
-		int targetH = 512;
+		int targetW = Utils::Image::MAX_REMOTE_DIM;
+		int targetH = Utils::Image::MAX_REMOTE_DIM;
 		if (origW > 0 && origH > 0) {
 			if (origW > targetW || origH > targetH) {
 				if (origW > origH) {
@@ -316,6 +328,14 @@ void ImageManager::decoderWorker() {
 			continue;
 		}
 
+		{
+			std::unique_lock<std::mutex> lock(cacheMutex);
+			pendingCv.wait(lock, [this] { return stopDecoder || pendingTextures.size() < MAX_PENDING_TEXTURES; });
+		}
+		if (stopDecoder || currentSessionId != req.sessionId) {
+			continue;
+		}
+
 		Utils::Image::TiledData tiled =
 		    Utils::Image::decodeToTiled((const unsigned char *)req.body.data(), req.body.size());
 
@@ -327,6 +347,12 @@ void ImageManager::decoderWorker() {
 		pending.height = tiled.h;
 
 		std::lock_guard<std::mutex> lock(cacheMutex);
+		if (currentSessionId != req.sessionId) {
+			if (tiled.pixels) {
+				free(tiled.pixels);
+			}
+			continue;
+		}
 		pendingTextures.push_back(pending);
 	}
 }
@@ -341,50 +367,50 @@ void ImageManager::update() {
 		p = std::move(pendingTextures.front());
 		pendingTextures.pop_front();
 	}
+	pendingCv.notify_one();
 
-	fetchingUrls.erase(p.url);
+	bool decoded = p.success && p.tiled.pixels;
 
-	if (p.success) {
-		if (p.tiled.pixels) {
-			while (currentCacheBytes + p.tiled.vramSize > MAX_CACHE_BYTES && lruList.size() > MIN_CACHE_ENTRIES) {
-				evictOldest();
-			}
+	if (decoded) {
+		std::lock_guard<std::mutex> lock(cacheMutex);
+		while (currentCacheBytes + p.tiled.vramSize > MAX_CACHE_BYTES && lruList.size() > MIN_CACHE_ENTRIES) {
+			evictOldest();
+		}
+	}
 
-			C3D_Tex *tex = (C3D_Tex *)malloc(sizeof(C3D_Tex));
-			if (C3D_TexInit(tex, p.tiled.p2w, p.tiled.p2h, GPU_RGBA8)) {
-				C3D_TexSetFilter(tex, GPU_LINEAR, GPU_LINEAR);
-				memcpy(tex->data, p.tiled.pixels, p.tiled.vramSize);
-				GSPGPU_FlushDataCache(tex->data, p.tiled.vramSize);
+	ImageInfo info;
+	if (decoded) {
+		C3D_Tex *tex = (C3D_Tex *)malloc(sizeof(C3D_Tex));
+		if (tex && C3D_TexInit(tex, p.tiled.p2w, p.tiled.p2h, GPU_RGBA8)) {
+			C3D_TexSetFilter(tex, GPU_LINEAR, GPU_LINEAR);
+			memcpy(tex->data, p.tiled.pixels, p.tiled.vramSize);
+			GSPGPU_FlushDataCache(tex->data, p.tiled.vramSize);
 
-				ImageInfo info;
-				info.tex = tex;
-				info.originalW = p.width;
-				info.originalH = p.height;
-				info.vramSize = p.tiled.vramSize;
-				info.failed = false;
-
-				std::lock_guard<std::mutex> lock(cacheMutex);
-				textureCache[p.url] = info;
-				currentCacheBytes += p.tiled.vramSize;
-				touchImage(p.url);
-				generation++;
-			} else {
-				free(tex);
-				std::lock_guard<std::mutex> lock(cacheMutex);
-				ImageInfo info;
-				info.failed = true;
-				textureCache[p.url] = info;
-				generation++;
-			}
-			free(p.tiled.pixels);
+			info.tex = tex;
+			info.originalW = p.width;
+			info.originalH = p.height;
+			info.vramSize = p.tiled.vramSize;
+		} else {
+			free(tex);
+			info.failed = true;
 		}
 	} else {
-		std::lock_guard<std::mutex> lock(cacheMutex);
-		ImageInfo info;
 		info.failed = true;
-		textureCache[p.url] = info;
-		generation++;
 	}
+
+	if (p.tiled.pixels) {
+		free(p.tiled.pixels);
+		p.tiled.pixels = nullptr;
+	}
+
+	std::lock_guard<std::mutex> lock(cacheMutex);
+	fetchingUrls.erase(p.url);
+	textureCache[p.url] = info;
+	if (info.tex) {
+		currentCacheBytes += info.vramSize;
+		touchImage(p.url);
+	}
+	generation++;
 }
 
 } // namespace UI

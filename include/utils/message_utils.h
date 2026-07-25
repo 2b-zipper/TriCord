@@ -1,6 +1,6 @@
 #pragma once
 
-#include "discord/discord_client.h"
+#include "discord/types.h"
 #include <3ds.h>
 #include <ctime>
 #include <string>
@@ -12,8 +12,10 @@ namespace MessageUtils {
 void syncClock(const std::string &dateStr);
 time_t getUtcNow();
 s64 get3DSLocalTimeOffset();
+bool getLocalTm(const std::string &timestamp, struct tm &out);
 time_t parseISO8601(const std::string &timestamp);
 time_t snowflakeToTimestamp(const std::string &snowflake);
+bool isNewerSnowflake(const std::string &a, const std::string &b);
 std::string formatTimestamp(const std::string &timestamp);
 std::string getLocalDateString(const std::string &timestamp);
 std::string formatTimeOnly(const std::string &timestamp);

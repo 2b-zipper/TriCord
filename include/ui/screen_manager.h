@@ -2,6 +2,7 @@
 #define SCREEN_MANAGER_H
 
 #include "ui/hamburger_menu.h"
+#include "ui/incoming_call.h"
 #include <citro2d.h>
 #include <map>
 #include <memory>
@@ -20,7 +21,6 @@ enum class ScreenType {
 	ADD_ACCOUNT,
 	FORUM_CHANNEL,
 	SETTINGS,
-	DM_LIST,
 	ABOUT,
 	DISCLAIMER,
 	THEME_MANAGER
@@ -113,6 +113,10 @@ class ScreenManager {
 	}
 	void setLastChannelScroll(const std::string &guildId, int scroll) { lastChannelScroll[guildId] = scroll; }
 
+	// Separate from the selected channel, which opening a thread overwrites.
+	void setForumChannelId(const std::string &id) { forumChannelId = id; }
+	std::string getForumChannelId() const { return forumChannelId; }
+
 	int getLastForumIndex(const std::string &channelId) {
 		return lastForumIndex.count(channelId) ? lastForumIndex[channelId] : 0;
 	}
@@ -145,12 +149,14 @@ class ScreenManager {
 	bool debugOverlayEnabled;
 	bool appExitRequested;
 	HamburgerMenu hamburgerMenu;
+	IncomingCall incomingCall;
 	C2D_ImageTint tint;
 
 	int lastServerIndex = 0;
 	int lastServerScroll = 0;
 	std::map<std::string, int> lastChannelIndex;
 	std::map<std::string, int> lastChannelScroll;
+	std::string forumChannelId;
 	std::map<std::string, int> lastForumIndex;
 	std::map<std::string, int> lastForumScroll;
 
