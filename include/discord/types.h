@@ -237,6 +237,8 @@ struct Message {
 	std::vector<Sticker> stickers;
 	std::vector<Reaction> reactions;
 	std::vector<User> mentions;
+	bool mentionEveryone = false;
+	std::vector<std::string> mentionRoles;
 
 	std::string referencedMessageId;
 	std::string referencedAuthorName;

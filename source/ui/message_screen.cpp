@@ -1756,7 +1756,7 @@ float MessageScreen::drawReactions(const Discord::Message &msg, float x, float y
 }
 
 float MessageScreen::drawMessage(const Discord::Message &msg, float y, float maxWidth, bool isSelected,
-                                 bool showHeader) {
+                                 bool showHeader, bool prevGroupedMention, bool nextGroupedMention) {
 	float height = calculateMessageHeight(msg, showHeader);
 	float topMargin = showHeader ? 4.0f : 0.0f;
 	const float textOffsetX = 42.0f;
@@ -1765,7 +1765,30 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y, float max
 		return drawForumMessage(msg, y, isSelected);
 	}
 
-	if (isSelected) {
+	bool isMentioned = Discord::DiscordClient::getInstance().isUserMentioned(msg);
+
+	if (isMentioned) {
+		float highlightY = y + topMargin;
+		float highlightH = height - topMargin;
+		u32 mentionBg = (Config::getInstance().getThemeType() == 1) ? C2D_Color32(250, 234, 184, 255) : C2D_Color32(65, 54, 30, 255);
+		u32 mentionBorder = C2D_Color32(250, 166, 26, 255);
+
+		if (isSelected) {
+			mentionBg = (Config::getInstance().getThemeType() == 1) ? C2D_Color32(255, 244, 194, 255) : C2D_Color32(80, 69, 45, 255);
+		}
+		
+		drawRoundedRect(4.0f, highlightY, 0.1f, 392.0f, highlightH, 6.0f, mentionBg);
+		C2D_DrawRectSolid(4.0f, highlightY, 0.1f, 6.0f, highlightH, mentionBg);
+		
+		if (prevGroupedMention) {
+			C2D_DrawRectSolid(390.0f, highlightY, 0.1f, 6.0f, 6.0f, mentionBg);
+		}
+		if (nextGroupedMention) {
+			C2D_DrawRectSolid(390.0f, highlightY + highlightH - 6.0f, 0.1f, 6.0f, 6.0f, mentionBg);
+		}
+
+		C2D_DrawRectSolid(4.0f, highlightY, 0.11f, 2.0f, highlightH, mentionBorder);
+	} else if (isSelected) {
 		float highlightY = y + topMargin;
 		float highlightH = height - topMargin;
 		drawRoundedRect(4.0f, highlightY, 0.1f, 392.0f, highlightH, 6.0f, ScreenManager::colorBackgroundLight());
@@ -1882,7 +1905,7 @@ void MessageScreen::renderTop(C3D_RenderTarget *target) {
 		if (i == 0) {
 			showDateSeparator = true;
 			currDate = MessageUtils::getLocalDateString(this->messages[i].timestamp);
-		} else if (this->messages[i].timestamp != "Sending...") {
+		} else if (this->messages[i].timestamp != TR("message.status.sending")) {
 			currDate = MessageUtils::getLocalDateString(this->messages[i].timestamp);
 			std::string prevDate = MessageUtils::getLocalDateString(this->messages[i - 1].timestamp);
 			if (currDate != prevDate) {
@@ -1923,7 +1946,25 @@ void MessageScreen::renderTop(C3D_RenderTarget *target) {
 			showHeader = true;
 		}
 
-		drawMessage(this->messages[i], msgY, 400.0f, isSelected, showHeader);
+		bool prevGroupedMention = false;
+		if (!showHeader && i > 0) {
+			prevGroupedMention = Discord::DiscordClient::getInstance().isUserMentioned(messages[i - 1]);
+		}
+
+		bool nextGroupedMention = false;
+		if (i + 1 < messages.size()) {
+			bool nextShowHeader = !MessageUtils::canGroupWithPrevious(messages[i + 1], messages[i]);
+			if (!nextShowHeader && messages[i + 1].timestamp != TR("message.status.sending")) {
+				if (currDate != MessageUtils::getLocalDateString(messages[i + 1].timestamp)) {
+					nextShowHeader = true;
+				}
+			}
+			if (!nextShowHeader) {
+				nextGroupedMention = Discord::DiscordClient::getInstance().isUserMentioned(messages[i + 1]);
+			}
+		}
+
+		drawMessage(this->messages[i], msgY, 400.0f, isSelected, showHeader, prevGroupedMention, nextGroupedMention);
 	}
 
 	if (showNewMessageIndicator) {

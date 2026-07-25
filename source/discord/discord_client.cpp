@@ -1124,45 +1124,13 @@ void DiscordClient::handleMessageCreate(const rapidjson::Value &d) {
 	std::string guildId = getGuildIdFromChannel(msg.channelId);
 	bool isPrivate = guildId.empty() || guildId == "DM";
 
-	bool mentioned = false;
-	for (const auto &user : msg.mentions) {
-		if (user.id == currentUser.id) {
-			mentioned = true;
-			break;
-		}
-	}
+	bool mentioned = isUserMentioned(msg);
 
 	const GuildNotificationSettings *gs = nullptr;
 	if (!isPrivate) {
 		auto gsIt = notificationSettings.find(guildId);
 		if (gsIt != notificationSettings.end()) {
 			gs = &gsIt->second;
-		}
-	}
-
-	if (!mentioned && !isPrivate) {
-		if (!(gs && gs->suppressEveryone) && Utils::Json::getBool(d, "mention_everyone")) {
-			mentioned = true;
-		}
-		if (!mentioned && !(gs && gs->suppressRoles) && d.HasMember("mention_roles") && d["mention_roles"].IsArray()) {
-			for (const auto &guild : guilds) {
-				if (guild.id != guildId) {
-					continue;
-				}
-				const rapidjson::Value &roles = d["mention_roles"];
-				for (rapidjson::SizeType i = 0; i < roles.Size() && !mentioned; i++) {
-					if (!roles[i].IsString()) {
-						continue;
-					}
-					for (const auto &myRole : guild.myRoles) {
-						if (myRole == roles[i].GetString()) {
-							mentioned = true;
-							break;
-						}
-					}
-				}
-				break;
-			}
 		}
 	}
 
@@ -1846,6 +1814,19 @@ Message DiscordClient::parseSingleMessage(const rapidjson::Value &d) {
 		const rapidjson::Value &mentions = d["mentions"];
 		for (rapidjson::SizeType i = 0; i < mentions.Size(); i++) {
 			msg.mentions.push_back(parseUserObject(mentions[i]));
+		}
+	}
+
+	if (d.HasMember("mention_everyone") && d["mention_everyone"].IsBool()) {
+		msg.mentionEveryone = d["mention_everyone"].GetBool();
+	}
+
+	if (d.HasMember("mention_roles") && d["mention_roles"].IsArray()) {
+		const rapidjson::Value &roles = d["mention_roles"];
+		for (rapidjson::SizeType i = 0; i < roles.Size(); i++) {
+			if (roles[i].IsString()) {
+				msg.mentionRoles.push_back(roles[i].GetString());
+			}
 		}
 	}
 
@@ -3344,6 +3325,45 @@ void DiscordClient::updatePresence(UserStatus status) {
 
 	std::lock_guard<std::recursive_mutex> lock(clientMutex);
 	currentUser.status = status;
+}
+
+bool DiscordClient::isUserMentioned(const Message &msg) {
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	if (msg.author.id == currentUser.id) return false;
+
+	for (const auto &user : msg.mentions) {
+		if (user.id == currentUser.id) return true;
+	}
+
+	std::string guildId = getGuildIdFromChannel(msg.channelId);
+	if (guildId.empty() || guildId == "DM") return false;
+
+	const GuildNotificationSettings *gs = nullptr;
+	auto gsIt = notificationSettings.find(guildId);
+	if (gsIt != notificationSettings.end()) {
+		gs = &gsIt->second;
+	}
+
+	if (!(gs && gs->suppressEveryone) && msg.mentionEveryone) {
+		return true;
+	}
+
+	if (!(gs && gs->suppressRoles) && !msg.mentionRoles.empty()) {
+		for (const auto &guild : guilds) {
+			if (guild.id == guildId) {
+				for (const auto &roleId : msg.mentionRoles) {
+					for (const auto &myRole : guild.myRoles) {
+						if (myRole == roleId) {
+							return true;
+						}
+					}
+				}
+				break;
+			}
+		}
+	}
+
+	return false;
 }
 
 bool DiscordClient::canSendMessage(const std::string &channelId) {

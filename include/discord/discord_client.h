@@ -200,6 +200,7 @@ class DiscordClient {
 
 	bool canSendMessage(const std::string &channelId);
 	bool canManageMessages(const std::string &channelId);
+	bool isUserMentioned(const Message &msg);
 
 	void markChannelRead(const std::string &channelId, const std::string &messageId);
 	void markChannelReadLatest(const std::string &channelId);

@@ -85,7 +85,7 @@ class MessageScreen : public Screen {
 
 	void fetchMessages();
 	void fetchOlderMessages();
-	float drawMessage(const Discord::Message &msg, float y, float maxWidth, bool isSelected, bool showHeader);
+	float drawMessage(const Discord::Message &msg, float y, float maxWidth, bool isSelected, bool showHeader, bool prevGroupedMention = false, bool nextGroupedMention = false);
 	float drawForumMessage(const Discord::Message &msg, float y, bool isSelected);
 	float drawSystemMessage(const Discord::Message &msg, float y, float topMargin, float height, bool isSelected);
 	float drawReplyPreview(const Discord::Message &msg, float x, float y);
