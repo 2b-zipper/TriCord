@@ -15,6 +15,8 @@ struct Piece {
 	float x = 0.0f;
 	float width = 0.0f;
 	float scale = 0.4f;
+	uint32_t color = 0;
+	uint32_t bgColor = 0;
 };
 
 struct Line {

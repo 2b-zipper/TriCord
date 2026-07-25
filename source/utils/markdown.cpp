@@ -172,6 +172,31 @@ void parseInline(const std::string &t, uint16_t style, const std::string &url, s
 			}
 		}
 
+		if (t[i] == '\x01') {
+			size_t close = t.find('\x02', i + 1);
+			if (close != std::string::npos) {
+				size_t sc1 = t.find(';', i + 1);
+				size_t sc2 = t.find(';', sc1 + 1);
+				if (sc1 != std::string::npos && sc2 != std::string::npos && sc2 < close) {
+					uint32_t fg = std::stoul(t.substr(i + 1, sc1 - i - 1));
+					uint32_t bg = std::stoul(t.substr(sc1 + 1, sc2 - sc1 - 1));
+					std::string mText = t.substr(sc2 + 1, close - sc2 - 1);
+					
+					flush(buf, style, url, out);
+					Span s;
+					s.text = mText;
+					s.style = style | STYLE_MENTION;
+					s.color = fg;
+					s.bgColor = bg;
+					s.url = url;
+					out.push_back(s);
+					
+					i = close + 1;
+					continue;
+				}
+			}
+		}
+
 		buf += t[i];
 		i++;
 	}

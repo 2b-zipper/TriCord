@@ -228,6 +228,7 @@ struct PollResult {
 struct Message {
 	std::string id;
 	std::string content;
+	std::string displayContent;
 	std::string timestamp;
 	std::string channelId;
 	User author;

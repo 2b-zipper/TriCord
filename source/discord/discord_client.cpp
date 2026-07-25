@@ -1916,6 +1916,19 @@ Message DiscordClient::parseSingleMessage(const rapidjson::Value &d) {
 		}
 	}
 
+	msg.displayContent = UI::MessageUtils::formatMentions(msg.content, msg);
+
+	for (auto &embed : msg.embeds) {
+		if (!embed.description.empty()) {
+			embed.description = UI::MessageUtils::formatMentions(embed.description, msg);
+		}
+		for (auto &field : embed.fields) {
+			if (!field.value.empty()) {
+				field.value = UI::MessageUtils::formatMentions(field.value, msg);
+			}
+		}
+	}
+
 	return msg;
 }
 
@@ -2106,19 +2119,27 @@ std::vector<Message> DiscordClient::parseMessages(const std::string &json) {
 }
 
 Channel DiscordClient::getChannel(const std::string &channelId) {
-	for (const auto &guild : guilds) {
-		for (const auto &channel : guild.channels) {
-			if (channel.id == channelId) {
-				return channel;
-			}
-		}
+	for (const auto &c : privateChannels) {
+		if (c.id == channelId) return c;
 	}
-	for (const auto &channel : privateChannels) {
-		if (channel.id == channelId) {
-			return channel;
+	for (const auto &g : guilds) {
+		for (const auto &c : g.channels) {
+			if (c.id == channelId) return c;
 		}
 	}
 	return Channel();
+}
+
+const Channel* DiscordClient::getChannelPtr(const std::string &channelId) {
+	for (const auto &c : privateChannels) {
+		if (c.id == channelId) return &c;
+	}
+	for (const auto &g : guilds) {
+		for (const auto &c : g.channels) {
+			if (c.id == channelId) return &c;
+		}
+	}
+	return nullptr;
 }
 
 Guild DiscordClient::getGuild(const std::string &guildId) {
@@ -2128,6 +2149,15 @@ Guild DiscordClient::getGuild(const std::string &guildId) {
 		}
 	}
 	return Guild();
+}
+
+const Guild* DiscordClient::getGuildPtr(const std::string &guildId) {
+	for (const auto &guild : guilds) {
+		if (guild.id == guildId) {
+			return &guild;
+		}
+	}
+	return nullptr;
 }
 
 Member DiscordClient::getMember(const std::string &guildId, const std::string &userId) {

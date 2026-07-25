@@ -16,6 +16,7 @@ enum StyleFlag : uint16_t {
 	STYLE_CODE = 1 << 4,
 	STYLE_SPOILER = 1 << 5,
 	STYLE_LINK = 1 << 6,
+	STYLE_MENTION = 1 << 7,
 };
 
 enum class BlockType {
@@ -33,6 +34,8 @@ struct Span {
 	std::string text;
 	uint16_t style = STYLE_NONE;
 	std::string url;
+	uint32_t color = 0;
+	uint32_t bgColor = 0;
 };
 
 struct Block {

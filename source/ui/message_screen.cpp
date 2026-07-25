@@ -873,7 +873,7 @@ float MessageScreen::calculateMessageHeight(const Discord::Message &msg, bool sh
 			totalH += 14.0f;
 		}
 
-		std::string content = msg.content;
+		std::string content = msg.displayContent;
 		if (!content.empty()) {
 			int emojiCount = 0;
 			if (MessageUtils::isEmojiOnly(content, emojiCount) && emojiCount <= 10) {
@@ -1343,7 +1343,7 @@ float MessageScreen::drawAuthorHeader(const Discord::Message &msg, float x, floa
 }
 
 float MessageScreen::drawMessageContent(const Discord::Message &msg, float x, float y) {
-	std::string content = msg.content;
+	std::string content = msg.displayContent;
 	if (content.empty()) {
 		return y;
 	}
@@ -2318,7 +2318,8 @@ void MessageScreen::showMessageOptions() {
 
 	bool canSend = client.canSendMessage(channelId);
 
-	if (!msg.content.empty() && UI::MarkdownRenderer::get(msg.content, 350.0f, 0.4f).hasSpoiler) {
+	std::string formattedContent = msg.displayContent;
+	if (!formattedContent.empty() && UI::MarkdownRenderer::get(formattedContent, 350.0f, 0.4f).hasSpoiler) {
 		addOption("ToggleSpoiler",
 		          revealedSpoilers.count(msg.id) ? "message.menu.hide_spoiler" : "message.menu.reveal_spoiler");
 	}

@@ -213,7 +213,9 @@ class DiscordClient {
 	void setChannelNotificationLevel(const std::string &channelId, int messageNotifications);
 
 	Channel getChannel(const std::string &channelId);
+	const Channel* getChannelPtr(const std::string &channelId);
 	Guild getGuild(const std::string &guildId);
+	const Guild* getGuildPtr(const std::string &guildId);
 	Member getMember(const std::string &guildId, const std::string &userId);
 	int getRoleColor(const std::string &guildId, const Member &member);
 	int getRoleColor(const std::string &guildId, const std::string &userId);

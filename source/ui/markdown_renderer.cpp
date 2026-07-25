@@ -199,6 +199,8 @@ Layout buildLayout(const std::string &content, float maxWidth, float baseScale, 
 					if (span.style & STYLE_SPOILER) {
 						out.hasSpoiler = true;
 					}
+					p.color = span.color;
+					p.bgColor = span.bgColor;
 					p.scale = scale;
 					p.x = cursorX;
 					p.width = measureRichText(p.text, scale, scale);
@@ -248,6 +250,13 @@ u32 styleColor(uint16_t style, BlockType type, u32 base) {
 
 void drawPiece(const Piece &p, float x, float y, float z, u32 color, BlockType type, float lineH, bool reveal) {
 	u32 c = styleColor(p.style, type, color);
+
+	if (p.style & STYLE_MENTION) {
+		float mMargin = 2.0f;
+		float mRad = 3.0f;
+		drawRoundedRect(x - mMargin, y + 1.0f, z - 0.01f, p.width + mMargin * 2.0f, lineH - 2.0f, mRad, p.bgColor);
+		c = p.color;
+	}
 
 	if (p.style & STYLE_CODE) {
 		C2D_DrawRectSolid(x - 1.0f, y, z, p.width + 2.0f, lineH - 1.0f, ScreenManager::colorBackgroundDark());

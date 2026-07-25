@@ -4,6 +4,7 @@
 #include "ui/screen_manager.h"
 #include "utils/string_utils.h"
 #include "utils/utf8_utils.h"
+#include "discord/discord_client.h"
 #include <3ds.h>
 #include <cmath>
 #include <cstdio>
@@ -424,6 +425,16 @@ std::string getRelativeTime(time_t targetEpoch) {
 	time_t now = time(NULL);
 	double diff = difftime(now, targetEpoch);
 
+	if (diff < 0) {
+		s64 offset = get3DSLocalTimeOffset();
+		time_t local = targetEpoch + (time_t)offset;
+		struct tm tm_info;
+		gmtime_r(&local, &tm_info);
+		char buffer[128];
+		snprintf(buffer, sizeof(buffer), "%04d/%02d/%02d %02d:%02d", tm_info.tm_year + 1900, tm_info.tm_mon + 1, tm_info.tm_mday, tm_info.tm_hour, tm_info.tm_min);
+		return std::string(buffer);
+	}
+
 	if (diff < 3600) {
 		int mins = (int)(diff / 60);
 		if (mins < 1) {
@@ -499,6 +510,192 @@ std::string getChannelDisplayName(const Discord::Channel &channel) {
 	}
 
 	return channel.name.empty() ? "Channel" : channel.name;
+}
+
+
+
+static bool processAngleBracketMention(const std::string &text, size_t &i, const Discord::Message &msg, std::string &out) {
+	if (text[i] != '<' || i + 2 >= text.length()) return false;
+	
+	size_t close = text.find('>', i + 1);
+	if (close == std::string::npos || close - i >= 30) return false;
+	
+	std::string mention = text.substr(i + 1, close - i - 1);
+	if (mention.empty()) return false;
+	
+	if (mention[0] == '@') {
+		bool isRole = (mention.length() > 1 && mention[1] == '&');
+		bool isBang = (mention.length() > 1 && mention[1] == '!');
+		size_t idStart = (isRole || isBang) ? 2 : 1;
+		std::string id = mention.substr(idStart);
+		
+		u32 acc = ScreenManager::colorAccent();
+		u32 fgCol = acc;
+		u32 bgCol = (acc & 0x00FFFFFF) | 0x40000000;
+		
+		if (isRole) {
+			std::string guildId = Discord::DiscordClient::getInstance().getGuildIdFromChannel(msg.channelId);
+			const Discord::Guild *g = Discord::DiscordClient::getInstance().getGuildPtr(guildId);
+			std::string roleName = "deleted-role";
+			int roleColor = 0;
+			if (g != nullptr) {
+				for (const auto &r : g->roles) {
+					if (r.id == id) {
+						roleName = r.name;
+						roleColor = r.color;
+						break;
+					}
+				}
+			}
+			
+			if (roleColor != 0) {
+				fgCol = C2D_Color32((roleColor >> 16) & 0xFF, (roleColor >> 8) & 0xFF, roleColor & 0xFF, 255);
+				bgCol = C2D_Color32((roleColor >> 16) & 0xFF, (roleColor >> 8) & 0xFF, roleColor & 0xFF, 50);
+			}
+			
+			char tag[64];
+			snprintf(tag, sizeof(tag), "\x01%lu;%lu;@%s\x02", (unsigned long)fgCol, (unsigned long)bgCol, roleName.c_str());
+			out += tag;
+			i = close + 1;
+			return true;
+		} else {
+			std::string userName = "Unknown";
+			for (const auto &u : msg.mentions) {
+				if (u.id == id) {
+					userName = u.global_name.empty() ? u.username : u.global_name;
+					break;
+				}
+			}
+			char tag[64];
+			snprintf(tag, sizeof(tag), "\x01%lu;%lu;@%s\x02", (unsigned long)fgCol, (unsigned long)bgCol, userName.c_str());
+			out += tag;
+			i = close + 1;
+			return true;
+		}
+	} else if (mention[0] == '#') {
+		std::string id = mention.substr(1);
+		const Discord::Channel *ch = Discord::DiscordClient::getInstance().getChannelPtr(id);
+		std::string chName = (ch == nullptr || ch->name.empty()) ? "deleted-channel" : ch->name;
+		
+		u32 acc = ScreenManager::colorAccent();
+		u32 fgCol = acc;
+		u32 bgCol = (acc & 0x00FFFFFF) | 0x40000000;
+		
+		char tag[64];
+		snprintf(tag, sizeof(tag), "\x01%lu;%lu;#%s\x02", (unsigned long)fgCol, (unsigned long)bgCol, chName.c_str());
+		out += tag;
+		i = close + 1;
+		return true;
+	}
+	
+	return false;
+}
+
+static bool processEveryoneHere(const std::string &text, size_t &i, std::string &out) {
+	if (text[i] != '@') return false;
+	
+	if (i + 9 <= text.length() && text.substr(i, 9) == "@everyone") {
+		u32 acc = ScreenManager::colorAccent();
+		u32 fgCol = acc;
+		u32 bgCol = (acc & 0x00FFFFFF) | 0x40000000;
+		char tag[64];
+		snprintf(tag, sizeof(tag), "\x01%lu;%lu;@everyone\x02", (unsigned long)fgCol, (unsigned long)bgCol);
+		out += tag;
+		i += 9;
+		return true;
+	}
+	if (i + 5 <= text.length() && text.substr(i, 5) == "@here") {
+		u32 acc = ScreenManager::colorAccent();
+		u32 fgCol = acc;
+		u32 bgCol = (acc & 0x00FFFFFF) | 0x40000000;
+		char tag[64];
+		snprintf(tag, sizeof(tag), "\x01%lu;%lu;@here\x02", (unsigned long)fgCol, (unsigned long)bgCol);
+		out += tag;
+		i += 5;
+		return true;
+	}
+	
+	return false;
+}
+
+static bool processDiscordUrl(const std::string &text, size_t &i, std::string &out) {
+	if (text[i] != 'h' && text[i] != 'd' && text[i] != 'p' && text[i] != 'c') return false;
+	
+	size_t urlStart = i;
+	if (i + 8 <= text.length() && text.substr(i, 8) == "https://") {
+		urlStart = i + 8;
+	} else if (i + 7 <= text.length() && text.substr(i, 7) == "http://") {
+		urlStart = i + 7;
+	}
+	
+	std::string domain1 = "discord.com/channels/";
+	std::string domain2 = "ptb.discord.com/channels/";
+	std::string domain3 = "canary.discord.com/channels/";
+	std::string domain4 = "discordapp.com/channels/";
+	
+	size_t matchLen = 0;
+	if (urlStart + domain1.length() <= text.length() && text.substr(urlStart, domain1.length()) == domain1) matchLen = domain1.length();
+	else if (urlStart + domain2.length() <= text.length() && text.substr(urlStart, domain2.length()) == domain2) matchLen = domain2.length();
+	else if (urlStart + domain3.length() <= text.length() && text.substr(urlStart, domain3.length()) == domain3) matchLen = domain3.length();
+	else if (urlStart + domain4.length() <= text.length() && text.substr(urlStart, domain4.length()) == domain4) matchLen = domain4.length();
+	
+	if (matchLen > 0) {
+		size_t afterDomain = urlStart + matchLen;
+		size_t endPos = text.find_first_of(" \n\r\t<>", afterDomain);
+		if (endPos == std::string::npos) endPos = text.length();
+		
+		std::string urlPath = text.substr(afterDomain, endPos - afterDomain);
+		std::vector<std::string> parts;
+		size_t p = 0;
+		while (p < urlPath.length()) {
+			size_t s = urlPath.find('/', p);
+			if (s == std::string::npos) {
+				parts.push_back(urlPath.substr(p));
+				break;
+			}
+			parts.push_back(urlPath.substr(p, s - p));
+			p = s + 1;
+		}
+		
+		if (parts.size() >= 2 && parts.size() <= 3) {
+			std::string channelId = parts[1];
+			bool hasMessage = (parts.size() == 3);
+			
+			const Discord::Channel *ch = Discord::DiscordClient::getInstance().getChannelPtr(channelId);
+			std::string chName = (ch == nullptr || ch->name.empty()) ? "deleted-channel" : ch->name;
+			
+			u32 acc = ScreenManager::colorAccent();
+			u32 fgCol = acc;
+			u32 bgCol = (acc & 0x00FFFFFF) | 0x40000000;
+			
+			std::string displayStr = "# " + chName;
+			if (hasMessage) {
+				displayStr += " \xE2\x80\xBA \xF0\x9F\x92\xAC";
+			}
+			
+			char tag[256];
+			snprintf(tag, sizeof(tag), "\x01%lu;%lu;%s\x02", (unsigned long)fgCol, (unsigned long)bgCol, displayStr.c_str());
+			out += tag;
+			i = endPos;
+			return true;
+		}
+	}
+	
+	return false;
+}
+
+std::string formatMentions(const std::string &text, const Discord::Message &msg) {
+	std::string out;
+	size_t i = 0;
+	while (i < text.length()) {
+		if (processAngleBracketMention(text, i, msg, out)) continue;
+		if (processEveryoneHere(text, i, out)) continue;
+		if (processDiscordUrl(text, i, out)) continue;
+		
+		out += text[i];
+		i++;
+	}
+	return out;
 }
 
 } // namespace MessageUtils
