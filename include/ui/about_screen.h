@@ -2,7 +2,6 @@
 #define ABOUT_SCREEN_H
 
 #include "screen_manager.h"
-#include <string>
 
 namespace UI {
 

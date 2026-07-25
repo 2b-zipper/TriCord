@@ -24,7 +24,6 @@ class EmojiPicker {
 	void setOnEmojiSelected(std::function<void(const std::string &)> callback) { onEmojiSelected = callback; }
 	void setOnClosed(std::function<void()> callback) { onClosed = callback; }
 
-	// For cache management
 	std::unordered_set<std::string> getVisibleTwemojisInChat(const std::vector<Discord::Message> &messages,
 	                                                         float scrollY, float totalH);
 

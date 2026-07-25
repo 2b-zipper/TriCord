@@ -3,7 +3,6 @@
 
 #include <cstdint>
 #include <string>
-#include <vector>
 
 namespace Utils {
 namespace Utf8 {

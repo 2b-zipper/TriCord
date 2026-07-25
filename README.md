@@ -76,12 +76,16 @@ Output: `TriCord.3dsx`, `TriCord.cia`, `TriCord.elf`
 - [citro2d](https://github.com/devkitPro/citro2d) (zlib License)
 - [libcurl](https://curl.se/libcurl/) (curl License)
 - [mbedtls](https://github.com/Mbed-TLS/mbedtls) (Apache-2.0 OR GPL-2.0-or-later)
+- [libopus](https://opus-codec.org/) (BSD 3-Clause License)
 - [zlib](https://zlib.net/) (zlib License)
 
 ### Bundled Libraries (included in `library/`)
 - [RapidJSON](https://github.com/Tencent/rapidjson) (MIT License)
 - [stb_image](https://github.com/nothings/stb) (Public Domain / MIT License)
 - [qrcodegen](https://github.com/nayuki/QR-Code-generator) (MIT License)
+- [mlspp](https://github.com/cisco/mlspp) (BSD 2-Clause License)
+- [libdave](https://github.com/discord/libdave) (MIT License)
+- [WebRTC AECM](https://github.com/webrtc-mirror/webrtc) (BSD 3-Clause License)
 
 ### Additional Resources
 - CA bundle: [cacert-2025-12-02.pem](https://curl.se/docs/caextract.html) (Mozilla's CA certificate bundle)
@@ -113,9 +117,6 @@ This is due to the 3DS hardware limitations, so there is nothing I can do about 
 
 ### I have a question
 Feel free to ask in our [Discord server](https://discord.gg/quYy9fK8tJ).
-
-### Is there a Voice Chat (VC) feature?
-No, it is currently not available and there are no plans for implementation. However, support for text channels within VC channels is planned for the future.
 
 ### I cannot log in with the error "Failed to exchange ticket" or "Login failed: Login failed: 0"
 This appears to be due to SSL verification failing for some reason. In v0.4.0 or later, you can open Settings, press **Y**, and search for `devmode` to temporarily reveal "Developer Options" at the bottom of the list. By toggling **SSL Verification** to **OFF**, you can skip SSL checks and attempt to connect.

@@ -8,6 +8,7 @@
 #include <deque>
 #include <functional>
 #include <map>
+#include <set>
 #include <mutex>
 #include <optional>
 #include <rapidjson/document.h>
@@ -33,10 +34,11 @@ using SingleMessageCallback = std::function<void(const std::optional<Message> &)
 using SuccessCallback = std::function<void(bool success)>;
 using ThreadsCallback = std::function<void(const std::vector<Channel> &)>;
 using TokenCallback = std::function<void(const std::string &token)>;
-using MemberCallback = std::function<void(const Member &)>;
 using SendMessageCallback = std::function<void(const Message &msg, bool success, int code)>;
 using ReactionCallback = std::function<void(const std::string &channelId, const std::string &messageId,
                                             const std::string &userId, const Emoji &emoji)>;
+using PollVoteCallback = std::function<void(const std::string &channelId, const std::string &messageId,
+                                            const std::string &userId, int answerId, bool added)>;
 using LoginCallback = std::function<void(bool success, const std::string &token, bool mfaRequired,
                                          const std::string &ticket, const std::string &error)>;
 
@@ -70,6 +72,17 @@ class DiscordClient {
 	bool wasAuthFailed() const { return authFailed.load(); }
 	void clearAuthFailed() { authFailed.store(false); }
 
+	std::string consumeReadStateDirty() {
+		if (!readStateDirty.exchange(false)) {
+			return "";
+		}
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		return readStateDirtyChannelId;
+	}
+
+	bool consumeGuildDataDirty() { return guildDataDirty.exchange(false); }
+	bool consumePrivateChannelsDirty() { return privateChannelsDirty.exchange(false); }
+
 	std::recursive_mutex &getMutex() { return clientMutex; }
 	std::string getStatusMessage() {
 		std::lock_guard<std::mutex> lock(statusMutex);
@@ -96,6 +109,10 @@ class DiscordClient {
 		std::lock_guard<std::recursive_mutex> lock(clientMutex);
 		messageReactionRemoveCallback = cb;
 	}
+	void setPollVoteCallback(PollVoteCallback cb) {
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		pollVoteCallback = cb;
+	}
 	void setConnectionCallback(std::function<void()> cb) {
 		std::lock_guard<std::recursive_mutex> lock(clientMutex);
 		connectionCallback = cb;
@@ -106,10 +123,33 @@ class DiscordClient {
 		return currentUser;
 	}
 
-	const User &getSelf() const { return self; }
+	std::string getSessionId() {
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		return sessionId;
+	}
+
+	void updateVoiceState(const std::string &guildId, const std::string &channelId, bool selfMute, bool selfDeaf);
+
+	std::vector<VoiceParticipant> getVoiceParticipants(const std::string &channelId);
+	void resolveVoiceNames(const std::string &guildId);
+
+	void setVoiceStateCallback(std::function<void(const std::string &sessionId, bool serverMute, bool serverDeaf)> cb) {
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		voiceStateCallback = cb;
+	}
+	void setVoiceServerCallback(
+	    std::function<void(const std::string &token, const std::string &endpoint, const std::string &serverId)> cb) {
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		voiceServerCallback = cb;
+	}
+
 	const std::vector<Guild> &getGuilds() { return guilds; }
 	const std::vector<GuildFolder> &getGuildFolders() { return folders; }
 	const std::vector<Channel> &getPrivateChannels() { return privateChannels; }
+	const std::map<std::string, ReadState> &getReadStates() const { return readStates; }
+	const std::map<std::string, GuildNotificationSettings> &getNotificationSettings() const {
+		return notificationSettings;
+	}
 
 	void setSelectedGuildId(const std::string &id) { selectedGuildId = id; }
 	std::string getSelectedGuildId() const { return selectedGuildId; }
@@ -134,11 +174,19 @@ class DiscordClient {
 	void deleteMessageAsync(const std::string &channelId, const std::string &messageId, SuccessCallback cb);
 	void fetchForumThreads(const std::string &channelId, ThreadsCallback cb);
 	void fetchGuildDetails(const std::string &guildId, std::function<void(bool)> cb = nullptr);
+	void fetchUserProfile(const std::string &userId);
+	UserProfile getUserProfile(const std::string &userId);
 	void exchangeTicketForToken(const std::string &ticket, TokenCallback cb);
-	void fetchMember(const std::string &guildId, const std::string &userId, MemberCallback cb);
+	// Replies arrive as Guild Members Chunk, not to the caller.
+	void requestMembers(const std::string &guildId, const std::vector<std::string> &userIds);
 
 	void triggerTypingIndicator(const std::string &channelId);
 	std::vector<TypingUser> getTypingUsers(const std::string &channelId);
+
+	void ringCall(const std::string &channelId);
+	void stopRinging(const std::string &channelId);
+	std::string getIncomingCallChannel();
+	std::optional<int> getCallRingingCount(const std::string &channelId);
 
 	void addReaction(const std::string &channelId, const std::string &messageId, const std::string &emoji);
 	void removeReaction(const std::string &channelId, const std::string &messageId, const std::string &emoji);
@@ -148,9 +196,20 @@ class DiscordClient {
 
 	void sendLazyRequest(const std::string &guildId, const std::string &channelId);
 
+	void votePoll(const std::string &channelId, const std::string &messageId, const std::vector<int> &answerIds);
+
 	bool canSendMessage(const std::string &channelId);
 	bool canManageMessages(const std::string &channelId);
+
+	void markChannelRead(const std::string &channelId, const std::string &messageId);
+	void markChannelReadLatest(const std::string &channelId);
+	void markGuildRead(const std::string &guildId);
 	void updatePresence(UserStatus status);
+	void setGuildMuted(const std::string &guildId, bool muted, int timeWindowMinutes);
+	void setChannelMuted(const std::string &channelId, bool muted, int timeWindowMinutes);
+	// messageNotifications: 0=all, 1=mentions, 2=none (3=inherit, channel only)
+	void setGuildNotificationLevel(const std::string &guildId, int messageNotifications);
+	void setChannelNotificationLevel(const std::string &channelId, int messageNotifications);
 
 	Channel getChannel(const std::string &channelId);
 	Guild getGuild(const std::string &guildId);
@@ -159,19 +218,6 @@ class DiscordClient {
 	int getRoleColor(const std::string &guildId, const std::string &userId);
 	std::string getMemberDisplayName(const std::string &guildId, const std::string &userId, const User &user);
 	std::string getGuildIdFromChannel(const std::string &channelId);
-
-	std::vector<Message> parseMessages(const std::string &json);
-	Message parseSingleMessage(const rapidjson::Value &d);
-	Message parseSingleMessage(const std::string &json);
-
-	uint64_t calcBasePermissions(const Guild &guild, const std::string &userId,
-	                             const std::vector<std::string> &memberRoleIds);
-	uint64_t computeChannelPermissions(const Guild &guild, const Channel &channel, const std::string &userId,
-	                                   const std::vector<std::string> &memberRoleIds);
-	uint64_t computeOverwrites(uint64_t base, const std::string &guildId, const std::string &userId,
-	                           const std::vector<std::string> &memberRoleIds, const rapidjson::Value &overwrites);
-	uint64_t computeOverwrites(uint64_t base, const std::string &guildId, const std::string &userId,
-	                           const std::vector<std::string> &memberRoleIds, const std::vector<Overwrite> &overwrites);
 
   private:
 	DiscordClient();
@@ -194,23 +240,48 @@ class DiscordClient {
 	void handleReady(const rapidjson::Value &d);
 	void handleResumed();
 	void handleGuildCreate(const rapidjson::Value &d);
-	void handleChannelCreateUpdate(const rapidjson::Value &d);
+	void handleChannelCreateUpdate(const rapidjson::Value &d, const std::string &guildIdOverride = "");
+	void handleGuildMembersChunk(const rapidjson::Value &d);
+	void applyVoiceMemberName(const std::string &userId, const Member &member);
 	void handleChannelDelete(const rapidjson::Value &d);
 	void handleTypingStart(const rapidjson::Value &d);
 	void handleMessageCreate(const rapidjson::Value &d);
 	void handleMessageUpdate(const rapidjson::Value &d);
 	void handleMessageDelete(const rapidjson::Value &d);
+	void handleMessageAck(const rapidjson::Value &d);
 	void handleReactionAdd(const rapidjson::Value &d);
 	void handleReactionRemove(const rapidjson::Value &d);
+	void handlePollVote(const rapidjson::Value &d, bool added);
 	void handlePresenceUpdate(const rapidjson::Value &d);
 	void handleUserSettingsUpdate(const rapidjson::Value &d);
+	void handleUserGuildSettingsUpdate(const rapidjson::Value &d);
 	void handleSessionsReplace(const rapidjson::Value &d);
+	void parseUserGuildSettings(const rapidjson::Value &arr, std::map<std::string, GuildNotificationSettings> &out);
 	void parseGuildObject(const rapidjson::Value &gObj, Guild &guild, const std::string &userId);
 	void parseChannelObject(const rapidjson::Value &cObj, Channel &channel);
 	void parseOverwrites(const rapidjson::Value &ows, std::vector<Overwrite> &overwrites);
 
+	static User parseUserObject(const rapidjson::Value &uObj);
+	static Member parseMemberObject(const rapidjson::Value &mObj, const std::string &userId);
+	static Embed parseEmbedObject(const rapidjson::Value &eObj);
+	static Attachment parseAttachmentObject(const rapidjson::Value &aObj);
+	static Emoji parseEmojiObject(const rapidjson::Value &eObj);
+
 	void postMessage(const std::string &channelId, const std::string &content, const std::string &nonce,
 	                 const std::string &replyId, SendMessageCallback cb);
+
+	std::vector<Message> parseMessages(const std::string &json);
+	Message parseSingleMessage(const rapidjson::Value &d);
+	Message parseSingleMessage(const std::string &json);
+
+	uint64_t calcBasePermissions(const Guild &guild, const std::string &userId,
+	                             const std::vector<std::string> &memberRoleIds);
+	uint64_t computeChannelPermissions(const Guild &guild, const Channel &channel, const std::string &userId,
+	                                   const std::vector<std::string> &memberRoleIds);
+	uint64_t computeOverwrites(uint64_t base, const std::string &guildId, const std::string &userId,
+	                           const std::vector<std::string> &memberRoleIds, const rapidjson::Value &overwrites);
+	uint64_t computeOverwrites(uint64_t base, const std::string &guildId, const std::string &userId,
+	                           const std::vector<std::string> &memberRoleIds, const std::vector<Overwrite> &overwrites);
 
 	void setState(ConnectionState newState, const std::string &message = "");
 	void setStatus(const std::string &message);
@@ -221,9 +292,11 @@ class DiscordClient {
 	std::vector<Channel> privateChannels;
 	std::vector<GuildFolder> folders;
 	std::map<std::string, std::string> channelToGuildCache;
+	std::map<std::string, ReadState> readStates;
+	std::map<std::string, GuildNotificationSettings> notificationSettings;
 
 	std::string token;
-	ConnectionState state;
+	std::atomic<ConnectionState> state;
 
 	int heartbeatInterval;
 	uint64_t lastHeartbeat;
@@ -235,6 +308,10 @@ class DiscordClient {
 	bool isConnecting;
 	bool stopWorker;
 	std::atomic<bool> authFailed{false};
+	std::atomic<bool> readStateDirty{false};
+	std::string readStateDirtyChannelId;
+	std::atomic<bool> guildDataDirty{false};
+	std::atomic<bool> privateChannelsDirty{false};
 	std::thread workerThread;
 	std::thread networkThread;
 
@@ -250,19 +327,31 @@ class DiscordClient {
 
 	std::string selectedGuildId;
 	std::string selectedChannelId;
+	std::string incomingCallChannelId;
+	std::map<std::string, int> callRinging;
 
 	Network::WebSocketClient ws;
 
 	mutable std::recursive_mutex clientMutex;
 
 	std::function<void()> connectionCallback;
+	std::function<void(const std::string &, bool, bool)> voiceStateCallback;
+
+	std::map<std::string, std::vector<VoiceParticipant>> voiceParticipants;
+	std::map<std::string, std::string> voiceChannelByUser;
+	void applyVoiceState(const rapidjson::Value &state, const std::string &guildId);
+	void clearVoiceParticipant(const std::string &userId);
+	std::set<std::string> voiceNameLookups;
+	std::function<void(const std::string &, const std::string &, const std::string &)> voiceServerCallback;
 	std::function<void(const Message &)> messageCallback;
 	std::function<void(const Message &)> messageUpdateCallback;
 	std::function<void(const std::string &)> messageDeleteCallback;
 	ReactionCallback messageReactionAddCallback;
 	ReactionCallback messageReactionRemoveCallback;
+	PollVoteCallback pollVoteCallback;
 
 	std::map<std::string, std::vector<TypingUser>> typingUsers;
+	std::map<std::string, UserProfile> profileCache;
 };
 
 } // namespace Discord

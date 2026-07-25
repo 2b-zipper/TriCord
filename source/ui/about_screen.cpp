@@ -150,8 +150,10 @@ void AboutScreen::renderBottom(C3D_RenderTarget *target) {
 		y += 13.0f;
 	};
 	drawLib("libctru, citro3d, citro2d");
-	drawLib("libcurl, mbedtls, RapidJSON");
-	drawLib("stb_image, qrcodegen, zlib");
+	drawLib("libcurl, mbedtls, zlib");
+	drawLib("libopus, mlspp, libdave");
+	drawLib("WebRTC AECM");
+	drawLib("RapidJSON, stb_image, qrcodegen");
 	drawLib("Twemoji Assets");
 
 	drawSectionTitle("Source Code");

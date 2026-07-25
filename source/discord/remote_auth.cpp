@@ -1,9 +1,7 @@
 #include "discord/remote_auth.h"
-#include "core/config.h"
 #include "core/i18n.h"
 #include "log.h"
 #include "utils/base64_utils.h"
-#include "utils/file_utils.h"
 #include "utils/json_utils.h"
 #include <3ds.h>
 #include <sys/stat.h>
@@ -148,7 +146,6 @@ void RemoteAuth::poll() {
 		}
 	}
 
-	// Auto-retry if failed or cancelled
 	if (state == RemoteAuthState::FAILED || state == RemoteAuthState::CANCELLED) {
 		uint64_t now = osGetTime();
 		if (now - lastRetryTime >= retryDelay) {

@@ -166,6 +166,17 @@ void SettingsScreen::onEnter() {
 	};
 	allItems.push_back(showIcons);
 
+	SettingItem hiddenChannels;
+	hiddenChannels.label = TR("settings.show_hidden_channels");
+	hiddenChannels.description = TR("settings.desc.show_hidden_channels");
+	hiddenChannels.type = SettingItemType::TOGGLE;
+	hiddenChannels.value = Config::getInstance().isShowHiddenChannelsEnabled() ? 1 : 0;
+	hiddenChannels.min = 0;
+	hiddenChannels.max = 1;
+	hiddenChannels.valueFormatter = [](int val) { return (val == 1) ? TR("common.enabled") : TR("common.disabled"); };
+	hiddenChannels.onUpdate = [](int val) { Config::getInstance().setShowHiddenChannelsEnabled(val == 1); };
+	allItems.push_back(hiddenChannels);
+
 	// CHAT
 	allItems.push_back({TR("settings.section.chat"), "", SettingItemType::SECTION_HEADER});
 
@@ -179,6 +190,20 @@ void SettingsScreen::onEnter() {
 	typing.valueFormatter = [](int val) { return (val == 1) ? TR("common.enabled") : TR("common.disabled"); };
 	typing.onUpdate = [](int val) { Config::getInstance().setTypingIndicatorEnabled(val == 1); };
 	allItems.push_back(typing);
+
+	// VOICE
+	allItems.push_back({TR("settings.section.voice"), "", SettingItemType::SECTION_HEADER});
+
+	SettingItem echoCancel;
+	echoCancel.label = TR("settings.echo_cancellation");
+	echoCancel.description = TR("settings.desc.echo_cancellation");
+	echoCancel.type = SettingItemType::TOGGLE;
+	echoCancel.value = Config::getInstance().isEchoCancellationEnabled() ? 1 : 0;
+	echoCancel.min = 0;
+	echoCancel.max = 1;
+	echoCancel.valueFormatter = [](int val) { return (val == 1) ? TR("common.enabled") : TR("common.disabled"); };
+	echoCancel.onUpdate = [](int val) { Config::getInstance().setEchoCancellationEnabled(val == 1); };
+	allItems.push_back(echoCancel);
 
 	// DEVELOPER
 	SettingItem devSection;

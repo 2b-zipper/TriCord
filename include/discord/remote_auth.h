@@ -3,11 +3,9 @@
 
 #include "network/websocket_client.h"
 #include <3ds.h>
-#include <atomic>
 #include <functional>
 #include <string>
 #include <thread>
-#include <vector>
 
 namespace Discord {
 
@@ -44,7 +42,6 @@ class RemoteAuth {
 
 	std::string decryptToken(const std::string &encryptedTokenBase64);
 
-	// Callbacks
 	void setOnStateChange(std::function<void(RemoteAuthState, const std::string &)> callback);
 	void setOnUserScanned(std::function<void(const RemoteAuthUser &)> callback);
 	void setOnTokenReceived(std::function<void(const std::string &)> callback);
@@ -68,7 +65,6 @@ class RemoteAuth {
 	bool initSuccess;
 	void runInit();
 
-	// Callbacks
 	std::function<void(RemoteAuthState, const std::string &)> onStateChange;
 	std::function<void(const RemoteAuthUser &)> onUserScanned;
 	std::function<void(const std::string &)> onTokenReceived;

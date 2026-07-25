@@ -9,7 +9,6 @@
 #include "utils/string_utils.h"
 #include <3ds.h>
 #include <cmath>
-#include <cstdio>
 
 namespace UI {
 

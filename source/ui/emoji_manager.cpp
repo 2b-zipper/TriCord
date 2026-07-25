@@ -1,5 +1,4 @@
 #include "ui/emoji_manager.h"
-#include "core/i18n.h"
 #include "log.h"
 #include "network/network_manager.h"
 #include "utils/image_utils.h"
@@ -10,7 +9,6 @@
 #include <dirent.h>
 #include <fstream>
 #include <malloc.h>
-#include <sstream>
 #include <unordered_set>
 
 namespace UI {
