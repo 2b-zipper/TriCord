@@ -3329,7 +3329,6 @@ void DiscordClient::updatePresence(UserStatus status) {
 
 bool DiscordClient::isUserMentioned(const Message &msg) {
 	std::lock_guard<std::recursive_mutex> lock(clientMutex);
-	if (msg.author.id == currentUser.id) return false;
 
 	for (const auto &user : msg.mentions) {
 		if (user.id == currentUser.id) return true;
