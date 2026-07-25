@@ -139,5 +139,6 @@ This project is licensed under the GNU General Public License v3.0 - see the [LI
 - [MorrisTheGamer](https://github.com/MorrisTheGamer) for the German translation
 - [ReisuErx](https://github.com/ReisuErx) for the Polish translation
 - [wiretoscreen](https://github.com/wiretoscreen) for the Brazilian Portuguese translation
+- [murloc-tinyfin](https://github.com/murloc-tinyfin) for the Simplified Chinese translation
 - [Discord Userdoccers](https://github.com/discord-userdoccers/discord-userdoccers) for the documentation of the Discord API
 - And all other contributors!
