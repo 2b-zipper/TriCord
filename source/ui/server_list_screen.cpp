@@ -1912,13 +1912,23 @@ void ServerListScreen::renderBottom(C3D_RenderTarget *target) {
 	}
 
 	if (state == State::SELECTING_SERVER) {
-		drawText(10.0f, BOTTOM_SCREEN_HEIGHT - 25.0f, 0.5f, 0.4f, 0.4f, ScreenManager::colorTextMuted(),
-		         "\uE079\uE07A: " + TR("common.navigate") + "  \uE000: " + TR("common.enter") +
-		             "  START: " + TR("common.exit"));
+		std::string hints = "\uE079\uE07A: " + TR("common.navigate") + "  \uE000: " + TR("common.enter");
+		if (selectedIndex >= 0 && selectedIndex < (int)listItems.size() && !listItems[selectedIndex].isFolder &&
+		    !listItems[selectedIndex].isDm) {
+			hints += "  \uE002: " + TR("common.menu");
+		}
+		hints += "  START: " + TR("common.exit");
+		drawText(10.0f, BOTTOM_SCREEN_HEIGHT - 25.0f, 0.5f, 0.4f, 0.4f, ScreenManager::colorTextMuted(), hints);
 	} else {
-		drawText(10.0f, BOTTOM_SCREEN_HEIGHT - 25.0f, 0.5f, 0.4f, 0.4f, ScreenManager::colorTextMuted(),
-		         "\uE079\uE07A: " + TR("common.navigate") + "  \uE001: " + TR("common.back") +
-		             "  \uE000: " + TR("common.enter"));
+		std::string hints = "\uE079\uE07A: " + TR("common.navigate") + "  \uE001: " + TR("common.back") +
+		                    "  \uE000: " + TR("common.enter");
+		if (selectedChannelIndex >= 0 && selectedChannelIndex < (int)sortedChannels.size()) {
+			int type = sortedChannels[selectedChannelIndex].type;
+			if (type != 4 && type != 1 && type != 3) {
+				hints += "  \uE002: " + TR("common.menu");
+			}
+		}
+		drawText(10.0f, BOTTOM_SCREEN_HEIGHT - 25.0f, 0.5f, 0.4f, 0.4f, ScreenManager::colorTextMuted(), hints);
 	}
 
 	drawVoiceStatus();
