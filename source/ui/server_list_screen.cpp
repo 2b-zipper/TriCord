@@ -1072,6 +1072,20 @@ void ServerListScreen::update() {
 			}
 		}
 
+		if (kDown & KEY_LEFT) {
+			if (!listItems.empty() && selectedIndex != 0) {
+				selectedIndex = 0;
+				scrollOffset = 0;
+				selectionChanged = true;
+			}
+		} else if (kDown & KEY_RIGHT) {
+			if (!listItems.empty() && selectedIndex != (int)listItems.size() - 1) {
+				selectedIndex = (int)listItems.size() - 1;
+				scrollOffset = std::max(0, selectedIndex - 4);
+				selectionChanged = true;
+			}
+		}
+
 		if (selectionChanged) {
 			subscribeTimer = 0;
 			sm.setLastServerIndex(selectedIndex);
@@ -1156,6 +1170,28 @@ void ServerListScreen::update() {
 			}
 
 			if (moveDir & (KEY_UP | KEY_DOWN)) {
+				sm.setLastChannelIndex(sm.getSelectedGuildId(), selectedChannelIndex);
+				sm.setLastChannelScroll(sm.getSelectedGuildId(), channelScrollOffset);
+			}
+
+			int jumpIndex = -1;
+			if (kDown & KEY_LEFT) {
+				jumpIndex = 0;
+				while (jumpIndex < (int)sortedChannels.size() && sortedChannels[jumpIndex].type == 4) {
+					jumpIndex++;
+				}
+				if (jumpIndex >= (int)sortedChannels.size()) {
+					jumpIndex = -1;
+				}
+			} else if (kDown & KEY_RIGHT) {
+				jumpIndex = (int)sortedChannels.size() - 1;
+				while (jumpIndex >= 0 && sortedChannels[jumpIndex].type == 4) {
+					jumpIndex--;
+				}
+			}
+			if (jumpIndex >= 0 && jumpIndex != selectedChannelIndex) {
+				selectedChannelIndex = jumpIndex;
+				ensureChannelVisible();
 				sm.setLastChannelIndex(sm.getSelectedGuildId(), selectedChannelIndex);
 				sm.setLastChannelScroll(sm.getSelectedGuildId(), channelScrollOffset);
 			}
@@ -1912,7 +1948,7 @@ void ServerListScreen::renderBottom(C3D_RenderTarget *target) {
 	}
 
 	if (state == State::SELECTING_SERVER) {
-		std::string hints = "\uE079\uE07A: " + TR("common.navigate") + "  \uE000: " + TR("common.enter");
+		std::string hints = "\ue07d\ue07e: " + TR("common.navigate") + "  \uE000: " + TR("common.enter");
 		if (selectedIndex >= 0 && selectedIndex < (int)listItems.size() && !listItems[selectedIndex].isFolder &&
 		    !listItems[selectedIndex].isDm) {
 			hints += "  \uE002: " + TR("common.menu");
@@ -1920,7 +1956,7 @@ void ServerListScreen::renderBottom(C3D_RenderTarget *target) {
 		hints += "  START: " + TR("common.exit");
 		drawText(10.0f, BOTTOM_SCREEN_HEIGHT - 25.0f, 0.5f, 0.4f, 0.4f, ScreenManager::colorTextMuted(), hints);
 	} else {
-		std::string hints = "\uE079\uE07A: " + TR("common.navigate") + "  \uE001: " + TR("common.back") +
+		std::string hints = "\ue07d\ue07e: " + TR("common.navigate") + "  \uE001: " + TR("common.back") +
 		                    "  \uE000: " + TR("common.enter");
 		if (selectedChannelIndex >= 0 && selectedChannelIndex < (int)sortedChannels.size()) {
 			int type = sortedChannels[selectedChannelIndex].type;
