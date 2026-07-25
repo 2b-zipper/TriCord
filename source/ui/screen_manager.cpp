@@ -17,13 +17,158 @@
 #include "ui/text_measure_cache.h"
 #include "ui/theme_manager_screen.h"
 #include "utils/utf8_utils.h"
+#include <algorithm>
 #include <cmath>
+#include <unordered_map>
 
 namespace UI {
 
 static C2D_TextBuf textBuf = nullptr;
 static C2D_TextBuf debugTextBuf = nullptr;
 static C2D_TextBuf layoutTextBuf = nullptr;
+
+static constexpr CFG_Region FALLBACK_REGIONS[] = {CFG_REGION_CHN, CFG_REGION_TWN, CFG_REGION_KOR, CFG_REGION_JPN};
+static constexpr int NUM_FALLBACK_FONTS = sizeof(FALLBACK_REGIONS) / sizeof(FALLBACK_REGIONS[0]);
+
+// Visually tuned on hardware
+static constexpr float FALLBACK_DESIGN_SCALE = 0.90f;
+static constexpr float FALLBACK_BASELINE_TWEAK = -2.4f;
+
+static C2D_Font fallbackFonts[NUM_FALLBACK_FONTS] = {};
+static bool fallbackFontTried[NUM_FALLBACK_FONTS] = {};
+static int systemFontSlot = -1;
+static std::unordered_map<uint32_t, C2D_Font> glyphFontCache;
+
+static bool fontHasGlyph(C2D_Font font, uint32_t cp) {
+	return C2D_FontGlyphIndexFromCodePoint(font, cp) != (int)C2D_FontGetInfo(font)->alterCharIndex;
+}
+
+static bool isHangul(uint32_t cp) {
+	return (cp >= 0x1100 && cp <= 0x11FF) || (cp >= 0x3130 && cp <= 0x318F) || (cp >= 0xAC00 && cp <= 0xD7AF);
+}
+
+static int querySystemFontSlot() {
+	u8 region = CFG_REGION_JPN;
+	if (R_SUCCEEDED(cfguInit())) {
+		CFGU_SecureInfoGetRegion(&region);
+		cfguExit();
+	}
+	switch (region) {
+	case CFG_REGION_CHN:
+		return 0;
+	case CFG_REGION_TWN:
+		return 1;
+	case CFG_REGION_KOR:
+		return 2;
+	default:
+		return 3;
+	}
+}
+
+static float fallbackFontScale(C2D_Font font) { return font ? FALLBACK_DESIGN_SCALE : 1.0f; }
+
+static float fallbackBaselineOffset(C2D_Font font, float scaleY, float scaleAdj) {
+	if (!font) {
+		return 0.0f;
+	}
+	TGLP_s *sysTglp = C2D_FontGetInfo(nullptr)->tglp;
+	TGLP_s *fbTglp = C2D_FontGetInfo(font)->tglp;
+	if (!sysTglp || !fbTglp) {
+		return 0.0f;
+	}
+	return scaleY * ((float)sysTglp->baselinePos - scaleAdj * (float)fbTglp->baselinePos + FALLBACK_BASELINE_TWEAK);
+}
+
+static void loadFallbackFont(int slot) {
+	fallbackFontTried[slot] = true;
+	// C2D_FontLoadSystem requires cfgu to be initialized
+	if (R_SUCCEEDED(cfguInit())) {
+		fallbackFonts[slot] = C2D_FontLoadSystem(FALLBACK_REGIONS[slot]);
+		cfguExit();
+	}
+	Logger::log("[UI] Fallback font region %d: %s", (int)FALLBACK_REGIONS[slot],
+	            fallbackFonts[slot] ? "loaded" : "unavailable");
+}
+
+static C2D_Font glyphFallbackFont(uint32_t cp) {
+	if (cp < 0x1100 || cp > 0xFAFF) {
+		return nullptr;
+	}
+
+	auto cached = glyphFontCache.find(cp);
+	if (cached != glyphFontCache.end()) {
+		return cached->second;
+	}
+
+	C2D_Font result = nullptr;
+	if (!fontHasGlyph(nullptr, cp)) {
+		if (systemFontSlot < 0) {
+			systemFontSlot = querySystemFontSlot();
+		}
+
+		static const int hangulOrder[] = {2, 0, 1, 3};
+		static const int cjkOrder[] = {0, 1, 3, 2};
+		const int *order = isHangul(cp) ? hangulOrder : cjkOrder;
+
+		for (int i = 0; i < NUM_FALLBACK_FONTS; i++) {
+			int slot = order[i];
+			if (slot == systemFontSlot) {
+				continue;
+			}
+			if (!fallbackFontTried[slot]) {
+				loadFallbackFont(slot);
+			}
+			if (fallbackFonts[slot] && fontHasGlyph(fallbackFonts[slot], cp)) {
+				result = fallbackFonts[slot];
+				break;
+			}
+		}
+	}
+
+	glyphFontCache[cp] = result;
+	return result;
+}
+
+static bool needsFontFallback(const std::string &text) {
+	size_t cursor = 0;
+	while (cursor < text.length()) {
+		if (glyphFallbackFont(Utils::Utf8::decodeNext(text, cursor))) {
+			return true;
+		}
+	}
+	return false;
+}
+
+template <typename OnRun, typename OnLineBreak>
+static void splitFontRuns(const std::string &text, OnRun onRun, OnLineBreak onLineBreak) {
+	std::string run;
+	C2D_Font runFont = nullptr;
+
+	auto flush = [&]() {
+		if (!run.empty()) {
+			onRun(run, runFont);
+			run.clear();
+		}
+	};
+
+	size_t cursor = 0;
+	while (cursor < text.length()) {
+		size_t start = cursor;
+		uint32_t cp = Utils::Utf8::decodeNext(text, cursor);
+		if (cp == '\n') {
+			flush();
+			onLineBreak();
+			continue;
+		}
+		C2D_Font font = glyphFallbackFont(cp);
+		if (font != runFont) {
+			flush();
+			runFont = font;
+		}
+		run.append(text, start, cursor - start);
+	}
+	flush();
+}
 
 Screen::Screen() : exitRequested(false) {}
 
@@ -77,6 +222,15 @@ void ScreenManager::shutdown() {
 	if (layoutTextBuf) {
 		C2D_TextBufDelete(layoutTextBuf);
 		layoutTextBuf = nullptr;
+	}
+
+	glyphFontCache.clear();
+	for (int i = 0; i < NUM_FALLBACK_FONTS; i++) {
+		if (fallbackFonts[i]) {
+			C2D_FontFree(fallbackFonts[i]);
+			fallbackFonts[i] = nullptr;
+		}
+		fallbackFontTried[i] = false;
 	}
 
 	Logger::log("[UI] Screen manager shutdown");
@@ -403,29 +557,46 @@ void drawText(float x, float y, float z, float scaleX, float scaleY, u32 color, 
 		return;
 	}
 
-	C2D_Text c2dText;
-	C2D_TextParse(&c2dText, textBuf, text.c_str());
-	C2D_TextOptimize(&c2dText);
-	C2D_DrawText(&c2dText, C2D_WithColor, x, y, z, scaleX, scaleY, color);
+	if (!needsFontFallback(text)) {
+		C2D_Text c2dText;
+		C2D_TextParse(&c2dText, textBuf, text.c_str());
+		C2D_TextOptimize(&c2dText);
+		C2D_DrawText(&c2dText, C2D_WithColor, x, y, z, scaleX, scaleY, color);
+		return;
+	}
+
+	float lineFeed = C2D_FontGetInfo(nullptr)->lineFeed * scaleY;
+	float curX = x;
+	float curY = y;
+
+	splitFontRuns(
+	    text,
+	    [&](const std::string &run, C2D_Font font) {
+		    C2D_Text c2dText;
+		    C2D_TextFontParse(&c2dText, font, textBuf, run.c_str());
+		    C2D_TextOptimize(&c2dText);
+		    float scaleAdj = fallbackFontScale(font);
+		    float yOff = fallbackBaselineOffset(font, scaleY, scaleAdj);
+		    C2D_DrawText(&c2dText, C2D_WithColor, curX, curY + yOff, z, scaleX * scaleAdj, scaleY * scaleAdj, color);
+		    float width, height;
+		    C2D_TextGetDimensions(&c2dText, scaleX * scaleAdj, scaleY * scaleAdj, &width, &height);
+		    curX += width;
+	    },
+	    [&]() {
+		    curX = x;
+		    curY += lineFeed;
+	    });
 }
 
 void drawCenteredText(float y, float z, float scaleX, float scaleY, u32 color, const std::string &rawText,
                       float screenWidth) {
-	std::string text = Utils::Utf8::sanitizeText(rawText);
-
 	if (!textBuf) {
 		return;
 	}
 
-	C2D_Text c2dText;
-	C2D_TextParse(&c2dText, textBuf, text.c_str());
-	C2D_TextOptimize(&c2dText);
-
-	float width, height;
-	C2D_TextGetDimensions(&c2dText, scaleX, scaleY, &width, &height);
-
+	float width = measureText(rawText, scaleX, scaleY);
 	float x = (screenWidth - width) / 2.0f;
-	C2D_DrawText(&c2dText, C2D_WithColor, x, y, z, scaleX, scaleY, color);
+	drawText(x, y, z, scaleX, scaleY, color, rawText);
 }
 
 float measureTextDirect(const std::string &rawText, float scaleX, float scaleY) {
@@ -435,14 +606,37 @@ float measureTextDirect(const std::string &rawText, float scaleX, float scaleY) 
 		return 0.0f;
 	}
 
-	C2D_Text c2dText;
-	C2D_TextParse(&c2dText, layoutTextBuf, text.c_str());
+	if (!needsFontFallback(text)) {
+		C2D_Text c2dText;
+		C2D_TextParse(&c2dText, layoutTextBuf, text.c_str());
 
-	float width, height;
-	C2D_TextGetDimensions(&c2dText, scaleX, scaleY, &width, &height);
+		float width, height;
+		C2D_TextGetDimensions(&c2dText, scaleX, scaleY, &width, &height);
+
+		C2D_TextBufClear(layoutTextBuf);
+		return width;
+	}
+
+	float maxWidth = 0.0f;
+	float curX = 0.0f;
+
+	splitFontRuns(
+	    text,
+	    [&](const std::string &run, C2D_Font font) {
+		    C2D_Text c2dText;
+		    C2D_TextFontParse(&c2dText, font, layoutTextBuf, run.c_str());
+		    float scaleAdj = fallbackFontScale(font);
+		    float width, height;
+		    C2D_TextGetDimensions(&c2dText, scaleX * scaleAdj, scaleY * scaleAdj, &width, &height);
+		    curX += width;
+	    },
+	    [&]() {
+		    maxWidth = std::max(maxWidth, curX);
+		    curX = 0.0f;
+	    });
 
 	C2D_TextBufClear(layoutTextBuf);
-	return width;
+	return std::max(maxWidth, curX);
 }
 
 float measureText(const std::string &text, float scaleX, float scaleY) {
