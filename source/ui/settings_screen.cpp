@@ -36,9 +36,10 @@ void SettingsScreen::onEnter() {
 	                 : (langCode == "de_DE") ? 5
 	                 : (langCode == "pl_PL") ? 6
 	                 : (langCode == "pt_BR") ? 7
+	                 : (langCode == "zh_CN") ? 8
 	                                         : 0;
 	language.min = 0;
-	language.max = 7;
+	language.max = 8;
 	language.valueFormatter = [](int val) {
 		if (val == 0) {
 			return "English";
@@ -64,6 +65,9 @@ void SettingsScreen::onEnter() {
 		if (val == 7) {
 			return "Português (Brasil)";
 		}
+		if (val == 8) {
+			return "简体中文";
+		}
 		return "English";
 	};
 	language.onUpdate = [this](int val) {
@@ -74,6 +78,7 @@ void SettingsScreen::onEnter() {
 		                      : (val == 5) ? "de_DE"
 		                      : (val == 6) ? "pl_PL"
 		                      : (val == 7) ? "pt_BR"
+		                      : (val == 8) ? "zh_CN"
 		                                   : "en_US";
 		Config::getInstance().setLanguage(newLang);
 		ScreenManager::getInstance().getHamburgerMenu().refreshStrings();
