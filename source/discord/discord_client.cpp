@@ -8,6 +8,7 @@
 #include "utils/json_utils.h"
 #include "utils/message_utils.h"
 #include "utils/system_utils.h"
+#include "utils/sound_player.h"
 #include <3ds.h>
 #include <cstdio>
 #include <cstring>
@@ -1131,13 +1132,15 @@ void DiscordClient::handleMessageCreate(const rapidjson::Value &d) {
 		}
 	}
 
-	if (!mentioned && !isPrivate) {
-		const GuildNotificationSettings *gs = nullptr;
+	const GuildNotificationSettings *gs = nullptr;
+	if (!isPrivate) {
 		auto gsIt = notificationSettings.find(guildId);
 		if (gsIt != notificationSettings.end()) {
 			gs = &gsIt->second;
 		}
+	}
 
+	if (!mentioned && !isPrivate) {
 		if (!(gs && gs->suppressEveryone) && Utils::Json::getBool(d, "mention_everyone")) {
 			mentioned = true;
 		}
@@ -1161,6 +1164,38 @@ void DiscordClient::handleMessageCreate(const rapidjson::Value &d) {
 				break;
 			}
 		}
+	}
+
+	bool playSound = false;
+	if (isPrivate) {
+		playSound = true;
+	} else {
+		bool isMuted = gs ? gs->muted : false;
+		int notifyLevel = gs ? gs->messageNotifications : 0;
+
+		if (gs) {
+			auto chIt = gs->channelOverrides.find(msg.channelId);
+			if (chIt != gs->channelOverrides.end()) {
+				if (chIt->second.muted) {
+					isMuted = true;
+				}
+				if (chIt->second.messageNotifications != 3) {
+					notifyLevel = chIt->second.messageNotifications;
+				}
+			}
+		}
+
+		if (!isMuted) {
+			if (notifyLevel == 0) {
+				playSound = true;
+			} else if (notifyLevel == 1 && mentioned) {
+				playSound = true;
+			}
+		}
+	}
+
+	if (playSound) {
+		Utils::SoundPlayer::getInstance().play(Utils::Sound::NOTIFICATION);
 	}
 
 	// Any message in an unmuted private channel counts towards the badge.
