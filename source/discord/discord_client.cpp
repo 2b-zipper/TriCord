@@ -625,6 +625,14 @@ void DiscordClient::handleDispatch(const rapidjson::Document &doc) {
 		} else if (incomingCallChannelId == channelId) {
 			incomingCallChannelId.clear();
 		}
+
+		if (d.HasMember("voice_states") && d["voice_states"].IsArray()) {
+			for (const auto &vs : d["voice_states"].GetArray()) {
+				if (vs.IsObject()) {
+					applyVoiceState(vs, "");
+				}
+			}
+		}
 		return;
 	}
 
