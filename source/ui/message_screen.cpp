@@ -372,44 +372,57 @@ void MessageScreen::update() {
 	u32 kHeld = hidKeysHeld();
 	u32 kUp = hidKeysUp();
 
-	if ((kDown & KEY_TOUCH) && bottomMode != BottomScreenMode::EMOJI_PICKER) {
+	if (((kDown | kHeld) & KEY_TOUCH) && bottomMode != BottomScreenMode::EMOJI_PICKER) {
 		touchPosition touch;
 		hidTouchRead(&touch);
 
-		if (VoiceControls::handleTouch(touch, VOICE_BTN_X, VOICE_BTN_Y)) {
-			return;
-		}
-
-		float btnW = 30.0f;
-		float btnH = 30.0f;
-		float btnX = 320.0f - btnW - 10.0f;
-		float btnY = bottomButtonY();
-
-		const float SCREEN_HEIGHT = 240.0f;
-		float maxScroll = std::max(0.0f, totalContentHeight - SCREEN_HEIGHT);
-		bool isScrollBtnVisible = (targetScrollY < maxScroll - 10.0f);
-
-		if (isScrollBtnVisible && touch.px >= btnX && touch.px <= btnX + btnW && touch.py >= btnY &&
-		    touch.py <= btnY + btnH) {
-			if (!isMenuOpen && !isLoading) {
-				scrollToBottom();
+		if (kDown & KEY_TOUCH) {
+			isDraggingBottom = false;
+			if (VoiceControls::handleTouch(touch, VOICE_BTN_X, VOICE_BTN_Y)) {
+				return;
 			}
-		}
 
-		float reactBtnX = isScrollBtnVisible ? (btnX - btnW - 8.0f) : btnX;
-		if (touch.px >= reactBtnX && touch.px <= reactBtnX + btnW && touch.py >= btnY && touch.py <= btnY + btnH) {
-			if (!isMenuOpen && !isLoading) {
-				bottomMode = BottomScreenMode::EMOJI_PICKER;
-			}
-		}
+			float btnW = 30.0f;
+			float btnH = 30.0f;
+			float btnX = 320.0f - btnW - 10.0f;
+			float btnY = bottomButtonY();
 
-		float callBtnX = reactBtnX - btnW - 8.0f;
-		if (isCallableChannel() && !isCallActive() && touch.px >= callBtnX && touch.px <= callBtnX + btnW &&
-		    touch.py >= btnY && touch.py <= btnY + btnH) {
+			const float SCREEN_HEIGHT = 240.0f;
+			float maxScroll = std::max(0.0f, totalContentHeight - SCREEN_HEIGHT);
+			bool isScrollBtnVisible = (targetScrollY < maxScroll - 10.0f);
+
+			bool handled = false;
 			if (!isMenuOpen && !isLoading) {
-				startCall();
+				float reactBtnX = isScrollBtnVisible ? (btnX - btnW - 8.0f) : btnX;
+				float callBtnX = reactBtnX - btnW - 8.0f;
+
+				auto isTouched = [&](float x, float y, float w, float h) {
+					return touch.px >= x && touch.px <= x + w && touch.py >= y && touch.py <= y + h;
+				};
+
+				if (isScrollBtnVisible && isTouched(btnX, btnY, btnW, btnH)) {
+					scrollToBottom();
+					handled = true;
+				} else if (isTouched(reactBtnX, btnY, btnW, btnH)) {
+					bottomMode = BottomScreenMode::EMOJI_PICKER;
+					handled = true;
+				} else if (isCallableChannel() && !isCallActive() && isTouched(callBtnX, btnY, btnW, btnH)) {
+					startCall();
+					handled = true;
+				}
 			}
+
+			if (!handled) {
+				isDraggingBottom = true;
+				lastTouch = touch;
+			}
+		} else if (isDraggingBottom) {
+			float dy = touch.py - lastTouch.py;
+			bottomScrollY -= dy;
+			lastTouch = touch;
 		}
+	} else {
+		isDraggingBottom = false;
 	}
 
 	if ((kDown & KEY_B) && !isMenuOpen) {
@@ -1999,14 +2012,25 @@ void MessageScreen::renderBottom(C3D_RenderTarget *target) {
 
 		float topicY = 40.0f;
 
-		drawText(10.0f, topicY, 0.5f, 0.45f, 0.45f, ScreenManager::colorSelection(),
+		const auto &topicLayout = UI::MarkdownRenderer::get(displayTopic, 300.0f, 0.4f, 13.0f / 0.4f);
+		float contentHeight = 15.0f + UI::MarkdownRenderer::heightOf(topicLayout, -1);
+		float viewHeight = BOTTOM_SCREEN_HEIGHT - 40.0f - 43.0f;
+		float maxScroll = std::max(0.0f, contentHeight - viewHeight);
+		bottomScrollY = std::clamp(bottomScrollY, 0.0f, maxScroll);
+		UI::drawScrollbar(maxScroll, bottomScrollY, 40.0f, viewHeight);
+
+		topicY -= bottomScrollY;
+
+		drawText(10.0f, topicY, 0.4f, 0.45f, 0.45f, ScreenManager::colorSelection(),
 		         Core::I18n::getInstance().get("message.topic"));
 		topicY += 15.0f;
 
-		const auto &topicLayout = UI::MarkdownRenderer::get(displayTopic, 300.0f, 0.4f, 13.0f / 0.4f);
-		UI::MarkdownRenderer::draw(topicLayout, 10.0f, topicY, 0.5f, ScreenManager::colorText(), 10);
-		topicY += UI::MarkdownRenderer::heightOf(topicLayout, 10);
+		UI::MarkdownRenderer::draw(topicLayout, 10.0f, topicY, 0.4f, ScreenManager::colorText(), -1);
+		topicY += UI::MarkdownRenderer::heightOf(topicLayout, -1);
 	}
+
+	C2D_DrawRectSolid(0, 0, 0.45f, 320, 33, ScreenManager::colorBackgroundDark());
+	C2D_DrawRectSolid(0, BOTTOM_SCREEN_HEIGHT - 43.0f, 0.45f, 320, 43.0f, ScreenManager::colorBackgroundDark());
 
 	bool canSend = Discord::DiscordClient::getInstance().canSendMessage(channelId);
 
@@ -2043,7 +2067,7 @@ void MessageScreen::renderBottom(C3D_RenderTarget *target) {
 			typingText = TR("common.several_users_typing");
 		}
 
-		drawText(10.0f, BOTTOM_SCREEN_HEIGHT - 50.0f, 0.5f, 0.4f, 0.4f, ScreenManager::colorSelection(), typingText);
+		drawText(10.0f, BOTTOM_SCREEN_HEIGHT - 37.0f, 0.5f, 0.4f, 0.4f, ScreenManager::colorSelection(), typingText);
 	}
 
 	const float SCREEN_HEIGHT = 240.0f;
@@ -2768,8 +2792,17 @@ void MessageScreen::renderDmProfile(float y) {
 
 	if (!profile.bio.empty()) {
 		const auto &bioLayout = UI::MarkdownRenderer::get(profile.bio, 300.0f, 0.4f, 13.0f / 0.4f);
-		UI::MarkdownRenderer::draw(bioLayout, 10.0f, infoY, 0.5f, ScreenManager::colorText(), 6);
-		infoY += UI::MarkdownRenderer::heightOf(bioLayout, 6) + 8.0f;
+		float contentHeight = UI::MarkdownRenderer::heightOf(bioLayout, -1) + 8.0f;
+
+		float bioStartY = infoY;
+		float viewHeight = BOTTOM_SCREEN_HEIGHT - bioStartY - 43.0f;
+		float maxScroll = std::max(0.0f, contentHeight - viewHeight);
+		bottomScrollY = std::clamp(bottomScrollY, 0.0f, maxScroll);
+		UI::drawScrollbar(maxScroll, bottomScrollY, bioStartY, viewHeight);
+
+		infoY -= bottomScrollY;
+		UI::MarkdownRenderer::draw(bioLayout, 10.0f, infoY, 0.4f, ScreenManager::colorText(), -1);
+		infoY += UI::MarkdownRenderer::heightOf(bioLayout, -1) + 8.0f;
 	}
 
 	time_t created = MessageUtils::snowflakeToTimestamp(user.id);

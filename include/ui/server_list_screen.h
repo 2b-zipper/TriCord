@@ -130,6 +130,10 @@ class ServerListScreen : public Screen {
 	void openMuteMenu(const std::string &guildId);
 	void openChannelMuteMenu(const std::string &channelId, int channelType);
 	void drawMuteMenu();
+
+	float bottomScrollY = 0.0f;
+	touchPosition lastTouch = {0, 0};
+	bool isDraggingBottom = false;
 };
 
 } // namespace UI

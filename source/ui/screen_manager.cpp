@@ -679,6 +679,15 @@ void drawRoundedRect(float x, float y, float z, float w, float h, float radius, 
 
 void drawCircle(float x, float y, float z, float radius, u32 color) { C2D_DrawCircleSolid(x, y, z, radius, color); }
 
+void drawScrollbar(float maxScroll, float currentScroll, float y, float viewHeight) {
+	if (maxScroll <= 0.0f) {
+		return;
+	}
+	float barHeight = std::max(10.0f, viewHeight * (viewHeight / (viewHeight + maxScroll)));
+	float barY = y + (currentScroll / maxScroll) * (viewHeight - barHeight);
+	C2D_DrawRectSolid(314.0f, barY, 0.41f, 3.0f, barHeight, ScreenManager::colorTextMuted());
+}
+
 void drawRichText(float x, float y, float z, float scaleX, float scaleY, u32 color, const std::string &text) {
 	if (!textBuf || text.empty()) {
 		return;

@@ -101,6 +101,22 @@ void ForumScreen::update() {
 	u32 kDown = hidKeysDown();
 	u32 kHeld = hidKeysHeld();
 
+	if ((kDown | kHeld) & KEY_TOUCH) {
+		touchPosition touch;
+		hidTouchRead(&touch);
+
+		if (kDown & KEY_TOUCH) {
+			isDraggingBottom = true;
+			lastTouch = touch;
+		} else if (isDraggingBottom) {
+			float dy = touch.py - lastTouch.py;
+			bottomScrollY -= dy;
+			lastTouch = touch;
+		}
+	} else {
+		isDraggingBottom = false;
+	}
+
 	u32 moveDir = 0;
 	if (kDown & KEY_DOWN) {
 		moveDir = KEY_DOWN;
@@ -239,12 +255,23 @@ void ForumScreen::renderBottom(C3D_RenderTarget *target) {
 
 	float topicY = 40.0f;
 
-	drawText(10.0f, topicY, 0.5f, 0.45f, 0.45f, ScreenManager::colorSelection(), TR("forum.topic_label"));
+	const auto &topicLayout = UI::MarkdownRenderer::get(displayTopic, 300.0f, 0.4f, 13.0f / 0.4f);
+	float contentHeight = 15.0f + UI::MarkdownRenderer::heightOf(topicLayout, -1);
+	float viewHeight = 240.0f - 40.0f - 25.0f;
+	float maxScroll = std::max(0.0f, contentHeight - viewHeight);
+	bottomScrollY = std::clamp(bottomScrollY, 0.0f, maxScroll);
+	UI::drawScrollbar(maxScroll, bottomScrollY, 40.0f, viewHeight);
+
+	topicY -= bottomScrollY;
+
+	drawText(10.0f, topicY, 0.4f, 0.45f, 0.45f, ScreenManager::colorSelection(), TR("forum.topic_label"));
 	topicY += 15.0f;
 
-	const auto &topicLayout = UI::MarkdownRenderer::get(displayTopic, 300.0f, 0.4f, 13.0f / 0.4f);
-	UI::MarkdownRenderer::draw(topicLayout, 10.0f, topicY, 0.5f, ScreenManager::colorText(), 12);
-	topicY += UI::MarkdownRenderer::heightOf(topicLayout, 12);
+	UI::MarkdownRenderer::draw(topicLayout, 10.0f, topicY, 0.4f, ScreenManager::colorText(), -1);
+	topicY += UI::MarkdownRenderer::heightOf(topicLayout, -1);
+
+	C2D_DrawRectSolid(0, 0, 0.45f, 320, 33, ScreenManager::colorBackgroundDark());
+	C2D_DrawRectSolid(0, 240.0f - 25.0f, 0.45f, 320, 25.0f, ScreenManager::colorBackgroundDark());
 
 	float controlsY = 240.0f - 25.0f;
 

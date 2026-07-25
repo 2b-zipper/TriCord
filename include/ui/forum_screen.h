@@ -47,6 +47,10 @@ class ForumScreen : public Screen {
 	bool isLoading;
 	std::shared_ptr<bool> aliveToken;
 
+	float bottomScrollY = 0.0f;
+	touchPosition lastTouch = {0, 0};
+	bool isDraggingBottom = false;
+
 	void fetchThreads();
 	void renderThreadCard(int index, float y);
 

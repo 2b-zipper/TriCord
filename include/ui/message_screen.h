@@ -58,6 +58,10 @@ class MessageScreen : public Screen {
 	float currentScrollY;
 	float totalContentHeight;
 
+	float bottomScrollY = 0.0f;
+	touchPosition lastTouch = {0, 0};
+	bool isDraggingBottom = false;
+
 	bool isMenuOpen;
 	int menuIndex;
 	bool pollMode = false;

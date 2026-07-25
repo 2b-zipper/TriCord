@@ -929,12 +929,23 @@ void ServerListScreen::update() {
 	u32 kDown = hidKeysDown();
 	u32 kHeld = hidKeysHeld();
 
-	if (kDown & KEY_TOUCH) {
+	if ((kDown | kHeld) & KEY_TOUCH) {
 		touchPosition touch;
 		hidTouchRead(&touch);
-		if (VoiceControls::handleTouch(touch, VOICE_BTN_X, VOICE_BTN_Y)) {
-			return;
+
+		if (kDown & KEY_TOUCH) {
+			if (VoiceControls::handleTouch(touch, VOICE_BTN_X, VOICE_BTN_Y)) {
+				return;
+			}
+			isDraggingBottom = true;
+			lastTouch = touch;
+		} else if (isDraggingBottom) {
+			float dy = touch.py - lastTouch.py;
+			bottomScrollY -= dy;
+			lastTouch = touch;
 		}
+	} else {
+		isDraggingBottom = false;
 	}
 
 	if (state == State::TRANSITION_TO_CHANNEL) {
@@ -1868,7 +1879,7 @@ void ServerListScreen::renderBottom(C3D_RenderTarget *target) {
 				drawRichText(headerX, 8.5f, 0.5f, 0.55f, 0.55f, ScreenManager::colorAccent(),
 				             getTruncatedRichText(guild->name, 305.0f - headerX, 0.55f, 0.55f));
 
-				C2D_DrawRectSolid(10, 32, 0.5f, 320 - 20, 1, ScreenManager::colorSeparator());
+				C2D_DrawRectSolid(10, 32, 0.45f, 320 - 20, 1, ScreenManager::colorSeparator());
 
 				float statsY = 40.0f;
 
@@ -1907,9 +1918,18 @@ void ServerListScreen::renderBottom(C3D_RenderTarget *target) {
 		} else {
 			drawRichText(35.0f, 8.5f, 0.5f, 0.55f, 0.55f, ScreenManager::colorAccent(),
 			             getTruncatedRichText(item.name, 305.0f - 35.0f, 0.55f, 0.55f));
-			C2D_DrawRectSolid(10, 32, 0.5f, 320 - 20, 1, ScreenManager::colorSeparator());
+			C2D_DrawRectSolid(10, 32, 0.45f, 320 - 20, 1, ScreenManager::colorSeparator());
 
 			float infoY = 40.0f;
+
+			float contentHeight = 18.0f + 14.0f + item.folderGuildIds.size() * 13.0f;
+			float viewHeight = BOTTOM_SCREEN_HEIGHT - 40.0f - 40.0f;
+			float maxScroll = std::max(0.0f, contentHeight - viewHeight);
+			bottomScrollY = std::clamp(bottomScrollY, 0.0f, maxScroll);
+			UI::drawScrollbar(maxScroll, bottomScrollY, 40.0f, viewHeight);
+
+			infoY -= bottomScrollY;
+
 			std::string countStr = Core::I18n::format(TR("server.count"), std::to_string(item.folderGuildIds.size()));
 			drawText(10.0f, infoY, 0.5f, 0.45f, 0.45f, ScreenManager::colorText(), countStr);
 
@@ -1917,24 +1937,13 @@ void ServerListScreen::renderBottom(C3D_RenderTarget *target) {
 			drawText(10.0f, infoY, 0.5f, 0.45f, 0.45f, ScreenManager::colorSelection(), TR("server.list") + ":");
 			infoY += 14.0f;
 
-			int displayCount = 0;
 			for (const auto &guildId : item.folderGuildIds) {
-				if (displayCount >= 9) {
-					break;
-				}
 				const Discord::Guild *g = getGuild(guildId);
 				if (g) {
 					std::string guildName = getTruncatedRichText(g->name, 300.0f, 0.4f, 0.4f);
-					drawRichText(15.0f, infoY, 0.5f, 0.4f, 0.4f, ScreenManager::colorText(), guildName);
+					drawRichText(15.0f, infoY, 0.4f, 0.4f, 0.4f, ScreenManager::colorText(), guildName);
 					infoY += 13.0f;
-					displayCount++;
 				}
-			}
-
-			if (item.folderGuildIds.size() > 9) {
-				int remaining = item.folderGuildIds.size() - 9;
-				drawRichText(15.0f, infoY, 0.5f, 0.4f, 0.4f, ScreenManager::colorTextMuted(),
-				             "+" + std::to_string(remaining) + " more");
 			}
 
 			infoDrawn = true;
@@ -1946,6 +1955,9 @@ void ServerListScreen::renderBottom(C3D_RenderTarget *target) {
 		drawText(35.0f, 8.5f, 0.5f, 0.55f, 0.55f, ScreenManager::colorText(), title);
 		C2D_DrawRectSolid(10, 32, 0.5f, 320 - 20, 1, ScreenManager::colorSeparator());
 	}
+
+	C2D_DrawRectSolid(0, 0, 0.45f, 320, 33, ScreenManager::colorBackgroundDark());
+	C2D_DrawRectSolid(0, BOTTOM_SCREEN_HEIGHT - 38.0f, 0.45f, 320, 38.0f, ScreenManager::colorBackgroundDark());
 
 	if (state == State::SELECTING_SERVER) {
 		std::string hints = "\ue07d\ue07e: " + TR("common.navigate") + "  \uE000: " + TR("common.enter");
