@@ -61,7 +61,7 @@
     "login.field.password_hint": "点击输入密码",
     "login.generating": "生成中...",
     "login.loading.many_servers_warning": "如果你在很多服务器中，tricord有可能会奔溃（特别是在老3ds型号上）。\n如果奔溃了，删除sdmc:/3ds/TriCord/accounts\n然后用一个新的服务器偏少的账号重新登陆.",
-    "login.mfa.cancel": "摁 \uE001 来取消",
+    "login.mfa.cancel": "摁  来取消",
     "login.mfa.desc": "输入authenticator app里的6位验证码",
     "login.mfa.hint": "点击输入验证码",
     "login.mfa.required": "需要验证码",
