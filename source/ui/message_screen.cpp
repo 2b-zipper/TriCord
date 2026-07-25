@@ -1396,9 +1396,6 @@ float MessageScreen::drawAttachments(const Discord::Message &msg, float x, float
 		    attach.filename.find(".png") != std::string::npos || attach.filename.find(".jpg") != std::string::npos ||
 		    attach.filename.find(".jpeg") != std::string::npos) {
 
-			std::string imageUrl = attach.proxy_url.empty() ? attach.url : attach.proxy_url;
-			auto info = ImageManager::getInstance().getImageInfo(imageUrl);
-
 			float mediaMaxWidth = std::min(maxWidth, 330.0f);
 			float maxHeight = 260.0f;
 			float drawW = mediaMaxWidth;
@@ -1406,10 +1403,6 @@ float MessageScreen::drawAttachments(const Discord::Message &msg, float x, float
 
 			int imgW = attach.width;
 			int imgH = attach.height;
-			if (info.tex) {
-				imgW = info.originalW;
-				imgH = info.originalH;
-			}
 
 			if (imgW > 0 && imgH > 0) {
 				float aspect = (float)imgW / imgH;
@@ -1426,6 +1419,30 @@ float MessageScreen::drawAttachments(const Discord::Message &msg, float x, float
 			} else {
 				drawW = std::min(mediaMaxWidth, 160.0f);
 				drawH = drawW * 0.75f;
+			}
+
+			if (newY + drawH < -30.0f || newY > 240.0f + 10.0f) {
+				newY += drawH + 4.0f;
+				continue;
+			}
+
+			std::string imageUrl = attach.proxy_url.empty() ? attach.url : attach.proxy_url;
+			auto info = ImageManager::getInstance().getImageInfo(imageUrl);
+
+			if (info.tex && (attach.width <= 0 || attach.height <= 0)) {
+				imgW = info.originalW;
+				imgH = info.originalH;
+				float aspect = (float)imgW / imgH;
+				drawW = std::min((float)imgW, mediaMaxWidth);
+				if (imgW > 160) {
+					drawW = mediaMaxWidth;
+				}
+
+				drawH = drawW / aspect;
+				if (drawH > maxHeight) {
+					drawH = maxHeight;
+					drawW = drawH * aspect;
+				}
 			}
 
 			if (info.tex) {
