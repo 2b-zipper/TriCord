@@ -373,7 +373,7 @@ void ImageManager::update() {
 
 	if (decoded) {
 		std::lock_guard<std::mutex> lock(cacheMutex);
-		while (currentCacheBytes + p.tiled.vramSize > MAX_CACHE_BYTES && lruList.size() > MIN_CACHE_ENTRIES) {
+		while (currentCacheBytes + p.tiled.vramSize > MAX_CACHE_BYTES && !lruList.empty()) {
 			evictOldest();
 		}
 	}
@@ -381,7 +381,20 @@ void ImageManager::update() {
 	ImageInfo info;
 	if (decoded) {
 		C3D_Tex *tex = (C3D_Tex *)malloc(sizeof(C3D_Tex));
-		if (tex && C3D_TexInit(tex, p.tiled.p2w, p.tiled.p2h, GPU_RGBA8)) {
+		bool initSuccess = false;
+		if (tex) {
+			while (!(initSuccess = C3D_TexInit(tex, p.tiled.p2w, p.tiled.p2h, GPU_RGBA8))) {
+				std::lock_guard<std::mutex> lock(cacheMutex);
+				if (!lruList.empty()) {
+					Logger::log("[Image] C3D_TexInit failed. Evicting texture to free VRAM...");
+					evictOldest();
+				} else {
+					break;
+				}
+			}
+		}
+
+		if (initSuccess) {
 			C3D_TexSetFilter(tex, GPU_LINEAR, GPU_LINEAR);
 			memcpy(tex->data, p.tiled.pixels, p.tiled.vramSize);
 			GSPGPU_FlushDataCache(tex->data, p.tiled.vramSize);
@@ -391,8 +404,9 @@ void ImageManager::update() {
 			info.originalH = p.height;
 			info.vramSize = p.tiled.vramSize;
 		} else {
-			free(tex);
+			if (tex) free(tex);
 			info.failed = true;
+			Logger::log("[Image] C3D_TexInit completely failed for %s", p.url.c_str());
 		}
 	} else {
 		info.failed = true;
