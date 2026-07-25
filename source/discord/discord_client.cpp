@@ -2786,7 +2786,7 @@ void DiscordClient::exchangeTicketForToken(const std::string &ticket, TokenCallb
 	doc.Accept(writer);
 	std::string payload = buffer.GetString();
 
-	Logger::log("[DiscordClient] Exchange payload: %s", payload.c_str());
+	Logger::log("[DiscordClient] Exchange payload prepared (len %zu)", payload.size());
 
 	Network::NetworkManager::getInstance().enqueue(
 	    url, "POST", payload, Network::RequestPriority::INTERACTIVE,
@@ -2812,7 +2812,7 @@ void DiscordClient::exchangeTicketForToken(const std::string &ticket, TokenCallb
 		    }
 
 		    std::string token = Utils::Json::getString(doc, "encrypted_token");
-		    Logger::log("[DiscordClient] Token received: %s", token.substr(0, 20).c_str());
+		    Logger::log("[DiscordClient] Token received (len %zu)", token.size());
 
 		    if (cb) {
 			    cb(token);

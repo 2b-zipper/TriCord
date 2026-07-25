@@ -499,7 +499,7 @@ void LoginScreen::onUserScanned(const Discord::RemoteAuthUser &user) {
 }
 
 void LoginScreen::onTokenReceived(const std::string &ticket) {
-	Logger::log("[LoginScreen] Ticket received: %s", ticket.c_str());
+	Logger::log("[LoginScreen] Ticket received (len %zu)", ticket.size());
 	statusMessage = Core::I18n::getInstance().get("login.status.exchanging");
 
 	Discord::DiscordClient::getInstance().exchangeTicketForToken(ticket, [this](const std::string &encryptedToken) {
@@ -509,7 +509,7 @@ void LoginScreen::onTokenReceived(const std::string &ticket) {
 			return;
 		}
 
-		Logger::log("[LoginScreen] Encrypted token received: %s", encryptedToken.substr(0, 20).c_str());
+		Logger::log("[LoginScreen] Encrypted token received (len %zu)", encryptedToken.size());
 
 		std::string token = Discord::RemoteAuth::getInstance().decryptToken(encryptedToken);
 		if (token.empty()) {
@@ -518,7 +518,7 @@ void LoginScreen::onTokenReceived(const std::string &ticket) {
 			return;
 		}
 
-		Logger::log("[LoginScreen] Token decrypted: %s", token.substr(0, 20).c_str());
+		Logger::log("[LoginScreen] Token decrypted (len %zu)", token.size());
 
 		onLoginSuccess(token);
 	});
