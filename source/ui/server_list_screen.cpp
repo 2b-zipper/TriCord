@@ -1879,7 +1879,7 @@ void ServerListScreen::renderBottom(C3D_RenderTarget *target) {
 				drawRichText(headerX, 8.5f, 0.5f, 0.55f, 0.55f, ScreenManager::colorAccent(),
 				             getTruncatedRichText(guild->name, 305.0f - headerX, 0.55f, 0.55f));
 
-				C2D_DrawRectSolid(10, 32, 0.45f, 320 - 20, 1, ScreenManager::colorSeparator());
+				C2D_DrawRectSolid(10, 32, 0.5f, 320 - 20, 1, ScreenManager::colorSeparator());
 
 				float statsY = 40.0f;
 
@@ -1918,7 +1918,7 @@ void ServerListScreen::renderBottom(C3D_RenderTarget *target) {
 		} else {
 			drawRichText(35.0f, 8.5f, 0.5f, 0.55f, 0.55f, ScreenManager::colorAccent(),
 			             getTruncatedRichText(item.name, 305.0f - 35.0f, 0.55f, 0.55f));
-			C2D_DrawRectSolid(10, 32, 0.45f, 320 - 20, 1, ScreenManager::colorSeparator());
+			C2D_DrawRectSolid(10, 32, 0.5f, 320 - 20, 1, ScreenManager::colorSeparator());
 
 			float infoY = 40.0f;
 
