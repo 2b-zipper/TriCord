@@ -17,7 +17,7 @@ namespace {
 constexpr size_t MAX_CACHE_ENTRIES = 128;
 
 struct CacheKey {
-	std::string content;
+	size_t hash;
 	float maxWidth;
 	float scale;
 	float ratio;
@@ -25,11 +25,14 @@ struct CacheKey {
 	bool blocks;
 
 	bool operator==(const CacheKey &o) const {
-		return maxWidth == o.maxWidth && scale == o.scale && ratio == o.ratio && allowed == o.allowed &&
-		       blocks == o.blocks && content == o.content;
+		return hash == o.hash && maxWidth == o.maxWidth && scale == o.scale && ratio == o.ratio &&
+		       allowed == o.allowed && blocks == o.blocks;
 	}
 
 	bool operator<(const CacheKey &o) const {
+		if (hash != o.hash) {
+			return hash < o.hash;
+		}
 		if (maxWidth != o.maxWidth) {
 			return maxWidth < o.maxWidth;
 		}
@@ -42,14 +45,16 @@ struct CacheKey {
 		if (allowed != o.allowed) {
 			return allowed < o.allowed;
 		}
-		if (blocks != o.blocks) {
-			return blocks < o.blocks;
-		}
-		return content < o.content;
+		return blocks < o.blocks;
 	}
 };
 
-std::map<CacheKey, Layout> cache;
+struct CacheEntry {
+	Layout layout;
+	std::list<CacheKey>::iterator lruIt;
+};
+
+std::map<CacheKey, CacheEntry> cache;
 std::list<CacheKey> lru;
 
 float blockScale(BlockType t, float base) {
@@ -281,25 +286,27 @@ void drawPiece(const Piece &p, float x, float y, float z, u32 color, BlockType t
 
 } // namespace
 
-const Layout &get(const std::string &content, float maxWidth, float baseScale, float lineHeightRatio,
-                  uint16_t allowedStyles, bool allowBlocks) {
-	CacheKey key{content, maxWidth, baseScale, lineHeightRatio, allowedStyles, allowBlocks};
-
-	auto it = cache.find(key);
+const Layout &get(const std::string &content, float maxWidth, float scale, float ratio, uint16_t allowed,
+                  bool allowBlocks) {
+	size_t hash = std::hash<std::string>{}(content);
+	CacheKey k = {hash, maxWidth, scale, ratio, allowed, allowBlocks};
+	auto it = cache.find(k);
 	if (it != cache.end()) {
-		lru.remove(key);
-		lru.push_front(key);
-		return it->second;
+		lru.erase(it->second.lruIt);
+		lru.push_front(k);
+		it->second.lruIt = lru.begin();
+		return it->second.layout;
 	}
 
-	while (cache.size() >= MAX_CACHE_ENTRIES && !lru.empty()) {
+	Layout l = buildLayout(content, maxWidth, scale, ratio, allowed, allowBlocks);
+	if (cache.size() >= MAX_CACHE_ENTRIES) {
 		cache.erase(lru.back());
 		lru.pop_back();
 	}
-
-	lru.push_front(key);
-	return cache.emplace(key, buildLayout(content, maxWidth, baseScale, lineHeightRatio, allowedStyles, allowBlocks))
-	    .first->second;
+	lru.push_front(k);
+	CacheEntry entry = {l, lru.begin()};
+	auto res = cache.insert({k, entry});
+	return res.first->second.layout;
 }
 
 float heightOf(const Layout &layout, size_t maxLines) {

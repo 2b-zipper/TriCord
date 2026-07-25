@@ -18,7 +18,36 @@
 #include <ctime>
 
 #include <mutex>
-#include <set>
+#include <vector>
+
+namespace {
+
+struct EmbedLayout {
+	bool hasImage;
+	bool hasThumbnail;
+	bool isLargeThumbnail;
+	bool isMedia;
+	bool isSimpleMedia;
+	bool showThumbnailOnRight;
+	float pixelWidth;
+};
+
+EmbedLayout getEmbedLayout(const Discord::Embed &embed, float maxWidth) {
+	EmbedLayout l;
+	l.hasImage = !embed.image_url.empty();
+	l.hasThumbnail = !embed.thumbnail_url.empty();
+	l.isLargeThumbnail = (l.hasThumbnail && embed.thumbnail_width >= 160 &&
+	                      (float)embed.thumbnail_width > (float)embed.thumbnail_height * 1.2f);
+	l.isMedia = (embed.type == "image" || embed.type == "gifv" || embed.type == "video" || embed.type == "article" ||
+	             l.isLargeThumbnail);
+	l.isSimpleMedia = l.isMedia && embed.title.empty() && embed.description.empty() && embed.fields.empty() &&
+	                  embed.author_name.empty() && (l.hasImage || l.hasThumbnail);
+	l.showThumbnailOnRight = !l.isSimpleMedia && l.hasThumbnail && !l.isMedia;
+	l.pixelWidth = maxWidth - (l.showThumbnailOnRight ? 76.0f : 16.0f);
+	return l;
+}
+
+} // namespace
 
 namespace UI {
 
@@ -1678,14 +1707,6 @@ float MessageScreen::drawReactions(const Discord::Message &msg, float x, float y
 	float gap = 4.0f;
 	float newY = y + 3.0f;
 
-	struct ReactionDrawInfo {
-		float x;
-		float y;
-		float boxW;
-		const Discord::Reaction *react;
-	};
-	std::vector<ReactionDrawInfo> drawInfos;
-
 	for (const auto &react : msg.reactions) {
 		std::string countStr = std::to_string(react.count);
 		float countW = UI::measureText(countStr, 0.4f, 0.4f);
@@ -1714,14 +1735,8 @@ float MessageScreen::drawReactions(const Discord::Message &msg, float x, float y
 			drawRoundedRect(reactionX, newY, 0.45f, boxW, rowHeight, 6.0f, boxBg);
 		}
 
-		drawInfos.push_back({reactionX, newY, boxW, &react});
-		reactionX += boxW + gap;
-	}
-
-	for (const auto &info : drawInfos) {
-		float emojiX = info.x + 4.0f;
-		float emojiY = info.y + 2.0f;
-		const auto &react = *info.react;
+		float emojiX = reactionX + 4.0f;
+		float emojiY = newY + 2.0f;
 
 		if (!drawEmojiGlyph(react.emoji, emojiX, emojiY, 16.0f, 0.47f)) {
 			if (!react.emoji.id.empty()) {
@@ -1731,9 +1746,10 @@ float MessageScreen::drawReactions(const Discord::Message &msg, float x, float y
 			}
 		}
 
-		std::string countStr = std::to_string(react.count);
-		drawText(info.x + 18.0f + 6.0f, info.y + 5.0f, 0.47f, 0.4f, 0.4f,
+		drawText(reactionX + 18.0f + 6.0f, newY + 5.0f, 0.47f, 0.4f, 0.4f,
 		         react.me ? ScreenManager::colorText() : ScreenManager::colorTextMuted(), countStr);
+
+		reactionX += boxW + gap;
 	}
 
 	return newY + rowHeight + 4.0f;
@@ -2456,65 +2472,55 @@ void MessageScreen::renderMenu() {
 }
 
 float MessageScreen::calculateEmbedHeight(const Discord::Embed &embed, float maxWidth) {
+	EmbedLayout layout = getEmbedLayout(embed, maxWidth);
 
-	bool hasImage = !embed.image_url.empty();
-	bool hasThumbnail = !embed.thumbnail_url.empty();
-	std::string mediaUrl = hasImage
-	                           ? (embed.image_proxy_url.empty() ? embed.image_url : embed.image_proxy_url)
-	                           : (embed.thumbnail_proxy_url.empty() ? embed.thumbnail_url : embed.thumbnail_proxy_url);
-	auto mediaInfo = ImageManager::getInstance().getImageInfo(mediaUrl);
+	ImageManager::ImageInfo mediaInfo;
+	if (layout.hasImage || layout.hasThumbnail) {
+		std::string mediaUrl =
+		    layout.hasImage ? (embed.image_proxy_url.empty() ? embed.image_url : embed.image_proxy_url)
+		             : (embed.thumbnail_proxy_url.empty() ? embed.thumbnail_url : embed.thumbnail_proxy_url);
+		mediaInfo = ImageManager::getInstance().getImageInfo(mediaUrl);
+	}
 
-	bool isLargeThumbnail = (hasThumbnail && embed.thumbnail_width >= 160 &&
-	                         (float)embed.thumbnail_width > (float)embed.thumbnail_height * 1.2f);
-	bool isMedia = (embed.type == "image" || embed.type == "gifv" || embed.type == "video" || embed.type == "article" ||
-	                isLargeThumbnail);
-
-	bool isSimpleMedia = isMedia && embed.title.empty() && embed.description.empty() && embed.fields.empty() &&
-	                     embed.author_name.empty() && (hasImage || hasThumbnail);
-
-	bool showThumbnailOnRight = !isSimpleMedia && hasThumbnail && !isMedia;
-	float pixelWidth = maxWidth - (showThumbnailOnRight ? 76.0f : 16.0f);
-	float h = isSimpleMedia ? 0.0f : 10.0f;
+	float h = layout.isSimpleMedia ? 0.0f : 10.0f;
 
 	if (!embed.provider_name.empty()) {
 		h += 11.0f;
 	}
 	if (!embed.author_name.empty()) {
-		auto lines = MessageUtils::wrapText(embed.author_name, pixelWidth, 0.38f, false);
-		h += lines.size() * 11.0f;
+		h += UI::MarkdownRenderer::get(embed.author_name, layout.pixelWidth, 0.38f, 11.0f / 0.38f, 0, false).height;
 	}
 	using UI::MarkdownRenderer::EMBED_STYLES;
 	if (!embed.title.empty()) {
-		h += UI::MarkdownRenderer::get(embed.title, pixelWidth, 0.42f, 14.0f / 0.42f, EMBED_STYLES, false).height;
+		h += UI::MarkdownRenderer::get(embed.title, layout.pixelWidth, 0.42f, 14.0f / 0.42f, EMBED_STYLES, false).height;
 	}
 	if (!embed.description.empty()) {
-		h += UI::MarkdownRenderer::get(embed.description, pixelWidth, 0.36f, 11.0f / 0.36f, EMBED_STYLES, false).height;
+		h += UI::MarkdownRenderer::get(embed.description, layout.pixelWidth, 0.36f, 11.0f / 0.36f, EMBED_STYLES, false).height;
 	}
 
 	for (const auto &field : embed.fields) {
-		h += UI::MarkdownRenderer::get(field.name, pixelWidth, 0.35f, 11.0f / 0.35f, EMBED_STYLES, false).height;
-		h += UI::MarkdownRenderer::get(field.value, pixelWidth, 0.34f, 11.0f / 0.34f, EMBED_STYLES, false).height;
+		h += UI::MarkdownRenderer::get(field.name, layout.pixelWidth, 0.35f, 11.0f / 0.35f, EMBED_STYLES, false).height;
+		h += UI::MarkdownRenderer::get(field.value, layout.pixelWidth, 0.34f, 11.0f / 0.34f, EMBED_STYLES, false).height;
 		h += 2.0f;
 	}
 
 	if (!embed.footer_text.empty()) {
-		auto lines = MessageUtils::wrapText(embed.footer_text, pixelWidth, 0.30f, false);
-		h += lines.size() * 10.0f;
+		h += UI::MarkdownRenderer::get(embed.footer_text, layout.pixelWidth, 0.30f, 10.0f / 0.30f, 0, false).height;
 	}
 
-	if (showThumbnailOnRight) {
+	if (layout.showThumbnailOnRight) {
 		h = std::max(h, 72.0f);
 	}
 
-	if (hasImage || (isMedia && hasThumbnail)) {
-		int imgW = hasImage ? embed.image_width : embed.thumbnail_width;
-		int imgH = hasImage ? embed.image_height : embed.thumbnail_height;
+	if (layout.hasImage || (layout.isMedia && layout.hasThumbnail)) {
+		int imgW = layout.hasImage ? embed.image_width : embed.thumbnail_width;
+		int imgH = layout.hasImage ? embed.image_height : embed.thumbnail_height;
 		if (mediaInfo.tex) {
 			imgW = mediaInfo.originalW;
 			imgH = mediaInfo.originalH;
 		}
 
-		float availableMaxWidth = maxWidth - (isSimpleMedia ? 0.0f : 16.0f);
+		float availableMaxWidth = maxWidth - (layout.isSimpleMedia ? 0.0f : 16.0f);
 		availableMaxWidth = std::min(availableMaxWidth, 330.0f);
 		float drawW = availableMaxWidth;
 
@@ -2540,84 +2546,68 @@ float MessageScreen::calculateEmbedHeight(const Discord::Embed &embed, float max
 }
 
 float MessageScreen::renderEmbed(const Discord::Embed &embed, float x, float y, float maxWidth) {
-	bool hasImage = !embed.image_url.empty();
-	bool hasThumbnail = !embed.thumbnail_url.empty();
-
-	bool isLargeThumbnail = (hasThumbnail && embed.thumbnail_width >= 160 &&
-	                         (float)embed.thumbnail_width > (float)embed.thumbnail_height * 1.2f);
-	bool isMedia = (embed.type == "image" || embed.type == "gifv" || embed.type == "video" || embed.type == "article" ||
-	                isLargeThumbnail);
-
-	bool isSimpleMedia = isMedia && embed.title.empty() && embed.description.empty() && embed.fields.empty() &&
-	                     embed.author_name.empty() && (hasImage || hasThumbnail);
+	EmbedLayout layout = getEmbedLayout(embed, maxWidth);
 
 	u32 embedColor = embed.color != 0
 	                     ? C2D_Color32((embed.color >> 16) & 0xFF, (embed.color >> 8) & 0xFF, embed.color & 0xFF, 255)
 	                     : C2D_Color32(32, 102, 148, 255);
 	float embedH = calculateEmbedHeight(embed, maxWidth);
 
-	bool showThumbnailOnRight = !isSimpleMedia && hasThumbnail && !isMedia;
-	float pixelWidth = maxWidth - (showThumbnailOnRight ? 76.0f : 16.0f);
-
-	if (!isSimpleMedia) {
+	if (!layout.isSimpleMedia) {
 		C2D_DrawRectSolid(x, y, 0.4f, maxWidth, embedH, ScreenManager::colorEmbed());
 		C2D_DrawRectSolid(x, y, 0.45f, 4.0f, embedH, embedColor);
 	}
 
-	float currentY = y + (isSimpleMedia ? 0.0f : 5.0f);
-	float textX = x + (isSimpleMedia ? 0.0f : 8.0f);
+	float currentY = y + (layout.isSimpleMedia ? 0.0f : 5.0f);
+	float textX = x + (layout.isSimpleMedia ? 0.0f : 8.0f);
 
 	if (!embed.provider_name.empty()) {
 		drawText(textX, currentY, 0.5f, 0.32f, 0.32f, ScreenManager::colorTextMuted(), embed.provider_name);
 		currentY += 11.0f;
 	}
 	if (!embed.author_name.empty()) {
-		auto lines = MessageUtils::wrapText(embed.author_name, pixelWidth, 0.38f, false);
-		for (const auto &line : lines) {
-			drawRichText(textX, currentY, 0.5f, 0.38f, 0.38f, ScreenManager::colorText(), line);
-			currentY += 11.0f;
-		}
+		const auto &l = UI::MarkdownRenderer::get(embed.author_name, layout.pixelWidth, 0.38f, 11.0f / 0.38f, 0, false);
+		UI::MarkdownRenderer::draw(l, textX, currentY, 0.5f, ScreenManager::colorText());
+		currentY += l.height;
 	}
 	using UI::MarkdownRenderer::EMBED_STYLES;
 	if (!embed.title.empty()) {
-		const auto &l = UI::MarkdownRenderer::get(embed.title, pixelWidth, 0.42f, 14.0f / 0.42f, EMBED_STYLES, false);
+		const auto &l = UI::MarkdownRenderer::get(embed.title, layout.pixelWidth, 0.42f, 14.0f / 0.42f, EMBED_STYLES, false);
 		UI::MarkdownRenderer::draw(l, textX, currentY, 0.5f, ScreenManager::colorText());
 		currentY += l.height;
 	}
 	if (!embed.description.empty()) {
 		const auto &l =
-		    UI::MarkdownRenderer::get(embed.description, pixelWidth, 0.36f, 11.0f / 0.36f, EMBED_STYLES, false);
+		    UI::MarkdownRenderer::get(embed.description, layout.pixelWidth, 0.36f, 11.0f / 0.36f, EMBED_STYLES, false);
 		UI::MarkdownRenderer::draw(l, textX, currentY, 0.5f, ScreenManager::colorText());
 		currentY += l.height;
 	}
 	for (const auto &field : embed.fields) {
-		const auto &n = UI::MarkdownRenderer::get(field.name, pixelWidth, 0.35f, 11.0f / 0.35f, EMBED_STYLES, false);
+		const auto &n = UI::MarkdownRenderer::get(field.name, layout.pixelWidth, 0.35f, 11.0f / 0.35f, EMBED_STYLES, false);
 		UI::MarkdownRenderer::draw(n, textX, currentY, 0.5f, ScreenManager::colorText());
 		currentY += n.height;
 
-		const auto &v = UI::MarkdownRenderer::get(field.value, pixelWidth, 0.34f, 11.0f / 0.34f, EMBED_STYLES, false);
+		const auto &v = UI::MarkdownRenderer::get(field.value, layout.pixelWidth, 0.34f, 11.0f / 0.34f, EMBED_STYLES, false);
 		UI::MarkdownRenderer::draw(v, textX, currentY, 0.5f, ScreenManager::colorTextMuted());
 		currentY += v.height;
 		currentY += 2.0f;
 	}
 	if (!embed.footer_text.empty()) {
-		auto lines = MessageUtils::wrapText(embed.footer_text, pixelWidth, 0.30f, false);
-		for (const auto &line : lines) {
-			drawRichText(textX, currentY, 0.5f, 0.30f, 0.30f, ScreenManager::colorTextMuted(), line);
-			currentY += 10.0f;
-		}
+		const auto &l = UI::MarkdownRenderer::get(embed.footer_text, layout.pixelWidth, 0.30f, 10.0f / 0.30f, 0, false);
+		UI::MarkdownRenderer::draw(l, textX, currentY, 0.5f, ScreenManager::colorTextMuted());
+		currentY += l.height;
 	}
 
-	if (showThumbnailOnRight) {
+	if (layout.showThumbnailOnRight) {
 		float minH = 72.0f;
 		if (currentY - y < minH) {
 			currentY = y + minH;
 		}
-	} else if (!isSimpleMedia) {
+	} else if (!layout.isSimpleMedia) {
 		currentY += 5.0f;
 	}
 
-	if (showThumbnailOnRight) {
+	if (layout.showThumbnailOnRight) {
 		std::string thumbUrl = !embed.thumbnail_proxy_url.empty() ? embed.thumbnail_proxy_url : embed.thumbnail_url;
 		float thumbMaxSize = 64.0f;
 		float thumbX = x + maxWidth - thumbMaxSize - 4.0f;
@@ -2644,19 +2634,19 @@ float MessageScreen::renderEmbed(const Discord::Embed &embed, float x, float y, 
 		}
 	}
 
-	if (hasImage || (isMedia && hasThumbnail)) {
+	if (layout.hasImage || (layout.isMedia && layout.hasThumbnail)) {
 		std::string mediaUrl =
-		    hasImage ? (!embed.image_proxy_url.empty() ? embed.image_proxy_url : embed.image_url)
+		    layout.hasImage ? (!embed.image_proxy_url.empty() ? embed.image_proxy_url : embed.image_url)
 		             : (!embed.thumbnail_proxy_url.empty() ? embed.thumbnail_proxy_url : embed.thumbnail_url);
-		int imgW = hasImage ? embed.image_width : embed.thumbnail_width;
-		int imgH = hasImage ? embed.image_height : embed.thumbnail_height;
+		int imgW = layout.hasImage ? embed.image_width : embed.thumbnail_width;
+		int imgH = layout.hasImage ? embed.image_height : embed.thumbnail_height;
 		auto info = ImageManager::getInstance().getImageInfo(mediaUrl);
 		if (info.tex) {
 			imgW = info.originalW;
 			imgH = info.originalH;
 		}
 
-		float availableMaxWidth = maxWidth - (isSimpleMedia ? 0.0f : 16.0f);
+		float availableMaxWidth = maxWidth - (layout.isSimpleMedia ? 0.0f : 16.0f);
 		availableMaxWidth = std::min(availableMaxWidth, 330.0f);
 		float drawW = availableMaxWidth;
 
@@ -2690,19 +2680,19 @@ float MessageScreen::renderEmbed(const Discord::Embed &embed, float x, float y, 
 		} else {
 			ImageManager::getInstance().prefetch(mediaUrl, imgW, imgH, Network::RequestPriority::INTERACTIVE);
 			C2D_DrawRectSolid(textX, currentY, 0.49f, drawW, drawH,
-			                  isSimpleMedia ? ScreenManager::colorBackgroundDark() : ScreenManager::colorEmbedMedia());
+			                  layout.isSimpleMedia ? ScreenManager::colorBackgroundDark() : ScreenManager::colorEmbedMedia());
 			drawText(textX + 5, currentY + (drawH / 2) - 6, 0.5f, 0.35f, 0.35f, ScreenManager::colorTextMuted(),
 			         TR("common.loading"));
 		}
 		currentY += drawH + 4.0f;
 	}
 
-	if (showThumbnailOnRight) {
+	if (layout.showThumbnailOnRight) {
 		float minH = 72.0f;
 		if (currentY - y < minH) {
 			currentY = y + minH;
 		}
-	} else if (!isSimpleMedia) {
+	} else if (!layout.isSimpleMedia) {
 		currentY += 5.0f;
 	}
 

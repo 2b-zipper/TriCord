@@ -404,7 +404,9 @@ void ImageManager::update() {
 			info.originalH = p.height;
 			info.vramSize = p.tiled.vramSize;
 		} else {
-			if (tex) free(tex);
+			if (tex) {
+				free(tex);
+			}
 			info.failed = true;
 			Logger::log("[Image] C3D_TexInit completely failed for %s", p.url.c_str());
 		}
