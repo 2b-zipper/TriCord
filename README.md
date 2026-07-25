@@ -126,7 +126,7 @@ This appears to be due to SSL verification failing for some reason. In v0.4.0 or
 Please report it by opening a [GitHub Issue](https://github.com/2b-zipper/TriCord/issues) or by visiting the bug-reports channel in our Discord server.
 
 ### I want to add or improve a translation
-Please help us translate TriCord into your language on our [Crowdin project](https://crowdin.com/project/tricord). If your language is not listed, please request it!
+Please help us translate TriCord into your language on our [Crowdin project](https://crowdin.com/project/tricord). If your language is not listed, you can request it directly by clicking the "Request New Language" button on the Crowdin page.
 
 ## License
 This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
