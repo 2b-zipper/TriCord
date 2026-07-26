@@ -8,10 +8,12 @@
 #include <atomic>
 #include <functional>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <map>
 #include <set>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 struct mbedtls_gcm_context;
@@ -114,12 +116,14 @@ class VoiceClient {
 	std::string selectedMode;
 	std::vector<uint8_t> secretKey;
 	mbedtls_gcm_context *gcm = nullptr;
-	std::map<uint32_t, std::string> ssrcToUser;
+	mutable std::shared_mutex ssrcMutex;
+	std::unordered_map<uint32_t, std::string> ssrcToUser;
 	std::set<std::string> roster;
 	std::atomic<bool> rosterPrimed{false};
 	// Discord clients stop sending audio instead of reliably sending a
 	// speaking:0, so activity is tracked by packet arrival and expires.
-	std::map<std::string, uint64_t> speakingUntil;
+	mutable std::shared_mutex speakingMutex;
+	std::unordered_map<std::string, uint64_t> speakingUntil;
 	static constexpr uint64_t SPEAKING_HOLD_MS = 200;
 	static constexpr uint64_t TRANSMIT_HOLD_MS = 200;
 	static constexpr int SPEAKING_PEAK_THRESHOLD = 1200;

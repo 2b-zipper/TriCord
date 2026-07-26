@@ -137,17 +137,17 @@ void VoiceClient::connect(const std::string &guild, const std::string &channel, 
 }
 
 void VoiceClient::markSpeaking(const std::string &userId) {
-	std::lock_guard<std::mutex> lock(mutex);
+	std::unique_lock<std::shared_mutex> lock(speakingMutex);
 	speakingUntil[userId] = osGetTime() + SPEAKING_HOLD_MS;
 }
 
 void VoiceClient::clearSpeaking(const std::string &userId) {
-	std::lock_guard<std::mutex> lock(mutex);
+	std::unique_lock<std::shared_mutex> lock(speakingMutex);
 	speakingUntil.erase(userId);
 }
 
 bool VoiceClient::isSpeaking(const std::string &userId) const {
-	std::lock_guard<std::mutex> lock(mutex);
+	std::shared_lock<std::shared_mutex> lock(speakingMutex);
 	auto it = speakingUntil.find(userId);
 	return it != speakingUntil.end() && osGetTime() < it->second;
 }
@@ -626,7 +626,7 @@ void VoiceClient::handleRtpPacket(uint8_t *packet, size_t len) {
 	if (daveVersion != 0) {
 		std::string userId;
 		{
-			std::lock_guard<std::mutex> lock(mutex);
+			std::shared_lock<std::shared_mutex> lock(ssrcMutex);
 			auto it = ssrcToUser.find(ssrc);
 			if (it == ssrcToUser.end()) {
 				return;
@@ -654,7 +654,7 @@ void VoiceClient::handleRtpPacket(uint8_t *packet, size_t len) {
 
 	std::string userId;
 	{
-		std::lock_guard<std::mutex> lock(mutex);
+		std::shared_lock<std::shared_mutex> lock(ssrcMutex);
 		auto it = ssrcToUser.find(ssrc);
 		if (it != ssrcToUser.end()) {
 			userId = it->second;
@@ -1127,7 +1127,7 @@ void VoiceClient::handlePayload(const std::string &message) {
 		uint32_t speakerSsrc = (uint32_t)Utils::Json::getUint64(d, "ssrc");
 		std::string userId = Utils::Json::getString(d, "user_id");
 		if (speakerSsrc != 0 && !userId.empty()) {
-			std::lock_guard<std::mutex> lock(mutex);
+			std::unique_lock<std::shared_mutex> lock(ssrcMutex);
 			ssrcToUser[speakerSsrc] = userId;
 		}
 		break;
@@ -1161,16 +1161,21 @@ void VoiceClient::handlePayload(const std::string &message) {
 			break;
 		}
 		std::string userId = Utils::Json::getString(doc["d"], "user_id");
-		std::lock_guard<std::mutex> lock(mutex);
-		if (roster.erase(userId) > 0) {
-			Utils::SoundPlayer::getInstance().play(Utils::Sound::VOICE_PEER_LEFT);
+		{
+			std::lock_guard<std::mutex> lock(mutex);
+			if (roster.erase(userId) > 0) {
+				Utils::SoundPlayer::getInstance().play(Utils::Sound::VOICE_PEER_LEFT);
+			}
 		}
-		for (auto it = ssrcToUser.begin(); it != ssrcToUser.end();) {
-			if (it->second == userId) {
-				audio.dropSpeaker(it->first);
-				it = ssrcToUser.erase(it);
-			} else {
-				++it;
+		{
+			std::unique_lock<std::shared_mutex> ssrcLock(ssrcMutex);
+			for (auto it = ssrcToUser.begin(); it != ssrcToUser.end();) {
+				if (it->second == userId) {
+					audio.dropSpeaker(it->first);
+					it = ssrcToUser.erase(it);
+				} else {
+					++it;
+				}
 			}
 		}
 		break;
@@ -1241,7 +1246,14 @@ void VoiceClient::disconnect() {
 	echo.stop();
 
 	resetGcm();
-	ssrcToUser.clear();
+	{
+		std::unique_lock<std::shared_mutex> lock(ssrcMutex);
+		ssrcToUser.clear();
+	}
+	{
+		std::unique_lock<std::shared_mutex> lock(speakingMutex);
+		speakingUntil.clear();
+	}
 
 	DiscordClient &client = DiscordClient::getInstance();
 	client.setVoiceStateCallback(nullptr);

@@ -131,6 +131,7 @@ class DiscordClient {
 	void updateVoiceState(const std::string &guildId, const std::string &channelId, bool selfMute, bool selfDeaf);
 
 	std::vector<VoiceParticipant> getVoiceParticipants(const std::string &channelId);
+	size_t getVoiceParticipantCount(const std::string &channelId);
 	void resolveVoiceNames(const std::string &guildId);
 
 	void setVoiceStateCallback(std::function<void(const std::string &sessionId, bool serverMute, bool serverDeaf)> cb) {
@@ -213,9 +214,9 @@ class DiscordClient {
 	void setChannelNotificationLevel(const std::string &channelId, int messageNotifications);
 
 	Channel getChannel(const std::string &channelId);
-	const Channel* getChannelPtr(const std::string &channelId);
+	const Channel *getChannelPtr(const std::string &channelId);
 	Guild getGuild(const std::string &guildId);
-	const Guild* getGuildPtr(const std::string &guildId);
+	const Guild *getGuildPtr(const std::string &guildId);
 	Member getMember(const std::string &guildId, const std::string &userId);
 	int getRoleColor(const std::string &guildId, const Member &member);
 	int getRoleColor(const std::string &guildId, const std::string &userId);

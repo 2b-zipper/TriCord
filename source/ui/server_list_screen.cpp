@@ -1788,7 +1788,7 @@ int ServerListScreen::channelRowSpan(int index) const {
 	if (ch.type != 2 && ch.type != 13) {
 		return 1;
 	}
-	return 1 + (int)Discord::DiscordClient::getInstance().getVoiceParticipants(ch.id).size();
+	return 1 + (int)Discord::DiscordClient::getInstance().getVoiceParticipantCount(ch.id);
 }
 
 void ServerListScreen::ensureChannelVisible() {

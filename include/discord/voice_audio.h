@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <map>
 #include <mutex>
+#include <unordered_map>
 #include <vector>
 
 struct OpusDecoder;
@@ -63,7 +64,7 @@ class VoiceAudio {
 	int16_t *waveData = nullptr;
 	int nextWaveBuf = 0;
 
-	std::map<uint32_t, Speaker> speakers;
+	std::unordered_map<uint32_t, Speaker> speakers;
 	std::mutex mutex;
 };
 

@@ -2120,23 +2120,31 @@ std::vector<Message> DiscordClient::parseMessages(const std::string &json) {
 
 Channel DiscordClient::getChannel(const std::string &channelId) {
 	for (const auto &c : privateChannels) {
-		if (c.id == channelId) return c;
+		if (c.id == channelId) {
+			return c;
+		}
 	}
 	for (const auto &g : guilds) {
 		for (const auto &c : g.channels) {
-			if (c.id == channelId) return c;
+			if (c.id == channelId) {
+				return c;
+			}
 		}
 	}
 	return Channel();
 }
 
-const Channel* DiscordClient::getChannelPtr(const std::string &channelId) {
+const Channel *DiscordClient::getChannelPtr(const std::string &channelId) {
 	for (const auto &c : privateChannels) {
-		if (c.id == channelId) return &c;
+		if (c.id == channelId) {
+			return &c;
+		}
 	}
 	for (const auto &g : guilds) {
 		for (const auto &c : g.channels) {
-			if (c.id == channelId) return &c;
+			if (c.id == channelId) {
+				return &c;
+			}
 		}
 	}
 	return nullptr;
@@ -2151,7 +2159,7 @@ Guild DiscordClient::getGuild(const std::string &guildId) {
 	return Guild();
 }
 
-const Guild* DiscordClient::getGuildPtr(const std::string &guildId) {
+const Guild *DiscordClient::getGuildPtr(const std::string &guildId) {
 	for (const auto &guild : guilds) {
 		if (guild.id == guildId) {
 			return &guild;
@@ -3271,6 +3279,15 @@ std::vector<VoiceParticipant> DiscordClient::getVoiceParticipants(const std::str
 	return it->second;
 }
 
+size_t DiscordClient::getVoiceParticipantCount(const std::string &channelId) {
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	auto it = voiceParticipants.find(channelId);
+	if (it == voiceParticipants.end()) {
+		return 0;
+	}
+	return it->second.size();
+}
+
 void DiscordClient::updateVoiceState(const std::string &guildId, const std::string &channelId, bool selfMute,
                                      bool selfDeaf) {
 	rapidjson::StringBuffer s;
@@ -3361,11 +3378,15 @@ bool DiscordClient::isUserMentioned(const Message &msg) {
 	std::lock_guard<std::recursive_mutex> lock(clientMutex);
 
 	for (const auto &user : msg.mentions) {
-		if (user.id == currentUser.id) return true;
+		if (user.id == currentUser.id) {
+			return true;
+		}
 	}
 
 	std::string guildId = getGuildIdFromChannel(msg.channelId);
-	if (guildId.empty() || guildId == "DM") return false;
+	if (guildId.empty() || guildId == "DM") {
+		return false;
+	}
 
 	const GuildNotificationSettings *gs = nullptr;
 	auto gsIt = notificationSettings.find(guildId);
