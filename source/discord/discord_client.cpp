@@ -403,7 +403,7 @@ void DiscordClient::addReaction(const std::string &channelId, const std::string 
 	std::string url = "https://discord.com/api/v10/channels/" + channelId + "/messages/" + messageId + "/reactions/" +
 	                  encodedEmoji + "/@me";
 
-	Network::NetworkManager::getInstance().enqueue(url, "PUT", "", Network::RequestPriority::INTERACTIVE,
+	Network::NetworkManager::getInstance().enqueue(url, "PUT", "", Network::RequestPriority::REALTIME,
 	                                               [](const Network::HttpResponse &resp) {
 		                                               if (!resp.success) {
 			                                               Logger::log("[Discord] Failed to add reaction: %ld %s",
@@ -430,7 +430,7 @@ void DiscordClient::votePoll(const std::string &channelId, const std::string &me
 
 	std::string url = "https://discord.com/api/v10/channels/" + channelId + "/polls/" + messageId + "/answers/@me";
 	Network::NetworkManager::getInstance().enqueue(
-	    url, "PUT", body, Network::RequestPriority::INTERACTIVE,
+	    url, "PUT", body, Network::RequestPriority::REALTIME,
 	    [](const Network::HttpResponse &resp) {
 		    if (!resp.success) {
 			    Logger::log("[Discord] Failed to vote on poll: %ld %s", resp.statusCode, resp.body.c_str());
@@ -449,7 +449,7 @@ void DiscordClient::removeReaction(const std::string &channelId, const std::stri
 	std::string url = "https://discord.com/api/v10/channels/" + channelId + "/messages/" + messageId + "/reactions/" +
 	                  encodedEmoji + "/@me";
 
-	Network::NetworkManager::getInstance().enqueue(url, "DELETE", "", Network::RequestPriority::INTERACTIVE,
+	Network::NetworkManager::getInstance().enqueue(url, "DELETE", "", Network::RequestPriority::REALTIME,
 	                                               [](const Network::HttpResponse &resp) {
 		                                               if (!resp.success) {
 			                                               Logger::log("[Discord] Failed to remove reaction: %ld %s",
