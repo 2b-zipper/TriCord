@@ -175,6 +175,7 @@
     "server.description": "Aperçu du serveur",
     "server.list": "Serveurs",
     "server.member_count": "Membres ",
+    "server.new_mention": "NEW",
     "server.menu.mark_read": "Marquer comme lu",
     "server.menu.mute": "Désactiver les notifications",
     "server.mute.15min": "15 minutes",
