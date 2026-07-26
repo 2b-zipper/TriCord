@@ -1311,6 +1311,50 @@ void ServerListScreen::renderTop(C3D_RenderTarget *target) {
 			drawListItem(i, listItems[i], sidebarX, y);
 			y += itemHeight;
 		}
+
+		bool hasMentionAbove = false;
+		for (int i = 0; i < scrollOffset && i < (int)listItems.size(); ++i) {
+			if (listItems[i].mentionCount > 0) {
+				hasMentionAbove = true;
+				break;
+			}
+		}
+
+		bool hasMentionBelow = false;
+		for (int i = scrollOffset + visibleItems; i < (int)listItems.size(); ++i) {
+			if (listItems[i].mentionCount > 0) {
+				hasMentionBelow = true;
+				break;
+			}
+		}
+
+		if (hasMentionAbove || hasMentionBelow) {
+			std::string badgeText = TR("server.new_mention");
+			float textW = measureText(badgeText, 0.42f, 0.42f);
+			float badgeW = std::max(40.0f, textW + 14.0f);
+			float badgeH = 16.0f;
+			float badgeX = sidebarX + (SIDEBAR_WIDTH - badgeW) / 2.0f;
+
+			if (hasMentionAbove) {
+				float badgeY = 3.0f;
+				drawRoundedRect(badgeX - 1.0f, badgeY - 1.0f, 0.58f, badgeW + 2.0f, badgeH + 2.0f,
+				                (badgeH + 2.0f) / 2.0f, ScreenManager::colorBackgroundDark());
+				drawRoundedRect(badgeX, badgeY, 0.59f, badgeW, badgeH, badgeH / 2.0f,
+				                C2D_Color32(237, 66, 69, 255));
+				drawText(badgeX + (badgeW - textW) / 2.0f, badgeY + 2.0f, 0.60f, 0.42f, 0.42f,
+				         C2D_Color32(255, 255, 255, 255), badgeText);
+			}
+
+			if (hasMentionBelow) {
+				float badgeY = 240.0f - badgeH - 3.0f;
+				drawRoundedRect(badgeX - 1.0f, badgeY - 1.0f, 0.58f, badgeW + 2.0f, badgeH + 2.0f,
+				                (badgeH + 2.0f) / 2.0f, ScreenManager::colorBackgroundDark());
+				drawRoundedRect(badgeX, badgeY, 0.59f, badgeW, badgeH, badgeH / 2.0f,
+				                C2D_Color32(237, 66, 69, 255));
+				drawText(badgeX + (badgeW - textW) / 2.0f, badgeY + 2.0f, 0.60f, 0.42f, 0.42f,
+				         C2D_Color32(255, 255, 255, 255), badgeText);
+			}
+		}
 	}
 
 	drawChannelList(channelListX, 0.0f, 1.0f);
@@ -1503,13 +1547,18 @@ void ServerListScreen::drawChannelList(float x, float y, float alpha) {
 			drawRichText(currentX + iconOffset, currentY + 3.0f, 0.5f, 0.5f, 0.5f, color, name);
 
 			if (chMentions > 0) {
-				float badgeR = 6.0f;
-				float badgeX = x + (400.0f - x) - badgeR - 6.0f;
+				float badgeR = 6.5f;
 				float badgeCY = currentY + rowHeight / 2.0f;
-				drawCircle(badgeX, badgeCY, 0.52f, badgeR, C2D_Color32(237, 66, 69, 255));
 				std::string cntStr = chMentions > 99 ? "99+" : std::to_string(chMentions);
-				float tScale = chMentions > 9 ? 0.3f : 0.35f;
-				drawText(badgeX - (chMentions > 9 ? 4.5f : 2.5f), badgeCY - 4.5f, 0.53f, tScale, tScale,
+				float tScale = chMentions > 9 ? 0.32f : 0.35f;
+				float textW = measureText(cntStr, tScale, tScale);
+				float badgeW = std::max(badgeR * 2.0f, textW + 7.0f);
+				float badgeX = x + (400.0f - x) - badgeW - 6.0f;
+				float badgeY = badgeCY - badgeR;
+
+				drawRoundedRect(badgeX, badgeY, 0.52f, badgeW, badgeR * 2.0f, badgeR,
+				                C2D_Color32(237, 66, 69, 255));
+				drawText(badgeX + (badgeW - textW) / 2.0f, badgeCY - 4.5f, 0.53f, tScale, tScale,
 				         C2D_Color32(255, 255, 255, 255), cntStr);
 			}
 		}
@@ -1588,13 +1637,18 @@ static void drawIconUnreadIndicator(float iconX, float iconY, float iconSize, fl
                                     int mentionCount, bool hasUnread, bool isSelected) {
 	if (mentionCount > 0) {
 		float badgeR = 7.0f;
-		float badgeX = iconX + iconSize - badgeR + 2.0f;
-		float badgeY = iconY + iconSize - badgeR + 2.0f;
-		drawCircle(badgeX, badgeY, 0.52f, badgeR + 1.5f, ScreenManager::colorBackgroundDark());
-		drawCircle(badgeX, badgeY, 0.53f, badgeR, C2D_Color32(237, 66, 69, 255));
 		std::string countStr = mentionCount > 99 ? "99+" : std::to_string(mentionCount);
 		float tScale = mentionCount > 9 ? 0.35f : 0.4f;
-		drawText(badgeX - (mentionCount > 9 ? 5.0f : 3.0f), badgeY - 5.0f, 0.54f, tScale, tScale,
+		float textW = measureText(countStr, tScale, tScale);
+		float badgeW = std::max(badgeR * 2.0f, textW + 8.0f);
+		float badgeH = badgeR * 2.0f;
+		float badgeX = iconX + iconSize - badgeW + 2.0f;
+		float badgeY = iconY + iconSize - badgeH + 2.0f;
+
+		drawRoundedRect(badgeX - 1.5f, badgeY - 1.5f, 0.52f, badgeW + 3.0f, badgeH + 3.0f, badgeR + 1.5f,
+		                ScreenManager::colorBackgroundDark());
+		drawRoundedRect(badgeX, badgeY, 0.53f, badgeW, badgeH, badgeR, C2D_Color32(237, 66, 69, 255));
+		drawText(badgeX + (badgeW - textW) / 2.0f, badgeY + 2.0f, 0.54f, tScale, tScale,
 		         C2D_Color32(255, 255, 255, 255), countStr);
 	}
 
