@@ -248,8 +248,9 @@ u32 styleColor(uint16_t style, BlockType type, u32 base) {
 	return base;
 }
 
-void drawPiece(const Piece &p, float x, float y, float z, u32 color, BlockType type, float lineH, bool reveal) {
+void drawPiece(const Piece &p, float x, float y, float z, u32 color, BlockType type, float lineH, bool reveal, bool isEmbed) {
 	u32 c = styleColor(p.style, type, color);
+	u32 codeBg = isEmbed ? ScreenManager::colorInput() : ScreenManager::colorBackgroundDark();
 
 	if (p.style & STYLE_MENTION) {
 		float mMargin = 2.0f;
@@ -259,7 +260,7 @@ void drawPiece(const Piece &p, float x, float y, float z, u32 color, BlockType t
 	}
 
 	if (p.style & STYLE_CODE) {
-		C2D_DrawRectSolid(x - 1.0f, y, z, p.width + 2.0f, lineH - 1.0f, ScreenManager::colorBackgroundDark());
+		C2D_DrawRectSolid(x - 1.0f, y, z, p.width + 2.0f, lineH - 1.0f, codeBg);
 	}
 
 	if (p.style & STYLE_SPOILER) {
@@ -267,7 +268,7 @@ void drawPiece(const Piece &p, float x, float y, float z, u32 color, BlockType t
 			C2D_DrawRectSolid(x - 1.0f, y, z + 0.01f, p.width + 2.0f, lineH - 1.0f, ScreenManager::colorTextMuted());
 			return;
 		}
-		C2D_DrawRectSolid(x - 1.0f, y, z - 0.01f, p.width + 2.0f, lineH - 1.0f, ScreenManager::colorBackgroundDark());
+		C2D_DrawRectSolid(x - 1.0f, y, z - 0.01f, p.width + 2.0f, lineH - 1.0f, codeBg);
 	}
 
 	if (p.style & STYLE_ITALIC) {
@@ -327,7 +328,7 @@ float heightOf(const Layout &layout, size_t maxLines) {
 	return h;
 }
 
-void draw(const Layout &layout, float x, float y, float z, u32 color, size_t maxLines, bool revealSpoilers) {
+void draw(const Layout &layout, float x, float y, float z, u32 color, size_t maxLines, bool revealSpoilers, bool isEmbed) {
 	float cursorY = y;
 	size_t drawn = 0;
 
@@ -341,7 +342,8 @@ void draw(const Layout &layout, float x, float y, float z, u32 color, size_t max
 		if (line.type == BlockType::QUOTE) {
 			C2D_DrawRectSolid(x + 1.0f, cursorY, z, 2.0f, line.height, ScreenManager::colorTextMuted());
 		} else if (line.type == BlockType::CODE_BLOCK) {
-			C2D_DrawRectSolid(x, cursorY, z - 0.01f, 350.0f, line.height, ScreenManager::colorBackgroundDark());
+			u32 codeBg = isEmbed ? ScreenManager::colorInput() : ScreenManager::colorBackgroundDark();
+			C2D_DrawRectSolid(x, cursorY, z - 0.01f, 350.0f, line.height, codeBg);
 		}
 
 		if (!line.bullet.empty()) {
@@ -349,7 +351,7 @@ void draw(const Layout &layout, float x, float y, float z, u32 color, size_t max
 		}
 
 		for (const Piece &p : line.pieces) {
-			drawPiece(p, lineX + p.x, cursorY, z, color, line.type, line.height, revealSpoilers);
+			drawPiece(p, lineX + p.x, cursorY, z, color, line.type, line.height, revealSpoilers, isEmbed);
 		}
 
 		cursorY += line.height;

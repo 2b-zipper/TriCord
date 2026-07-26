@@ -45,7 +45,7 @@ constexpr uint16_t EMBED_STYLES = 0xFFFF;
 const Layout &get(const std::string &content, float maxWidth, float baseScale, float lineHeightRatio = 30.0f,
                   uint16_t allowedStyles = 0xFFFF, bool allowBlocks = true);
 void draw(const Layout &layout, float x, float y, float z, u32 color, size_t maxLines = (size_t)-1,
-          bool revealSpoilers = false);
+          bool revealSpoilers = false, bool isEmbed = false);
 float heightOf(const Layout &layout, size_t maxLines);
 void clearCache();
 

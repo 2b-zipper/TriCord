@@ -2731,18 +2731,18 @@ float MessageScreen::renderEmbed(const Discord::Embed &embed, float x, float y, 
 	}
 	if (!embed.author_name.empty()) {
 		const auto &l = embedCache ? embedCache->authorLayout : UI::MarkdownRenderer::get(embed.author_name, layout.pixelWidth, 0.38f, 11.0f / 0.38f, 0, false);
-		UI::MarkdownRenderer::draw(l, textX, currentY, 0.5f, ScreenManager::colorText());
+		UI::MarkdownRenderer::draw(l, textX, currentY, 0.5f, ScreenManager::colorText(), (size_t)-1, false, true);
 		currentY += l.height;
 	}
 	using UI::MarkdownRenderer::EMBED_STYLES;
 	if (!embed.title.empty()) {
 		const auto &l = embedCache ? embedCache->titleLayout : UI::MarkdownRenderer::get(embed.title, layout.pixelWidth, 0.42f, 14.0f / 0.42f, EMBED_STYLES, false);
-		UI::MarkdownRenderer::draw(l, textX, currentY, 0.5f, ScreenManager::colorText());
+		UI::MarkdownRenderer::draw(l, textX, currentY, 0.5f, ScreenManager::colorText(), (size_t)-1, false, true);
 		currentY += l.height;
 	}
 	if (!embed.description.empty()) {
 		const auto &l = embedCache ? embedCache->descriptionLayout : UI::MarkdownRenderer::get(embed.description, layout.pixelWidth, 0.36f, 11.0f / 0.36f, EMBED_STYLES, false);
-		UI::MarkdownRenderer::draw(l, textX, currentY, 0.5f, ScreenManager::colorText());
+		UI::MarkdownRenderer::draw(l, textX, currentY, 0.5f, ScreenManager::colorText(), (size_t)-1, false, true);
 		currentY += l.height;
 	}
 	for (size_t fi = 0; fi < embed.fields.size(); fi++) {
@@ -2750,19 +2750,19 @@ float MessageScreen::renderEmbed(const Discord::Embed &embed, float x, float y, 
 		const auto &n = (embedCache && fi < embedCache->fieldLayouts.size())
 		                    ? embedCache->fieldLayouts[fi].first
 		                    : UI::MarkdownRenderer::get(field.name, layout.pixelWidth, 0.35f, 11.0f / 0.35f, EMBED_STYLES, false);
-		UI::MarkdownRenderer::draw(n, textX, currentY, 0.5f, ScreenManager::colorText());
+		UI::MarkdownRenderer::draw(n, textX, currentY, 0.5f, ScreenManager::colorText(), (size_t)-1, false, true);
 		currentY += n.height;
 
 		const auto &v = (embedCache && fi < embedCache->fieldLayouts.size())
 		                    ? embedCache->fieldLayouts[fi].second
 		                    : UI::MarkdownRenderer::get(field.value, layout.pixelWidth, 0.34f, 11.0f / 0.34f, EMBED_STYLES, false);
-		UI::MarkdownRenderer::draw(v, textX, currentY, 0.5f, ScreenManager::colorTextMuted());
+		UI::MarkdownRenderer::draw(v, textX, currentY, 0.5f, ScreenManager::colorTextMuted(), (size_t)-1, false, true);
 		currentY += v.height;
 		currentY += 2.0f;
 	}
 	if (!embed.footer_text.empty()) {
 		const auto &l = embedCache ? embedCache->footerLayout : UI::MarkdownRenderer::get(embed.footer_text, layout.pixelWidth, 0.30f, 10.0f / 0.30f, 0, false);
-		UI::MarkdownRenderer::draw(l, textX, currentY, 0.5f, ScreenManager::colorTextMuted());
+		UI::MarkdownRenderer::draw(l, textX, currentY, 0.5f, ScreenManager::colorTextMuted(), (size_t)-1, false, true);
 		currentY += l.height;
 	}
 
