@@ -110,7 +110,14 @@ class MessageScreen : public Screen {
 	void catchUpMessages();
 	bool isAtBottom() const;
 	std::string getLatestRealMessageId() const;
+	void checkAndMarkChannelRead();
 	void syncScrollAfterRebuild(bool wasAtBottom, bool updateSelection = false);
+
+	Discord::Message createOptimisticMessage(const std::string &content, int type = 0, const std::string &referencedAuthor = "");
+	void handleMessageSendResult(const std::string &pendingId, const Discord::Message &sentMsg, bool success, int errorCode);
+	void onMessageCreate(const Discord::Message &msg);
+	void onMessageUpdate(const Discord::Message &msg);
+	void onMessageDelete(const std::string &msgId);
 
 	struct KeyboardResult {
 		int button;

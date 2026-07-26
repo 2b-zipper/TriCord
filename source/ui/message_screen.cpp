@@ -148,64 +148,9 @@ void MessageScreen::onEnter() {
 		Discord::AvatarCache::getInstance().prefetchChannelIcon(channel.id, channel.icon);
 	}
 
-	client.setMessageCallback([this](const Discord::Message &msg) {
-		if (msg.channelId != channelId) {
-			return;
-		}
-		std::lock_guard<std::recursive_mutex> lock(messageMutex);
-		bool found = false;
-		for (auto &m : this->messages) {
-			if (m.id == msg.id) {
-				m = msg;
-				found = true;
-				break;
-			}
-			if (m.id.substr(0, 8) == "pending_" && !msg.nonce.empty() && m.nonce == msg.nonce) {
-				m = msg;
-				found = true;
-				break;
-			}
-		}
-		if (!found) {
-			this->messages.push_back(msg);
-			bool atBottom = isAtBottom();
-			rebuildLayoutCache();
-			syncScrollAfterRebuild(atBottom, true);
-			if (!atBottom) {
-				showNewMessageIndicator = true;
-				newMessageCount++;
-			}
-		} else {
-			rebuildLayoutCache();
-		}
-	});
-
-	client.setMessageUpdateCallback([this](const Discord::Message &msg) {
-		if (msg.channelId != channelId) {
-			return;
-		}
-		std::lock_guard<std::recursive_mutex> lock(messageMutex);
-		for (auto &m : this->messages) {
-			if (m.id == msg.id) {
-				bool atBottom = isAtBottom();
-				m = msg;
-				rebuildLayoutCache();
-				syncScrollAfterRebuild(atBottom);
-				break;
-			}
-		}
-	});
-
-	client.setMessageDeleteCallback([this](const std::string &msgId) {
-		std::lock_guard<std::recursive_mutex> lock(messageMutex);
-		for (auto it = this->messages.begin(); it != this->messages.end(); ++it) {
-			if (it->id == msgId) {
-				this->messages.erase(it);
-				rebuildLayoutCache();
-				break;
-			}
-		}
-	});
+	client.setMessageCallback([this](const Discord::Message &msg) { onMessageCreate(msg); });
+	client.setMessageUpdateCallback([this](const Discord::Message &msg) { onMessageUpdate(msg); });
+	client.setMessageDeleteCallback([this](const std::string &msgId) { onMessageDelete(msgId); });
 
 	client.setMessageReactionAddCallback([this](const std::string &channelId, const std::string &messageId,
 	                                            const std::string &userId, const Discord::Emoji &emoji) {
@@ -475,10 +420,7 @@ void MessageScreen::update() {
 		}
 
 		if (wasAtBottom && !isLoading && !isForumView && !messages.empty()) {
-			std::string latestRealId = getLatestRealMessageId();
-			if (!latestRealId.empty()) {
-				Discord::DiscordClient::getInstance().markChannelRead(channelId, latestRealId);
-			}
+			checkAndMarkChannelRead();
 		}
 
 		Discord::DiscordClient::getInstance().setMessageCallback(nullptr);
@@ -562,17 +504,11 @@ void MessageScreen::update() {
 					updateLock.lock();
 
 					if (res.button == SWKBD_BUTTON_RIGHT && !res.text.empty()) {
-						Discord::Message replyMsg;
-						replyMsg.id = "pending_" + std::to_string(osGetTime());
-						replyMsg.nonce = replyMsg.id;
-						replyMsg.content = res.text;
-						replyMsg.channelId = channelId;
-						replyMsg.author = client.getCurrentUser();
-						replyMsg.timestamp = TR("message.status.sending");
-						replyMsg.type = 19;
-						replyMsg.referencedAuthorName = targetAuthorName;
-
-						this->messages.push_back(replyMsg);
+						Discord::Message replyMsg = createOptimisticMessage(res.text, 19, targetAuthorName);
+						{
+							std::lock_guard<std::recursive_mutex> lock(messageMutex);
+							this->messages.push_back(replyMsg);
+						}
 						rebuildLayoutCache();
 						scrollToBottom();
 
@@ -583,25 +519,7 @@ void MessageScreen::update() {
 							    if (!*token) {
 								    return;
 							    }
-							    std::lock_guard<std::recursive_mutex> lock(messageMutex);
-							    if (!*token) {
-								    return;
-							    }
-							    for (auto &m : this->messages) {
-								    if (m.id == replyMsgId) {
-									    if (success) {
-										    m = sentMsg;
-										    Logger::log("Updated pending reply with confirmed ID: %s",
-										                sentMsg.id.c_str());
-									    } else {
-										    m.timestamp = TR("message.status.failed");
-										    Logger::log("Reply failed with code: %d", errorCode);
-									    }
-									    break;
-								    }
-							    }
-							    rebuildLayoutCache();
-							    scrollToBottom();
+							    this->handleMessageSendResult(replyMsgId, sentMsg, success, errorCode);
 						    },
 						    replyMsg.nonce);
 					}
@@ -852,10 +770,7 @@ void MessageScreen::update() {
 		float maxScroll = std::max(0.0f, totalContentHeight - SCREEN_HEIGHT);
 		bool atBottom = (targetScrollY >= maxScroll - 5.0f);
 		if (atBottom) {
-			std::string latestRealId = getLatestRealMessageId();
-			if (!latestRealId.empty()) {
-				Discord::DiscordClient::getInstance().markChannelRead(channelId, latestRealId);
-			}
+			checkAndMarkChannelRead();
 		}
 		wasAtBottom = atBottom;
 	}
@@ -2250,18 +2165,11 @@ void MessageScreen::openKeyboard() {
 	auto res = runKeyboard(TR("common.message_hint"));
 
 	if (res.button == SWKBD_BUTTON_RIGHT && !res.text.empty()) {
-		std::lock_guard<std::recursive_mutex> lock(messageMutex);
-
-		Discord::Message optimisticMsg;
-		optimisticMsg.id = "pending_" + std::to_string(osGetTime());
-		optimisticMsg.nonce = optimisticMsg.id;
-		optimisticMsg.content = res.text;
-		optimisticMsg.channelId = channelId;
-		optimisticMsg.author = client.getCurrentUser();
-		optimisticMsg.timestamp = TR("message.status.sending");
-		optimisticMsg.type = 0;
-
-		this->messages.push_back(optimisticMsg);
+		Discord::Message optimisticMsg = createOptimisticMessage(res.text);
+		{
+			std::lock_guard<std::recursive_mutex> lock(messageMutex);
+			this->messages.push_back(optimisticMsg);
+		}
 		rebuildLayoutCache();
 		scrollToBottom();
 
@@ -2271,24 +2179,7 @@ void MessageScreen::openKeyboard() {
 			    if (!*token) {
 				    return;
 			    }
-			    std::lock_guard<std::recursive_mutex> lock(messageMutex);
-			    if (!*token) {
-				    return;
-			    }
-			    for (auto &msg : this->messages) {
-				    if (msg.id == pendingId) {
-					    if (success) {
-						    msg = sentMsg;
-						    Logger::log("Updated pending message with confirmed ID: %s", sentMsg.id.c_str());
-					    } else {
-						    msg.timestamp = TR("message.status.failed");
-						    Logger::log("Message send failed with code: %d", errorCode);
-					    }
-					    break;
-				    }
-			    }
-			    rebuildLayoutCache();
-			    scrollToBottom();
+			    this->handleMessageSendResult(pendingId, sentMsg, success, errorCode);
 		    },
 		    optimisticMsg.nonce);
 	}
@@ -2420,6 +2311,106 @@ std::string MessageScreen::getLatestRealMessageId() const {
 		}
 	}
 	return "";
+}
+
+void MessageScreen::checkAndMarkChannelRead() {
+	std::string latestRealId = getLatestRealMessageId();
+	if (!latestRealId.empty()) {
+		Discord::DiscordClient::getInstance().markChannelRead(channelId, latestRealId);
+	}
+}
+
+Discord::Message MessageScreen::createOptimisticMessage(const std::string &content, int type, const std::string &referencedAuthor) {
+	Discord::Message msg;
+	msg.id = "pending_" + std::to_string(osGetTime());
+	msg.nonce = msg.id;
+	msg.content = content;
+	msg.channelId = channelId;
+	msg.author = Discord::DiscordClient::getInstance().getCurrentUser();
+	msg.timestamp = TR("message.status.sending");
+	msg.type = type;
+	msg.referencedAuthorName = referencedAuthor;
+	return msg;
+}
+
+void MessageScreen::handleMessageSendResult(const std::string &pendingId, const Discord::Message &sentMsg, bool success, int errorCode) {
+	std::lock_guard<std::recursive_mutex> lock(messageMutex);
+	if (!*aliveToken) {
+		return;
+	}
+	for (auto &msg : this->messages) {
+		if (msg.id == pendingId) {
+			if (success) {
+				msg = sentMsg;
+				Logger::log("Updated pending message with confirmed ID: %s", sentMsg.id.c_str());
+			} else {
+				msg.timestamp = TR("message.status.failed");
+				Logger::log("Message send failed with code: %d", errorCode);
+			}
+			break;
+		}
+	}
+	rebuildLayoutCache();
+	scrollToBottom();
+}
+
+void MessageScreen::onMessageCreate(const Discord::Message &msg) {
+	if (msg.channelId != channelId) {
+		return;
+	}
+	std::lock_guard<std::recursive_mutex> lock(messageMutex);
+	bool found = false;
+	for (auto &m : this->messages) {
+		if (m.id == msg.id) {
+			m = msg;
+			found = true;
+			break;
+		}
+		if (m.id.substr(0, 8) == "pending_" && !msg.nonce.empty() && m.nonce == msg.nonce) {
+			m = msg;
+			found = true;
+			break;
+		}
+	}
+	if (!found) {
+		this->messages.push_back(msg);
+		bool atBottom = isAtBottom();
+		rebuildLayoutCache();
+		syncScrollAfterRebuild(atBottom, true);
+		if (!atBottom) {
+			showNewMessageIndicator = true;
+			newMessageCount++;
+		}
+	} else {
+		rebuildLayoutCache();
+	}
+}
+
+void MessageScreen::onMessageUpdate(const Discord::Message &msg) {
+	if (msg.channelId != channelId) {
+		return;
+	}
+	std::lock_guard<std::recursive_mutex> lock(messageMutex);
+	for (auto &m : this->messages) {
+		if (m.id == msg.id) {
+			bool atBottom = isAtBottom();
+			m = msg;
+			rebuildLayoutCache();
+			syncScrollAfterRebuild(atBottom);
+			break;
+		}
+	}
+}
+
+void MessageScreen::onMessageDelete(const std::string &msgId) {
+	std::lock_guard<std::recursive_mutex> lock(messageMutex);
+	for (auto it = this->messages.begin(); it != this->messages.end(); ++it) {
+		if (it->id == msgId) {
+			this->messages.erase(it);
+			rebuildLayoutCache();
+			break;
+		}
+	}
 }
 
 bool MessageScreen::isAtBottom() const {
