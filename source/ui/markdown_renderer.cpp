@@ -14,7 +14,7 @@ using namespace Utils::Markdown;
 
 namespace {
 
-constexpr size_t MAX_CACHE_ENTRIES = 128;
+constexpr size_t MAX_CACHE_ENTRIES = 512;
 
 struct CacheKey {
 	size_t hash;
@@ -253,8 +253,8 @@ void drawPiece(const Piece &p, float x, float y, float z, u32 color, BlockType t
 
 	if (p.style & STYLE_MENTION) {
 		float mMargin = 2.0f;
-		float mRad = 3.0f;
-		drawRoundedRect(x - mMargin, y + 1.0f, z - 0.01f, p.width + mMargin * 2.0f, lineH - 2.0f, mRad, p.bgColor);
+		C2D_DrawRectSolid(x - mMargin + 1.0f, y + 1.0f, z - 0.01f, p.width + (mMargin - 1.0f) * 2.0f, lineH - 2.0f, p.bgColor);
+		C2D_DrawRectSolid(x - mMargin, y + 2.0f, z - 0.01f, p.width + mMargin * 2.0f, lineH - 4.0f, p.bgColor);
 		c = p.color;
 	}
 

@@ -4,17 +4,52 @@
 #include "discord/types.h"
 #include "ui/screen_manager.h"
 #include "ui/emoji_picker.h"
+#include "ui/markdown_renderer.h"
 #include <memory>
 #include <mutex>
 #include <set>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace UI {
 
 class MessageScreen : public Screen {
   public:
+	struct EmbedLayout {
+		bool hasImage;
+		bool hasThumbnail;
+		bool isLargeThumbnail;
+		bool isMedia;
+		bool isSimpleMedia;
+		bool showThumbnailOnRight;
+		float pixelWidth;
+	};
+
+	struct EmbedRenderCache {
+		float height = 0.0f;
+		EmbedLayout layout;
+		UI::MarkdownRenderer::Layout providerLayout;
+		UI::MarkdownRenderer::Layout authorLayout;
+		UI::MarkdownRenderer::Layout titleLayout;
+		UI::MarkdownRenderer::Layout descriptionLayout;
+		std::vector<std::pair<UI::MarkdownRenderer::Layout, UI::MarkdownRenderer::Layout>> fieldLayouts;
+		UI::MarkdownRenderer::Layout footerLayout;
+	};
+
+	struct MessageRenderCache {
+		float position = 0.0f;
+		float height = 0.0f;
+		bool showHeader = false;
+		bool showDateSeparator = false;
+		std::string dateString;
+		bool isEmojiOnly = false;
+		int emojiCount = 0;
+		UI::MarkdownRenderer::Layout contentLayout;
+		std::vector<EmbedRenderCache> embeds;
+	};
+
 	MessageScreen(const std::string &channelId, const std::string &channelName);
 	virtual ~MessageScreen();
 
@@ -53,6 +88,7 @@ class MessageScreen : public Screen {
 	std::vector<float> messagePositions;
 	std::vector<float> messageHeights;
 	std::unordered_map<size_t, float> embedHeightCache;
+	std::vector<MessageRenderCache> renderCaches;
 	std::set<std::string> revealedSpoilers;
 	float targetScrollY;
 	float currentScrollY;
@@ -85,13 +121,13 @@ class MessageScreen : public Screen {
 
 	void fetchMessages();
 	void fetchOlderMessages();
-	float drawMessage(const Discord::Message &msg, float y, float maxWidth, bool isSelected, bool showHeader, bool prevGroupedMention = false, bool nextGroupedMention = false);
+	float drawMessage(const Discord::Message &msg, float y, float maxWidth, bool isSelected, bool showHeader, bool prevGroupedMention = false, bool nextGroupedMention = false, const MessageRenderCache *renderCache = nullptr);
 	float drawForumMessage(const Discord::Message &msg, float y, bool isSelected);
 	float drawSystemMessage(const Discord::Message &msg, float y, float topMargin, float height, bool isSelected);
 	float drawReplyPreview(const Discord::Message &msg, float x, float y);
 	float drawForwardHeader(const Discord::Message &msg, float x, float y);
 	float drawAuthorHeader(const Discord::Message &msg, float x, float y, bool showHeader);
-	float drawMessageContent(const Discord::Message &msg, float x, float y);
+	float drawMessageContent(const Discord::Message &msg, float x, float y, const MessageRenderCache *renderCache = nullptr);
 	float drawAttachments(const Discord::Message &msg, float x, float y, float maxWidth);
 	float drawStickers(const Discord::Message &msg, float x, float y, float maxWidth);
 	float drawReactions(const Discord::Message &msg, float x, float y, bool isSelected);
@@ -100,7 +136,7 @@ class MessageScreen : public Screen {
 	void submitPollVote(int answerIndex);
 	float calculateMessageHeight(const Discord::Message &msg, bool showHeader);
 	float calculateEmbedHeight(const Discord::Embed &embed, float maxWidth);
-	float renderEmbed(const Discord::Embed &embed, float x, float y, float maxWidth);
+	float renderEmbed(const Discord::Embed &embed, float x, float y, float maxWidth, const EmbedRenderCache *embedCache = nullptr);
 	void openKeyboard();
 	void showMessageOptions();
 
