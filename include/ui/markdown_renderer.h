@@ -39,7 +39,7 @@ struct Layout {
 	bool hasSpoiler = false;
 };
 
-constexpr uint16_t EMBED_STYLES = Utils::Markdown::STYLE_BOLD | Utils::Markdown::STYLE_LINK;
+constexpr uint16_t EMBED_STYLES = 0xFFFF;
 
 // Cached; the reference stays valid until the next call with a different key.
 const Layout &get(const std::string &content, float maxWidth, float baseScale, float lineHeightRatio = 30.0f,

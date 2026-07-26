@@ -2659,6 +2659,7 @@ float MessageScreen::calculateEmbedHeight(const Discord::Embed &embed, float max
 	if (!embed.description.empty()) {
 		h += UI::MarkdownRenderer::get(embed.description, layout.pixelWidth, 0.36f, 11.0f / 0.36f, EMBED_STYLES, false).height;
 	}
+	h += 4.0f;
 
 	for (const auto &field : embed.fields) {
 		h += UI::MarkdownRenderer::get(field.name, layout.pixelWidth, 0.35f, 11.0f / 0.35f, EMBED_STYLES, false).height;
