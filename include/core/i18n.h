@@ -26,8 +26,11 @@ class I18n {
 	I18n(const I18n &) = delete;
 	I18n &operator=(const I18n &) = delete;
 
+	bool loadLanguageFile(const std::string &langCode, std::map<std::string, std::string> &outMap);
+
 	std::string currentLang;
 	std::map<std::string, std::string> strings;
+	std::map<std::string, std::string> fallbackStrings;
 };
 
 } // namespace Core
