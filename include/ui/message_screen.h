@@ -109,6 +109,7 @@ class MessageScreen : public Screen {
 	void ensureSelectionVisible();
 	void catchUpMessages();
 	bool isAtBottom() const;
+	std::string getLatestRealMessageId() const;
 	void syncScrollAfterRebuild(bool wasAtBottom, bool updateSelection = false);
 
 	struct KeyboardResult {

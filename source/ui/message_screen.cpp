@@ -94,9 +94,12 @@ MessageScreen::MessageScreen(const std::string &channelId, const std::string &ch
 
 MessageScreen::~MessageScreen() {
 	*aliveToken = false;
+	std::lock_guard<std::recursive_mutex> lock(messageMutex);
 	Discord::DiscordClient::getInstance().setMessageCallback(nullptr);
 	Discord::DiscordClient::getInstance().setMessageUpdateCallback(nullptr);
 	Discord::DiscordClient::getInstance().setMessageDeleteCallback(nullptr);
+	Discord::DiscordClient::getInstance().setMessageReactionAddCallback(nullptr);
+	Discord::DiscordClient::getInstance().setMessageReactionRemoveCallback(nullptr);
 	Discord::DiscordClient::getInstance().setPollVoteCallback(nullptr);
 	Discord::DiscordClient::getInstance().setConnectionCallback(nullptr);
 
@@ -327,6 +330,9 @@ void MessageScreen::onEnter() {
 			}
 			{
 				std::lock_guard<std::recursive_mutex> lock(messageMutex);
+				if (!*token) {
+					return;
+				}
 				this->messages = threadMsgs;
 				rebuildLayoutCache();
 				if (!this->messages.empty()) {
@@ -343,6 +349,9 @@ void MessageScreen::onEnter() {
 			    }
 			    {
 				    std::lock_guard<std::recursive_mutex> lock(messageMutex);
+				    if (!*token) {
+					    return;
+				    }
 				    this->messages = fetched;
 				    std::reverse(this->messages.begin(), this->messages.end());
 				    rebuildLayoutCache();
@@ -466,14 +475,19 @@ void MessageScreen::update() {
 		}
 
 		if (wasAtBottom && !isLoading && !isForumView && !messages.empty()) {
-			Discord::DiscordClient::getInstance().markChannelRead(channelId, messages.back().id);
+			std::string latestRealId = getLatestRealMessageId();
+			if (!latestRealId.empty()) {
+				Discord::DiscordClient::getInstance().markChannelRead(channelId, latestRealId);
+			}
 		}
 
 		Discord::DiscordClient::getInstance().setMessageCallback(nullptr);
+		Discord::DiscordClient::getInstance().setMessageUpdateCallback(nullptr);
 		Discord::DiscordClient::getInstance().setMessageDeleteCallback(nullptr);
 		Discord::DiscordClient::getInstance().setMessageReactionAddCallback(nullptr);
 		Discord::DiscordClient::getInstance().setMessageReactionRemoveCallback(nullptr);
 		Discord::DiscordClient::getInstance().setPollVoteCallback(nullptr);
+		Discord::DiscordClient::getInstance().setConnectionCallback(nullptr);
 
 		{
 			std::lock_guard<std::recursive_mutex> lock(client.getMutex());
@@ -564,9 +578,15 @@ void MessageScreen::update() {
 
 						client.sendReply(
 						    channelId, res.text, targetMsgId,
-						    [this, replyMsgId = replyMsg.id](const Discord::Message &sentMsg, bool success,
-						                                     int errorCode) {
+						    [this, token = aliveToken, replyMsgId = replyMsg.id](const Discord::Message &sentMsg, bool success,
+						                                                         int errorCode) {
+							    if (!*token) {
+								    return;
+							    }
 							    std::lock_guard<std::recursive_mutex> lock(messageMutex);
+							    if (!*token) {
+								    return;
+							    }
 							    for (auto &m : this->messages) {
 								    if (m.id == replyMsgId) {
 									    if (success) {
@@ -832,7 +852,10 @@ void MessageScreen::update() {
 		float maxScroll = std::max(0.0f, totalContentHeight - SCREEN_HEIGHT);
 		bool atBottom = (targetScrollY >= maxScroll - 5.0f);
 		if (atBottom) {
-			Discord::DiscordClient::getInstance().markChannelRead(channelId, messages.back().id);
+			std::string latestRealId = getLatestRealMessageId();
+			if (!latestRealId.empty()) {
+				Discord::DiscordClient::getInstance().markChannelRead(channelId, latestRealId);
+			}
 		}
 		wasAtBottom = atBottom;
 	}
@@ -2190,6 +2213,9 @@ void MessageScreen::fetchOlderMessages() {
 
 			    {
 				    std::lock_guard<std::recursive_mutex> lock(messageMutex);
+				    if (!*token) {
+					    return;
+				    }
 				    this->messages.insert(this->messages.begin(), reversed.begin(), reversed.end());
 				    selectedIndex += reversed.size();
 				    addedCount = reversed.size();
@@ -2241,8 +2267,14 @@ void MessageScreen::openKeyboard() {
 
 		client.sendMessage(
 		    channelId, res.text,
-		    [this, pendingId = optimisticMsg.id](const Discord::Message &sentMsg, bool success, int errorCode) {
+		    [this, token = aliveToken, pendingId = optimisticMsg.id](const Discord::Message &sentMsg, bool success, int errorCode) {
+			    if (!*token) {
+				    return;
+			    }
 			    std::lock_guard<std::recursive_mutex> lock(messageMutex);
+			    if (!*token) {
+				    return;
+			    }
 			    for (auto &msg : this->messages) {
 				    if (msg.id == pendingId) {
 					    if (success) {
@@ -2379,6 +2411,15 @@ void MessageScreen::showMessageOptions() {
 
 	isMenuOpen = true;
 	menuIndex = 0;
+}
+
+std::string MessageScreen::getLatestRealMessageId() const {
+	for (auto it = messages.rbegin(); it != messages.rend(); ++it) {
+		if (it->id.substr(0, 8) != "pending_") {
+			return it->id;
+		}
+	}
+	return "";
 }
 
 bool MessageScreen::isAtBottom() const {
@@ -3015,14 +3056,11 @@ void MessageScreen::catchUpMessages() {
 		    }
 
 		    std::lock_guard<std::recursive_mutex> lock(messageMutex);
-
-		    std::string latestRealId;
-		    for (auto it = this->messages.rbegin(); it != this->messages.rend(); ++it) {
-			    if (it->id.substr(0, 8) != "pending_") {
-				    latestRealId = it->id;
-				    break;
-			    }
+		    if (!*token) {
+			    return;
 		    }
+
+		    std::string latestRealId = getLatestRealMessageId();
 
 		    if (latestRealId.empty()) {
 
