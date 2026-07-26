@@ -175,6 +175,7 @@
     "server.description": "Resúmen del servidor",
     "server.list": "Servidores",
     "server.member_count": "Miembros",
+    "server.new_mention": "NEW",
     "server.menu.mark_read": "Marcar como leído",
     "server.menu.mute": "Silenciar servidor",
     "server.mute.15min": "15 minutos",
