@@ -1472,8 +1472,15 @@ constexpr float POLL_LINE_H = 14.0f;
 
 bool drawEmojiGlyph(const Discord::Emoji &emoji, float x, float y, float box, float z) {
 	UI::EmojiManager &mgr = UI::EmojiManager::getInstance();
-	EmojiManager::EmojiInfo info =
-	    emoji.id.empty() ? mgr.getTwemojiInfo(Utils::Utf8::utf8ToHex(emoji.name)) : mgr.getEmojiInfo(emoji.id);
+	EmojiManager::EmojiInfo info;
+	if (emoji.id.empty()) {
+		if (emoji.hex.empty()) {
+			const_cast<Discord::Emoji&>(emoji).hex = Utils::Utf8::utf8ToHex(emoji.name);
+		}
+		info = mgr.getTwemojiInfo(emoji.hex);
+	} else {
+		info = mgr.getEmojiInfo(emoji.id);
+	}
 
 	if (info.tex) {
 		float uMax = (float)info.originalW / info.tex->width;
@@ -1729,7 +1736,7 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y, float max
 			mentionBg = (Config::getInstance().getThemeType() == 1) ? C2D_Color32(255, 244, 194, 255) : C2D_Color32(80, 69, 45, 255);
 		}
 		
-		C2D_DrawRectSolid(4.0f, highlightY, 0.1f, 392.0f, highlightH, mentionBg);
+		drawRoundedRect(4.0f, highlightY, 0.1f, 392.0f, highlightH, 6.0f, mentionBg);
 		C2D_DrawRectSolid(4.0f, highlightY, 0.1f, 6.0f, highlightH, mentionBg);
 		
 		if (prevGroupedMention) {
@@ -1743,12 +1750,13 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y, float max
 	} else if (isSelected) {
 		float highlightY = y + topMargin;
 		float highlightH = height - topMargin;
-		C2D_DrawRectSolid(4.0f, highlightY, 0.1f, 392.0f, highlightH, ScreenManager::colorBackgroundLight());
+		drawRoundedRect(4.0f, highlightY, 0.1f, 392.0f, highlightH, 6.0f, ScreenManager::colorBackgroundLight());
 	}
 
 	if (msg.type != 0 && msg.type != 19) {
 		drawSystemMessage(msg, y, topMargin, height, isSelected);
-		drawReactions(msg, textOffsetX, y + topMargin + 18.0f, isSelected);
+		float reactionsY = y + topMargin + (msg.hasPollResult ? 50.0f : 18.0f);
+		drawReactions(msg, textOffsetX, reactionsY, isSelected);
 		return height;
 	}
 

@@ -335,15 +335,24 @@ void EmojiManager::prefetchEmojisFromText(const std::string &text) {
 }
 
 EmojiManager::EmojiInfo EmojiManager::getTwemojiInfo(const std::string &codepointHex) {
+	{
+		std::shared_lock<std::shared_mutex> lock(cacheMutex);
+		auto it = twemojiCache.find(codepointHex);
+		if (it != twemojiCache.end()) {
+			it->second.lastUsedFrame = frameCounter;
+			if (!it->second.isLoading || inQueue.find(codepointHex) != inQueue.end()) {
+				return it->second;
+			}
+		}
+	}
+
 	std::unique_lock<std::shared_mutex> lock(cacheMutex);
 	auto it = twemojiCache.find(codepointHex);
-
 	if (it != twemojiCache.end()) {
 		it->second.lastUsedFrame = frameCounter;
 		if (!it->second.isLoading) {
 			return it->second;
 		}
-
 		if (inQueue.find(codepointHex) == inQueue.end()) {
 			priorityQueue.push_back(codepointHex);
 			inQueue.insert(codepointHex);

@@ -191,6 +191,7 @@ struct Sticker {
 struct Emoji {
 	std::string id;
 	std::string name;
+	mutable std::string hex;
 	bool animated = false;
 };
 

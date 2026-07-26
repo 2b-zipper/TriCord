@@ -740,31 +740,33 @@ void drawRichText(float x, float y, float z, float scaleX, float scaleY, u32 col
 			}
 		}
 
-		size_t tempCursor = cursor;
-		uint32_t codepoint = Utils::Utf8::decodeNext(text, tempCursor);
+		if (static_cast<unsigned char>(text[cursor]) >= 0x80) {
+			size_t tempCursor = cursor;
+			uint32_t codepoint = Utils::Utf8::decodeNext(text, tempCursor);
 
-		if (Utils::Utf8::isEmoji(codepoint)) {
-			size_t seqCursor = cursor;
-			std::string sequence = Utils::Utf8::getEmojiSequence(text, seqCursor);
-			std::string hex = Utils::Utf8::utf8ToHex(sequence);
-			EmojiManager::EmojiInfo info = EmojiManager::getInstance().getTwemojiInfo(hex);
-			float emojiSize = 28.0f * scaleY;
+			if (Utils::Utf8::isEmoji(codepoint)) {
+				size_t seqCursor = cursor;
+				std::string sequence = Utils::Utf8::getEmojiSequence(text, seqCursor);
+				std::string hex = Utils::Utf8::utf8ToHex(sequence);
+				EmojiManager::EmojiInfo info = EmojiManager::getInstance().getTwemojiInfo(hex);
+				float emojiSize = 28.0f * scaleY;
 
-			if (info.tex) {
-				float uMax = (float)info.originalW / info.tex->width;
-				float vMax = (float)info.originalH / info.tex->height;
-				Tex3DS_SubTexture subtex = {(u16)info.originalW, (u16)info.originalH, 0.0f, 1.0f, uMax, 1.0f - vMax};
-				const C2D_Image img = {info.tex, &subtex};
-				C2D_DrawImageAt(img, currentX, y + 1.0f, z, nullptr, emojiSize / info.originalW,
-				                emojiSize / info.originalH);
-				currentX += emojiSize + (2.0f * scaleX);
-				cursor = seqCursor;
-				continue;
-			} else {
-				drawText(currentX, y, z, scaleX, scaleY, color, sequence);
-				currentX += measureText(sequence, scaleX, scaleY);
-				cursor = seqCursor;
-				continue;
+				if (info.tex) {
+					float uMax = (float)info.originalW / info.tex->width;
+					float vMax = (float)info.originalH / info.tex->height;
+					Tex3DS_SubTexture subtex = {(u16)info.originalW, (u16)info.originalH, 0.0f, 1.0f, uMax, 1.0f - vMax};
+					const C2D_Image img = {info.tex, &subtex};
+					C2D_DrawImageAt(img, currentX, y + 1.0f, z, nullptr, emojiSize / info.originalW,
+					                emojiSize / info.originalH);
+					currentX += emojiSize + (2.0f * scaleX);
+					cursor = seqCursor;
+					continue;
+				} else {
+					drawText(currentX, y, z, scaleX, scaleY, color, sequence);
+					currentX += measureText(sequence, scaleX, scaleY);
+					cursor = seqCursor;
+					continue;
+				}
 			}
 		}
 
@@ -785,6 +787,10 @@ void drawRichText(float x, float y, float z, float scaleX, float scaleY, u32 col
 				}
 			}
 
+			if (static_cast<unsigned char>(text[end]) < 0x80) {
+				end++;
+				continue;
+			}
 			size_t nextC = end;
 			uint32_t cp = Utils::Utf8::decodeNext(text, nextC);
 			if (Utils::Utf8::isEmoji(cp)) {
@@ -844,22 +850,27 @@ float measureRichTextImpl(const std::string &text, float scaleX, float scaleY, b
 			}
 		}
 
-		size_t tempCursor = cursor;
-		uint32_t codepoint = Utils::Utf8::decodeNext(text, tempCursor);
+		if (static_cast<unsigned char>(text[cursor]) >= 0x80) {
+			size_t tempCursor = cursor;
+			uint32_t codepoint = Utils::Utf8::decodeNext(text, tempCursor);
 
-		if (Utils::Utf8::isEmoji(codepoint)) {
-			size_t seqCursor = cursor;
-			std::string sequence = Utils::Utf8::getEmojiSequence(text, seqCursor);
-			std::string hex = Utils::Utf8::utf8ToHex(sequence);
-			EmojiManager::EmojiInfo info = EmojiManager::getInstance().getTwemojiInfo(hex);
-			float emojiSize = 28.0f * scaleY;
-			if (info.tex) {
-				currentX += emojiSize + (2.0f * scaleX);
-			} else {
-				currentX += measureText(sequence, scaleX, scaleY);
+			if (Utils::Utf8::isEmoji(codepoint)) {
+				size_t seqCursor = cursor;
+				std::string sequence = Utils::Utf8::getEmojiSequence(text, seqCursor);
+				std::string hex = Utils::Utf8::utf8ToHex(sequence);
+				EmojiManager::EmojiInfo info = EmojiManager::getInstance().getTwemojiInfo(hex);
+				float emojiSize = 28.0f * scaleY;
+				if (info.tex) {
+					currentX += emojiSize + (2.0f * scaleX);
+				} else {
+					currentX += measureText(sequence, scaleX, scaleY);
+				}
+				cursor = seqCursor;
+				continue;
 			}
-			cursor = seqCursor;
-		} else {
+		}
+
+		{
 			size_t end = cursor;
 			while (end < text.length()) {
 				if (!unicodeOnly && text[end] == '<') {
@@ -877,6 +888,10 @@ float measureRichTextImpl(const std::string &text, float scaleX, float scaleY, b
 					}
 				}
 
+				if (static_cast<unsigned char>(text[end]) < 0x80) {
+					end++;
+					continue;
+				}
 				size_t nextC = end;
 				uint32_t cp = Utils::Utf8::decodeNext(text, nextC);
 				if (Utils::Utf8::isEmoji(cp)) {
@@ -998,38 +1013,47 @@ void drawRichTextUnicodeOnly(float x, float y, float z, float scaleX, float scal
 	float currentX = x;
 
 	while (cursor < text.length()) {
-		size_t tempCharCursor = cursor;
-		uint32_t firstCp = Utils::Utf8::decodeNext(text, tempCharCursor);
+		if (static_cast<unsigned char>(text[cursor]) >= 0x80) {
+			size_t tempCharCursor = cursor;
+			uint32_t firstCp = Utils::Utf8::decodeNext(text, tempCharCursor);
 
-		if (Utils::Utf8::isEmoji(firstCp)) {
-			size_t seqCursor = cursor;
-			std::string sequence = Utils::Utf8::getEmojiSequence(text, seqCursor);
-			std::string hex = Utils::Utf8::utf8ToHex(sequence);
-			EmojiManager::EmojiInfo info = EmojiManager::getInstance().getTwemojiInfo(hex);
-			float emojiSize = 28.0f * scaleY;
+			if (Utils::Utf8::isEmoji(firstCp)) {
+				size_t seqCursor = cursor;
+				std::string sequence = Utils::Utf8::getEmojiSequence(text, seqCursor);
+				std::string hex = Utils::Utf8::utf8ToHex(sequence);
+				EmojiManager::EmojiInfo info = EmojiManager::getInstance().getTwemojiInfo(hex);
+				float emojiSize = 28.0f * scaleY;
 
-			if (info.tex) {
-				Tex3DS_SubTexture subtex;
-				subtex.width = (u16)info.originalW;
-				subtex.height = (u16)info.originalH;
-				subtex.left = 0.0f;
-				subtex.top = 0.0f;
-				subtex.right = (float)info.originalW / info.tex->width;
-				subtex.bottom = (float)info.originalH / info.tex->height;
+				if (info.tex) {
+					Tex3DS_SubTexture subtex;
+					subtex.width = (u16)info.originalW;
+					subtex.height = (u16)info.originalH;
+					subtex.left = 0.0f;
+					subtex.top = 0.0f;
+					subtex.right = (float)info.originalW / info.tex->width;
+					subtex.bottom = (float)info.originalH / info.tex->height;
 
-				const C2D_Image img = {info.tex, &subtex};
-				C2D_DrawImageAt(img, currentX, y + 1.0f, z, nullptr, emojiSize / info.originalW,
-				                emojiSize / info.originalH);
-				currentX += emojiSize + (0.0f * scaleX);
-			} else {
-				std::string clean = Utils::Utf8::sanitizeText(sequence);
-				drawText(currentX, y, z, scaleX, scaleY, color, clean);
-				currentX += measureText(clean, scaleX, scaleY);
+					const C2D_Image img = {info.tex, &subtex};
+					C2D_DrawImageAt(img, currentX, y + 1.0f, z, nullptr, emojiSize / info.originalW,
+					                emojiSize / info.originalH);
+					currentX += emojiSize + (0.0f * scaleX);
+				} else {
+					std::string clean = Utils::Utf8::sanitizeText(sequence);
+					drawText(currentX, y, z, scaleX, scaleY, color, clean);
+					currentX += measureText(clean, scaleX, scaleY);
+				}
+				cursor = seqCursor;
+				continue;
 			}
-			cursor = seqCursor;
-		} else {
+		}
+
+		{
 			size_t end = cursor;
 			while (end < text.length()) {
+				if (static_cast<unsigned char>(text[end]) < 0x80) {
+					end++;
+					continue;
+				}
 				size_t nextC = end;
 				uint32_t cp = Utils::Utf8::decodeNext(text, nextC);
 				if (Utils::Utf8::isEmoji(cp)) {

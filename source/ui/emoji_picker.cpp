@@ -5,6 +5,7 @@
 #include "utils/utf8_utils.h"
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 namespace UI {
 
@@ -277,6 +278,18 @@ void EmojiPicker::render(C3D_RenderTarget *target, const Discord::Message *activ
 	size_t startIndex = (size_t)minRow * emojisPerRow;
 	size_t endIndex = std::min(currentCat.emojiIndices.size(), (size_t)maxRow * emojisPerRow);
 
+	std::unordered_set<std::string> activeMsgReactedHexes;
+	if (activeMsg) {
+		for (const auto &r : activeMsg->reactions) {
+			if (r.me) {
+				if (r.emoji.hex.empty()) {
+					const_cast<Discord::Emoji&>(r.emoji).hex = Utils::Utf8::utf8ToHex(r.emoji.name);
+				}
+				activeMsgReactedHexes.insert(r.emoji.hex);
+			}
+		}
+	}
+
 	for (size_t i = startIndex; i < endIndex; i++) {
 		size_t globalIdx = currentCat.emojiIndices[i];
 		size_t row = i / (size_t)emojisPerRow;
@@ -288,16 +301,7 @@ void EmojiPicker::render(C3D_RenderTarget *target, const Discord::Message *activ
 			continue;
 		}
 
-		bool isReacted = false;
-		if (activeMsg) {
-			std::string emojiUtf8 = Utils::Utf8::hexToUtf8(allCodepoints[globalIdx]);
-			for (const auto &r : activeMsg->reactions) {
-				if (r.me && r.emoji.name == emojiUtf8) {
-					isReacted = true;
-					break;
-				}
-			}
-		}
+		bool isReacted = (activeMsgReactedHexes.count(allCodepoints[globalIdx]) > 0);
 
 		bool isSelected = (i == (size_t)emojiIndex);
 		if (isSelected) {
