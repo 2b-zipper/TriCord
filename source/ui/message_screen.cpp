@@ -500,9 +500,9 @@ void MessageScreen::update() {
 						{
 							std::lock_guard<std::recursive_mutex> lock(messageMutex);
 							this->messages.push_back(replyMsg);
+							rebuildLayoutCache();
+							scrollToBottom();
 						}
-						rebuildLayoutCache();
-						scrollToBottom();
 
 						client.sendReply(
 						    channelId, res.text, targetMsgId,
@@ -2182,9 +2182,9 @@ void MessageScreen::openKeyboard() {
 		{
 			std::lock_guard<std::recursive_mutex> lock(messageMutex);
 			this->messages.push_back(optimisticMsg);
+			rebuildLayoutCache();
+			scrollToBottom();
 		}
-		rebuildLayoutCache();
-		scrollToBottom();
 
 		client.sendMessage(
 		    channelId, res.text,
@@ -2352,10 +2352,14 @@ void MessageScreen::handleMessageSendResult(const std::string &pendingId, const 
 		return;
 	}
 	for (auto &msg : this->messages) {
-		if (msg.id == pendingId) {
+		if (msg.id == pendingId || (!pendingId.empty() && msg.nonce == pendingId)) {
 			if (success) {
-				msg = sentMsg;
-				Logger::log("Updated pending message with confirmed ID: %s", sentMsg.id.c_str());
+				if (msg.id.substr(0, 8) == "pending_") {
+					msg = sentMsg;
+					Logger::log("Updated pending message with confirmed ID: %s", sentMsg.id.c_str());
+				} else {
+					Logger::log("Pending message already confirmed via Gateway: %s", msg.id.c_str());
+				}
 			} else {
 				msg.timestamp = TR("message.status.failed");
 				Logger::log("Message send failed with code: %d", errorCode);

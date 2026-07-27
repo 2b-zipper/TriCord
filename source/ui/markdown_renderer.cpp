@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <list>
 #include <map>
+#include <mutex>
 
 namespace UI {
 namespace MarkdownRenderer {
@@ -56,6 +57,7 @@ struct CacheEntry {
 
 std::map<CacheKey, CacheEntry> cache;
 std::list<CacheKey> lru;
+std::recursive_mutex cacheMutex;
 
 float blockScale(BlockType t, float base) {
 	switch (t) {
@@ -296,8 +298,9 @@ void drawPiece(const Piece &p, float x, float y, float z, u32 color, BlockType t
 
 } // namespace
 
-const Layout &get(const std::string &content, float maxWidth, float scale, float ratio, uint16_t allowed,
-                  bool allowBlocks) {
+Layout get(const std::string &content, float maxWidth, float scale, float ratio, uint16_t allowed,
+           bool allowBlocks) {
+	std::lock_guard<std::recursive_mutex> lock(cacheMutex);
 	size_t hash = std::hash<std::string>{}(content);
 	CacheKey k = {hash, maxWidth, scale, ratio, allowed, allowBlocks};
 	auto it = cache.find(k);
@@ -359,6 +362,7 @@ void draw(const Layout &layout, float x, float y, float z, u32 color, size_t max
 }
 
 void clearCache() {
+	std::lock_guard<std::recursive_mutex> lock(cacheMutex);
 	cache.clear();
 	lru.clear();
 }
