@@ -147,6 +147,7 @@ class ScreenManager {
 	std::vector<ScreenType> screenHistory;
 	std::string selectedGuildId;
 	bool debugOverlayEnabled;
+	float debugScrollOffset = 0.0f;
 	bool appExitRequested;
 	HamburgerMenu hamburgerMenu;
 	IncomingCall incomingCall;

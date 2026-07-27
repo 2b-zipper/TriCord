@@ -2,12 +2,12 @@
 #define NETWORK_MANAGER_H
 
 #include "network/http_client.h"
+#include "utils/worker_thread.h"
 #include <condition_variable>
 #include <functional>
 #include <mutex>
 #include <queue>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace Network {
@@ -49,10 +49,10 @@ class NetworkManager {
 
 	void workerThread(RequestPriority type);
 
-	std::thread realtimeWorker;
+	Utils::WorkerThread realtimeWorker;
 
-	std::vector<std::thread> interactiveWorkers;
-	std::vector<std::thread> backgroundWorkers;
+	std::vector<Utils::WorkerThread> interactiveWorkers;
+	std::vector<Utils::WorkerThread> backgroundWorkers;
 
 	std::queue<AsyncRequest> realtimeQueue;
 	std::queue<AsyncRequest> interactiveQueue;

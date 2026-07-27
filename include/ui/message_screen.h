@@ -30,12 +30,12 @@ class MessageScreen : public Screen {
 	struct EmbedRenderCache {
 		float height = 0.0f;
 		EmbedLayout layout;
-		UI::MarkdownRenderer::Layout providerLayout;
-		UI::MarkdownRenderer::Layout authorLayout;
-		UI::MarkdownRenderer::Layout titleLayout;
-		UI::MarkdownRenderer::Layout descriptionLayout;
-		std::vector<std::pair<UI::MarkdownRenderer::Layout, UI::MarkdownRenderer::Layout>> fieldLayouts;
-		UI::MarkdownRenderer::Layout footerLayout;
+		UI::MarkdownRenderer::LayoutRef providerLayout;
+		UI::MarkdownRenderer::LayoutRef authorLayout;
+		UI::MarkdownRenderer::LayoutRef titleLayout;
+		UI::MarkdownRenderer::LayoutRef descriptionLayout;
+		std::vector<std::pair<UI::MarkdownRenderer::LayoutRef, UI::MarkdownRenderer::LayoutRef>> fieldLayouts;
+		UI::MarkdownRenderer::LayoutRef footerLayout;
 	};
 
 	struct MessageRenderCache {
@@ -46,8 +46,14 @@ class MessageScreen : public Screen {
 		std::string dateString;
 		bool isEmojiOnly = false;
 		int emojiCount = 0;
-		UI::MarkdownRenderer::Layout contentLayout;
+		UI::MarkdownRenderer::LayoutRef contentLayout;
 		std::vector<EmbedRenderCache> embeds;
+		bool canGroupWithPrev = false;
+		// Resolved in renderTop: isUserMentioned locks the client mutex, which messageMutex holders must not.
+		int8_t mentionState = -1;
+		std::string headerTimestamp;
+		float pollHeight = 0.0f;
+		std::vector<std::string> pollQuestionLines;
 	};
 
 	MessageScreen(const std::string &channelId, const std::string &channelName);
@@ -80,6 +86,16 @@ class MessageScreen : public Screen {
 	bool isHiddenChannel = false;
 	bool hasMoreHistory;
 	uint32_t lastImageGeneration;
+	int64_t cacheDayStamp = -1;
+
+	std::string dmRecipientId;
+	std::string dmRecipientAvatar;
+	std::string dmRecipientDiscriminator;
+	std::string groupIconHash;
+	std::string cachedHints;
+	int cachedHintsKey = -1;
+	bool canSendCached = false;
+	int canSendRecheck = 0;
 
 	int keyRepeatTimer;
 	static const int REPEAT_INITIAL_DELAY = 25;
@@ -126,12 +142,14 @@ class MessageScreen : public Screen {
 	float drawSystemMessage(const Discord::Message &msg, float y, float topMargin, float height, bool isSelected);
 	float drawReplyPreview(const Discord::Message &msg, float x, float y);
 	float drawForwardHeader(const Discord::Message &msg, float x, float y);
-	float drawAuthorHeader(const Discord::Message &msg, float x, float y, bool showHeader);
+	float drawAuthorHeader(const Discord::Message &msg, float x, float y, bool showHeader,
+	                       const MessageRenderCache *renderCache = nullptr);
 	float drawMessageContent(const Discord::Message &msg, float x, float y, const MessageRenderCache *renderCache = nullptr);
 	float drawAttachments(const Discord::Message &msg, float x, float y, float maxWidth);
 	float drawStickers(const Discord::Message &msg, float x, float y, float maxWidth);
 	float drawReactions(const Discord::Message &msg, float x, float y, bool isSelected);
-	float drawPoll(const Discord::Message &msg, float x, float y, float maxWidth, bool isSelected);
+	float drawPoll(const Discord::Message &msg, float x, float y, float maxWidth, bool isSelected,
+	               const MessageRenderCache *renderCache = nullptr);
 	float calculatePollHeight(const Discord::Poll &poll, float maxWidth);
 	void submitPollVote(int answerIndex);
 	float calculateMessageHeight(const Discord::Message &msg, bool showHeader);

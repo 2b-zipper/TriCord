@@ -51,7 +51,7 @@ struct CacheKey {
 };
 
 struct CacheEntry {
-	Layout layout;
+	LayoutRef layout;
 	std::list<CacheKey>::iterator lruIt;
 };
 
@@ -298,8 +298,8 @@ void drawPiece(const Piece &p, float x, float y, float z, u32 color, BlockType t
 
 } // namespace
 
-Layout get(const std::string &content, float maxWidth, float scale, float ratio, uint16_t allowed,
-           bool allowBlocks) {
+LayoutRef get(const std::string &content, float maxWidth, float scale, float ratio, uint16_t allowed,
+              bool allowBlocks) {
 	std::lock_guard<std::recursive_mutex> lock(cacheMutex);
 	size_t hash = std::hash<std::string>{}(content);
 	CacheKey k = {hash, maxWidth, scale, ratio, allowed, allowBlocks};
@@ -311,15 +311,15 @@ Layout get(const std::string &content, float maxWidth, float scale, float ratio,
 		return it->second.layout;
 	}
 
-	Layout l = buildLayout(content, maxWidth, scale, ratio, allowed, allowBlocks);
+	LayoutRef l = std::make_shared<const Layout>(buildLayout(content, maxWidth, scale, ratio, allowed, allowBlocks));
 	if (cache.size() >= MAX_CACHE_ENTRIES) {
 		cache.erase(lru.back());
 		lru.pop_back();
 	}
 	lru.push_front(k);
 	CacheEntry entry = {l, lru.begin()};
-	auto res = cache.insert({k, entry});
-	return res.first->second.layout;
+	cache.insert({k, entry});
+	return l;
 }
 
 float heightOf(const Layout &layout, size_t maxLines) {
@@ -332,6 +332,9 @@ float heightOf(const Layout &layout, size_t maxLines) {
 }
 
 void draw(const Layout &layout, float x, float y, float z, u32 color, size_t maxLines, bool revealSpoilers, bool isEmbed) {
+	constexpr float SCREEN_HEIGHT = 240.0f;
+	constexpr float CULL_MARGIN = 32.0f;
+
 	float cursorY = y;
 	size_t drawn = 0;
 
@@ -340,6 +343,15 @@ void draw(const Layout &layout, float x, float y, float z, u32 color, size_t max
 			break;
 		}
 		drawn++;
+
+		if (cursorY > SCREEN_HEIGHT + CULL_MARGIN) {
+			break;
+		}
+		if (cursorY + line.height < -CULL_MARGIN) {
+			cursorY += line.height;
+			continue;
+		}
+
 		float lineX = x + line.indent;
 
 		if (line.type == BlockType::QUOTE) {

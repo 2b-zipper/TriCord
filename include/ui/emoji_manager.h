@@ -1,7 +1,10 @@
 #ifndef EMOJI_MANAGER_H
 #define EMOJI_MANAGER_H
 
+#include "utils/image_utils.h"
+#include "utils/worker_thread.h"
 #include <citro2d.h>
+#include <condition_variable>
 #include <deque>
 #include <shared_mutex>
 #include <string>
@@ -51,7 +54,15 @@ class EmojiManager {
 	EmojiManager() = default;
 	~EmojiManager();
 
+	struct PendingEmoji {
+		std::string hex;
+		Utils::Image::TiledData tiled;
+	};
+
 	void loadEmojiData();
+	void loaderWorker();
+	void ensureLoaderLocked();
+	void freePendingLocked();
 
 	std::unordered_map<std::string, EmojiInfo> emojiCache;
 	std::unordered_map<std::string, EmojiInfo> twemojiCache;
@@ -67,7 +78,18 @@ class EmojiManager {
 	std::shared_mutex cacheMutex;
 	uint32_t frameCounter = 0;
 
+	// Uploaded in update(): off-thread C3D_TexInit races the image cache for linear memory.
+	std::deque<PendingEmoji> pendingEmoji;
+
+	Utils::WorkerThread loaderThread;
+	std::condition_variable_any loaderCv;
+	std::condition_variable_any pendingCv;
+	bool loaderStarted = false;
+	bool stopLoader = false;
+
 	static const size_t MAX_TWEMOJI_CACHE = 250;
+	static const size_t MAX_PENDING_EMOJI = 4;
+	static const size_t MAX_UPLOADS_PER_FRAME = 4;
 };
 
 } // namespace UI

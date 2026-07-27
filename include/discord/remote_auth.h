@@ -5,7 +5,7 @@
 #include <3ds.h>
 #include <functional>
 #include <string>
-#include <thread>
+#include "utils/worker_thread.h"
 
 namespace Discord {
 
@@ -69,7 +69,7 @@ class RemoteAuth {
 	std::function<void(const RemoteAuthUser &)> onUserScanned;
 	std::function<void(const std::string &)> onTokenReceived;
 
-	std::thread workerThread;
+	Utils::WorkerThread workerThread;
 	void handleMessage(std::string &message);
 	void sendHeartbeat();
 	void setState(RemoteAuthState newState, const std::string &info = "");

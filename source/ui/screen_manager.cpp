@@ -131,6 +131,9 @@ static C2D_Font glyphFallbackFont(uint32_t cp) {
 
 static bool needsFontFallback(const std::string &text) {
 	size_t cursor = 0;
+	while (cursor < text.length() && static_cast<unsigned char>(text[cursor]) < 0x80) {
+		cursor++;
+	}
 	while (cursor < text.length()) {
 		if (glyphFallbackFont(Utils::Utf8::decodeNext(text, cursor))) {
 			return true;
@@ -372,6 +375,16 @@ void ScreenManager::update() {
 
 	bool shouldBlockScreen = !hamburgerMenu.isClosed() || callWasVisible || incomingCall.isVisible();
 
+	if (debugOverlayEnabled && (kHeld & KEY_L)) {
+		if (kHeld & (KEY_UP | KEY_CPAD_UP)) {
+			debugScrollOffset += 8.0f;
+		}
+		if (kHeld & (KEY_DOWN | KEY_CPAD_DOWN)) {
+			debugScrollOffset -= 8.0f;
+		}
+		shouldBlockScreen = true;
+	}
+
 	if (!isMenuHidden() && !callWasVisible) {
 		touchPosition touch;
 		hidTouchRead(&touch);
@@ -452,24 +465,36 @@ void ScreenManager::render() {
 	C3D_FrameEnd(0);
 }
 
-void ScreenManager::toggleDebugOverlay() { debugOverlayEnabled = !debugOverlayEnabled; }
+void ScreenManager::toggleDebugOverlay() {
+	debugOverlayEnabled = !debugOverlayEnabled;
+	debugScrollOffset = 0.0f;
+}
 
 void ScreenManager::renderDebugOverlay() {
 	std::vector<std::string> logs = Logger::getRecentLogs();
-	float y = 5.0f;
+	float topMargin = 5.0f;
 	float lineHeight = 10.0f;
+	float viewHeight = 240.0f - topMargin;
+	float maxScroll = std::max(0.0f, logs.size() * lineHeight - viewHeight);
+	debugScrollOffset = std::clamp(debugScrollOffset, 0.0f, maxScroll);
 
-	for (const auto &line : logs) {
-		if (y + lineHeight > 240) {
+	float yStart = topMargin - (maxScroll - debugScrollOffset);
+
+	for (size_t i = 0; i < logs.size(); i++) {
+		float y = yStart + i * lineHeight;
+		if (y + lineHeight <= 0.0f) {
+			continue;
+		}
+		if (y > 240.0f) {
 			break;
 		}
 
 		C2D_Text text;
-		C2D_TextParse(&text, debugTextBuf, line.c_str());
+		if (!C2D_TextParse(&text, debugTextBuf, logs[i].c_str())) {
+			break;
+		}
 		C2D_TextOptimize(&text);
 		C2D_DrawText(&text, C2D_WithColor, 5.0f, y, 1.0f, 0.4f, 0.4f, C2D_Color32(0, 255, 0, 255));
-
-		y += lineHeight;
 	}
 }
 
@@ -559,7 +584,9 @@ void drawText(float x, float y, float z, float scaleX, float scaleY, u32 color, 
 
 	if (!needsFontFallback(text)) {
 		C2D_Text c2dText;
-		C2D_TextParse(&c2dText, textBuf, text.c_str());
+		if (!C2D_TextParse(&c2dText, textBuf, text.c_str())) {
+			return;
+		}
 		C2D_TextOptimize(&c2dText);
 		C2D_DrawText(&c2dText, C2D_WithColor, x, y, z, scaleX, scaleY, color);
 		return;
@@ -573,7 +600,9 @@ void drawText(float x, float y, float z, float scaleX, float scaleY, u32 color, 
 	    text,
 	    [&](const std::string &run, C2D_Font font) {
 		    C2D_Text c2dText;
-		    C2D_TextFontParse(&c2dText, font, textBuf, run.c_str());
+		    if (!C2D_TextFontParse(&c2dText, font, textBuf, run.c_str())) {
+			    return;
+		    }
 		    C2D_TextOptimize(&c2dText);
 		    float scaleAdj = fallbackFontScale(font);
 		    float yOff = fallbackBaselineOffset(font, scaleY, scaleAdj);
@@ -608,7 +637,10 @@ float measureTextDirect(const std::string &rawText, float scaleX, float scaleY) 
 
 	if (!needsFontFallback(text)) {
 		C2D_Text c2dText;
-		C2D_TextParse(&c2dText, layoutTextBuf, text.c_str());
+		if (!C2D_TextParse(&c2dText, layoutTextBuf, text.c_str())) {
+			C2D_TextBufClear(layoutTextBuf);
+			return 0.0f;
+		}
 
 		float width, height;
 		C2D_TextGetDimensions(&c2dText, scaleX, scaleY, &width, &height);
@@ -624,7 +656,9 @@ float measureTextDirect(const std::string &rawText, float scaleX, float scaleY) 
 	    text,
 	    [&](const std::string &run, C2D_Font font) {
 		    C2D_Text c2dText;
-		    C2D_TextFontParse(&c2dText, font, layoutTextBuf, run.c_str());
+		    if (!C2D_TextFontParse(&c2dText, font, layoutTextBuf, run.c_str())) {
+			    return;
+		    }
 		    float scaleAdj = fallbackFontScale(font);
 		    float width, height;
 		    C2D_TextGetDimensions(&c2dText, scaleX * scaleAdj, scaleY * scaleAdj, &width, &height);
@@ -660,21 +694,29 @@ void drawRoundedRect(float x, float y, float z, float w, float h, float radius, 
 	C2D_DrawRectSolid(x, y + radius, z, radius, h - 2 * radius, color);
 	C2D_DrawRectSolid(x + w - radius, y + radius, z, radius, h - 2 * radius, color);
 
-	auto drawCorner = [&](float cx, float cy, float startAngle) {
-		const int segments = 8;
-		const float step = (M_PI / 2.0f) / segments;
-		for (int i = 0; i < segments; i++) {
-			float a1 = startAngle + i * step;
-			float a2 = startAngle + (i + 1) * step;
-			C2D_DrawTriangle(cx, cy, color, cx + radius * cos(a1), cy + radius * sin(a1), color, cx + radius * cos(a2),
-			                 cy + radius * sin(a2), color, z);
+	static float arcCos[33];
+	static float arcSin[33];
+	static bool arcInit = false;
+	if (!arcInit) {
+		for (int i = 0; i <= 32; i++) {
+			float a = (float)i * ((float)M_PI / 16.0f);
+			arcCos[i] = cosf(a);
+			arcSin[i] = sinf(a);
+		}
+		arcInit = true;
+	}
+
+	auto drawCorner = [&](float cx, float cy, int base) {
+		for (int i = 0; i < 8; i++) {
+			C2D_DrawTriangle(cx, cy, color, cx + radius * arcCos[base + i], cy + radius * arcSin[base + i], color,
+			                 cx + radius * arcCos[base + i + 1], cy + radius * arcSin[base + i + 1], color, z);
 		}
 	};
 
-	drawCorner(x + radius, y + radius, M_PI);
-	drawCorner(x + w - radius, y + radius, 3 * M_PI / 2);
+	drawCorner(x + radius, y + radius, 16);
+	drawCorner(x + w - radius, y + radius, 24);
 	drawCorner(x + w - radius, y + h - radius, 0);
-	drawCorner(x + radius, y + h - radius, M_PI / 2);
+	drawCorner(x + radius, y + h - radius, 8);
 }
 
 void drawCircle(float x, float y, float z, float radius, u32 color) { C2D_DrawCircleSolid(x, y, z, radius, color); }

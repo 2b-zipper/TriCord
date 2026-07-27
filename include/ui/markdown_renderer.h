@@ -2,6 +2,7 @@
 
 #include "utils/markdown.h"
 #include <citro2d.h>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -41,9 +42,10 @@ struct Layout {
 
 constexpr uint16_t EMBED_STYLES = 0xFFFF;
 
-// Cached; returns by value for thread-safe access across rendering and background worker threads.
-Layout get(const std::string &content, float maxWidth, float baseScale, float lineHeightRatio = 30.0f,
-           uint16_t allowedStyles = 0xFFFF, bool allowBlocks = true);
+using LayoutRef = std::shared_ptr<const Layout>;
+
+LayoutRef get(const std::string &content, float maxWidth, float baseScale, float lineHeightRatio = 30.0f,
+              uint16_t allowedStyles = 0xFFFF, bool allowBlocks = true);
 void draw(const Layout &layout, float x, float y, float z, u32 color, size_t maxLines = (size_t)-1,
           bool revealSpoilers = false, bool isEmbed = false);
 float heightOf(const Layout &layout, size_t maxLines);

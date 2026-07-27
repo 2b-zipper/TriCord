@@ -90,7 +90,7 @@ DiscordClient::DiscordClient()
     : state(ConnectionState::DISCONNECTED), heartbeatInterval(0), lastHeartbeat(0), waitingForHeartbeatAck(false),
       hasReceivedHello(false), sessionId(""), lastSequence(0), isConnecting(false), stopWorker(false) {
 
-	workerThread = std::thread(&DiscordClient::workerLoop, this);
+	workerThread.start([this] { workerLoop(); }, 1);
 }
 
 DiscordClient::~DiscordClient() { shutdown(); }
@@ -135,7 +135,7 @@ bool DiscordClient::connect(const std::string &token) {
 		sendQueue.clear();
 	}
 
-	networkThread = std::thread(&DiscordClient::runNetworkThread, this, token);
+	networkThread.start([this, token] { runNetworkThread(token); }, 1);
 	return true;
 }
 

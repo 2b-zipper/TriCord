@@ -51,13 +51,15 @@ void NetworkManager::init(int interactiveCount, int backgroundCount) {
 	stop = false;
 
 	for (int i = 0; i < interactiveCount; ++i) {
-		interactiveWorkers.emplace_back(&NetworkManager::workerThread, this, RequestPriority::INTERACTIVE);
+		interactiveWorkers.emplace_back();
+		interactiveWorkers.back().start([this] { workerThread(RequestPriority::INTERACTIVE); }, 2);
 	}
 
-	realtimeWorker = std::thread(&NetworkManager::workerThread, this, RequestPriority::REALTIME);
+	realtimeWorker.start([this] { workerThread(RequestPriority::REALTIME); }, 1);
 
 	for (int i = 0; i < backgroundCount; ++i) {
-		backgroundWorkers.emplace_back(&NetworkManager::workerThread, this, RequestPriority::BACKGROUND);
+		backgroundWorkers.emplace_back();
+		backgroundWorkers.back().start([this] { workerThread(RequestPriority::BACKGROUND); }, 3);
 	}
 
 	Logger::log("NetworkManager initialized: 1 Realtime, %d Interactive, %d Background threads", interactiveCount,
@@ -74,12 +76,12 @@ void NetworkManager::shutdown() {
 	if (realtimeWorker.joinable()) {
 		realtimeWorker.join();
 	}
-	for (std::thread &worker : interactiveWorkers) {
+	for (Utils::WorkerThread &worker : interactiveWorkers) {
 		if (worker.joinable()) {
 			worker.join();
 		}
 	}
-	for (std::thread &worker : backgroundWorkers) {
+	for (Utils::WorkerThread &worker : backgroundWorkers) {
 		if (worker.joinable()) {
 			worker.join();
 		}

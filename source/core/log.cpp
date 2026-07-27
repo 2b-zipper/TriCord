@@ -13,7 +13,7 @@
 static const char *LOG_DIR = "sdmc:/3ds/TriCord";
 static const char *LOG_FILE = "sdmc:/3ds/TriCord/tricord.log";
 static std::deque<std::string> logBuffer;
-static const size_t MAX_LOG_LINES = 22;
+static const size_t MAX_LOG_LINES = 200;
 static std::mutex logMutex;
 static bool fileLoggingEnabled = false;
 

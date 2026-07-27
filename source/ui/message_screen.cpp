@@ -137,11 +137,18 @@ void MessageScreen::onEnter() {
 
 	if (channel.type == 1 && !channel.recipients.empty()) {
 		const auto &r = channel.recipients[0];
+		dmRecipientId = r.id;
+		dmRecipientAvatar = r.avatar;
+		dmRecipientDiscriminator = r.discriminator;
 		Discord::AvatarCache::getInstance().prefetchAvatar(r.id, r.avatar, r.discriminator);
 		client.fetchUserProfile(r.id);
 	} else if (channel.type == 3 && !channel.icon.empty()) {
+		groupIconHash = channel.icon;
 		Discord::AvatarCache::getInstance().prefetchChannelIcon(channel.id, channel.icon);
 	}
+	canSendCached = client.canSendMessage(channelId);
+	canSendRecheck = 0;
+	cachedHintsKey = -1;
 
 	client.setMessageCallback([this](const Discord::Message &msg) { onMessageCreate(msg); });
 	client.setMessageUpdateCallback([this](const Discord::Message &msg) { onMessageUpdate(msg); });
@@ -344,6 +351,11 @@ void MessageScreen::update() {
 	uint32_t currentGen = ImageManager::getInstance().getGeneration();
 	if (currentGen != lastImageGeneration) {
 		lastImageGeneration = currentGen;
+		rebuildLayoutCache();
+	}
+
+	int64_t today = (MessageUtils::getUtcNow() + (time_t)MessageUtils::get3DSLocalTimeOffset()) / 86400;
+	if (cacheDayStamp >= 0 && today != cacheDayStamp) {
 		rebuildLayoutCache();
 	}
 
@@ -820,10 +832,10 @@ float MessageScreen::calculateMessageHeight(const Discord::Message &msg, bool sh
 				float lineHeight = (emojiCount <= 3) ? 34.0f : 26.0f;
 				totalH += lineHeight;
 			} else {
-				const auto &layout = UI::MarkdownRenderer::get(content, 350.0f, 0.4f);
-				totalH += layout.height;
+				auto layout = UI::MarkdownRenderer::get(content, 350.0f, 0.4f);
+				totalH += layout->height;
 
-				if (!msg.edited_timestamp.empty() && !editedFitsOnLastLine(layout, 350.0f)) {
+				if (!msg.edited_timestamp.empty() && !editedFitsOnLastLine(*layout, 350.0f)) {
 					totalH += 12.0f;
 				}
 			}
@@ -1240,7 +1252,8 @@ u32 MessageScreen::authorNameColor(const Discord::Message &msg) {
 	return C2D_Color32((roleColor >> 16) & 0xFF, (roleColor >> 8) & 0xFF, roleColor & 0xFF, 255);
 }
 
-float MessageScreen::drawAuthorHeader(const Discord::Message &msg, float x, float y, bool showHeader) {
+float MessageScreen::drawAuthorHeader(const Discord::Message &msg, float x, float y, bool showHeader,
+                                      const MessageRenderCache *renderCache) {
 	if (!showHeader) {
 		return y;
 	}
@@ -1276,7 +1289,7 @@ float MessageScreen::drawAuthorHeader(const Discord::Message &msg, float x, floa
 	drawRichText(x, y - 2.0f, 0.5f, 0.45f, 0.45f, nameColor, displayName);
 	float nameWidth = UI::measureRichText(displayName, 0.45f, 0.45f);
 	float timeX = x + nameWidth + 8.0f;
-	std::string time = MessageUtils::formatTimestamp(msg.timestamp);
+	std::string time = renderCache ? renderCache->headerTimestamp : MessageUtils::formatTimestamp(msg.timestamp);
 
 	drawText(timeX, y, 0.5f, 0.35f, 0.35f, ScreenManager::colorTextMuted(), time);
 	return y + 14.0f;
@@ -1305,7 +1318,10 @@ float MessageScreen::drawMessageContent(const Discord::Message &msg, float x, fl
 		drawRichText(x, newY, 0.5f, jumboScale, jumboScale, ScreenManager::colorText(), content);
 		newY += lineHeight;
 	} else if (!content.empty()) {
-		const auto &layout = renderCache ? renderCache->contentLayout : UI::MarkdownRenderer::get(content, 350.0f, 0.4f);
+		UI::MarkdownRenderer::LayoutRef layoutRef = (renderCache && renderCache->contentLayout)
+		                                                ? renderCache->contentLayout
+		                                                : UI::MarkdownRenderer::get(content, 350.0f, 0.4f);
+		const auto &layout = *layoutRef;
 		bool reveal = revealedSpoilers.count(msg.id) > 0;
 		UI::MarkdownRenderer::draw(layout, x, newY, 0.5f, ScreenManager::colorText(), (size_t)-1, reveal);
 		newY += layout.height;
@@ -1542,9 +1558,11 @@ float MessageScreen::calculatePollHeight(const Discord::Poll &poll, float maxWid
 	return h;
 }
 
-float MessageScreen::drawPoll(const Discord::Message &msg, float x, float y, float maxWidth, bool isSelected) {
+float MessageScreen::drawPoll(const Discord::Message &msg, float x, float y, float maxWidth, bool isSelected,
+                              const MessageRenderCache *renderCache) {
 	const Discord::Poll &poll = msg.poll;
-	float height = calculatePollHeight(poll, maxWidth);
+	bool cached = renderCache && renderCache->pollHeight > 0.0f;
+	float height = cached ? renderCache->pollHeight : calculatePollHeight(poll, maxWidth);
 	float innerWidth = maxWidth - POLL_PAD * 2.0f;
 
 	u32 cardColor = isSelected ? ScreenManager::colorBackgroundDark() : ScreenManager::colorBackgroundLight();
@@ -1553,7 +1571,12 @@ float MessageScreen::drawPoll(const Discord::Message &msg, float x, float y, flo
 	drawRoundedRect(x, y, 0.44f, maxWidth, height, 6.0f, cardColor);
 
 	float textY = y + POLL_PAD;
-	for (const auto &line : UI::MessageUtils::wrapText(poll.question, innerWidth, 0.45f)) {
+	std::vector<std::string> wrappedFallback;
+	if (!cached) {
+		wrappedFallback = UI::MessageUtils::wrapText(poll.question, innerWidth, 0.45f);
+	}
+	const std::vector<std::string> &questionLines = cached ? renderCache->pollQuestionLines : wrappedFallback;
+	for (const auto &line : questionLines) {
 		drawText(x + POLL_PAD, textY, 0.45f, 0.45f, 0.45f, ScreenManager::colorText(), line);
 		textY += POLL_LINE_H;
 	}
@@ -1726,7 +1749,7 @@ float MessageScreen::drawReactions(const Discord::Message &msg, float x, float y
 
 float MessageScreen::drawMessage(const Discord::Message &msg, float y, float maxWidth, bool isSelected,
                                  bool showHeader, bool prevGroupedMention, bool nextGroupedMention, const MessageRenderCache *renderCache) {
-	float height = calculateMessageHeight(msg, showHeader);
+	float height = renderCache ? renderCache->height : calculateMessageHeight(msg, showHeader);
 	float topMargin = showHeader ? 4.0f : 0.0f;
 	const float textOffsetX = 42.0f;
 
@@ -1734,7 +1757,9 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y, float max
 		return drawForumMessage(msg, y, isSelected);
 	}
 
-	bool isMentioned = Discord::DiscordClient::getInstance().isUserMentioned(msg);
+	bool isMentioned = (renderCache && renderCache->mentionState >= 0)
+	                       ? renderCache->mentionState == 1
+	                       : Discord::DiscordClient::getInstance().isUserMentioned(msg);
 
 	if (isMentioned) {
 		float highlightY = y + topMargin;
@@ -1774,7 +1799,7 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y, float max
 	contentY = drawReplyPreview(msg, textOffsetX, contentY);
 
 	float avatarTopY = contentY;
-	contentY = drawAuthorHeader(msg, textOffsetX, contentY, showHeader);
+	contentY = drawAuthorHeader(msg, textOffsetX, contentY, showHeader, renderCache);
 
 	float forwardedBarStartY = contentY;
 	contentY = drawForwardHeader(msg, textOffsetX, contentY);
@@ -1787,7 +1812,7 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y, float max
 	contentY = drawMessageContent(msg, textOffsetX, contentY, renderCache);
 
 	if (msg.hasPoll) {
-		contentY = drawPoll(msg, textOffsetX, contentY, 400.0f - textOffsetX - 10.0f, isSelected);
+		contentY = drawPoll(msg, textOffsetX, contentY, 400.0f - textOffsetX - 10.0f, isSelected, renderCache);
 		contentY += 6.0f;
 	}
 
@@ -1859,6 +1884,14 @@ void MessageScreen::renderTop(C3D_RenderTarget *target) {
 	const float MARGIN = 10.0f;
 	const float TOP_MARGIN = 30.0f;
 
+	auto mentionedAt = [&](size_t idx) {
+		MessageRenderCache &rc = renderCaches[idx];
+		if (rc.mentionState < 0) {
+			rc.mentionState = Discord::DiscordClient::getInstance().isUserMentioned(messages[idx]) ? 1 : 0;
+		}
+		return rc.mentionState == 1;
+	};
+
 	for (size_t i = 0; i < messages.size(); i++) {
 		if (i >= messagePositions.size() || i >= messageHeights.size()) {
 			break;
@@ -1873,7 +1906,7 @@ void MessageScreen::renderTop(C3D_RenderTarget *target) {
 
 		bool showDateSeparator = false;
 		std::string currDate = "";
-		bool showHeader = (i == 0) || !MessageUtils::canGroupWithPrevious(messages[i], messages[i - 1]);
+		bool showHeader = true;
 		const MessageRenderCache *renderCache = (i < renderCaches.size()) ? &renderCaches[i] : nullptr;
 
 		if (renderCache) {
@@ -1881,6 +1914,7 @@ void MessageScreen::renderTop(C3D_RenderTarget *target) {
 			currDate = renderCache->dateString;
 			showHeader = renderCache->showHeader;
 		} else {
+			showHeader = (i == 0) || !MessageUtils::canGroupWithPrevious(messages[i], messages[i - 1]);
 			if (i == 0) {
 				showDateSeparator = true;
 				currDate = MessageUtils::getLocalDateString(this->messages[i].timestamp);
@@ -1925,20 +1959,38 @@ void MessageScreen::renderTop(C3D_RenderTarget *target) {
 		bool isSelected = (i == (size_t)selectedIndex);
 
 		bool prevGroupedMention = false;
-		if (!showHeader && i > 0) {
-			prevGroupedMention = Discord::DiscordClient::getInstance().isUserMentioned(messages[i - 1]);
-		}
-
 		bool nextGroupedMention = false;
-		if (i + 1 < messages.size()) {
-			bool nextShowHeader = !MessageUtils::canGroupWithPrevious(messages[i + 1], messages[i]);
-			if (!nextShowHeader && messages[i + 1].timestamp != TR("message.status.sending")) {
-				if (currDate != MessageUtils::getLocalDateString(messages[i + 1].timestamp)) {
+		if (renderCache) {
+			mentionedAt(i);
+			if (!showHeader && i > 0) {
+				prevGroupedMention = mentionedAt(i - 1);
+			}
+
+			if (i + 1 < renderCaches.size()) {
+				bool nextShowHeader = !renderCaches[i + 1].canGroupWithPrev;
+				if (!nextShowHeader && !renderCaches[i + 1].dateString.empty() &&
+				    currDate != renderCaches[i + 1].dateString) {
 					nextShowHeader = true;
 				}
+				if (!nextShowHeader) {
+					nextGroupedMention = mentionedAt(i + 1);
+				}
 			}
-			if (!nextShowHeader) {
-				nextGroupedMention = Discord::DiscordClient::getInstance().isUserMentioned(messages[i + 1]);
+		} else {
+			if (!showHeader && i > 0) {
+				prevGroupedMention = Discord::DiscordClient::getInstance().isUserMentioned(messages[i - 1]);
+			}
+
+			if (i + 1 < messages.size()) {
+				bool nextShowHeader = !MessageUtils::canGroupWithPrevious(messages[i + 1], messages[i]);
+				if (!nextShowHeader && messages[i + 1].timestamp != TR("message.status.sending")) {
+					if (currDate != MessageUtils::getLocalDateString(messages[i + 1].timestamp)) {
+						nextShowHeader = true;
+					}
+				}
+				if (!nextShowHeader) {
+					nextGroupedMention = Discord::DiscordClient::getInstance().isUserMentioned(messages[i + 1]);
+				}
 			}
 		}
 
@@ -1995,12 +2047,11 @@ void MessageScreen::renderBottom(C3D_RenderTarget *target) {
 	bool isAvatar = false;
 
 	if (channelType == 1 || channelType == 3) {
-		Discord::Channel ch = Discord::DiscordClient::getInstance().getChannel(channelId);
-		if (channelType == 3 && !ch.icon.empty()) {
-			icon = Discord::AvatarCache::getInstance().getChannelIcon(ch.id, ch.icon);
-		} else if (channelType == 1 && !ch.recipients.empty()) {
-			const auto &r = ch.recipients[0];
-			icon = Discord::AvatarCache::getInstance().getAvatar(r.id, r.avatar, r.discriminator);
+		if (channelType == 3 && !groupIconHash.empty()) {
+			icon = Discord::AvatarCache::getInstance().getChannelIcon(channelId, groupIconHash);
+		} else if (channelType == 1 && !dmRecipientId.empty()) {
+			icon = Discord::AvatarCache::getInstance().getAvatar(dmRecipientId, dmRecipientAvatar,
+			                                                     dmRecipientDiscriminator);
 		}
 		if (icon) {
 			isAvatar = true;
@@ -2045,8 +2096,8 @@ void MessageScreen::renderBottom(C3D_RenderTarget *target) {
 
 		float topicY = 40.0f;
 
-		const auto &topicLayout = UI::MarkdownRenderer::get(displayTopic, 300.0f, 0.4f, 13.0f / 0.4f);
-		float contentHeight = 15.0f + UI::MarkdownRenderer::heightOf(topicLayout, -1);
+		auto topicLayout = UI::MarkdownRenderer::get(displayTopic, 300.0f, 0.4f, 13.0f / 0.4f);
+		float contentHeight = 15.0f + UI::MarkdownRenderer::heightOf(*topicLayout, -1);
 		float viewHeight = BOTTOM_SCREEN_HEIGHT - 40.0f - 43.0f;
 		float maxScroll = std::max(0.0f, contentHeight - viewHeight);
 		bottomScrollY = std::clamp(bottomScrollY, 0.0f, maxScroll);
@@ -2058,30 +2109,39 @@ void MessageScreen::renderBottom(C3D_RenderTarget *target) {
 		         Core::I18n::getInstance().get("message.topic"));
 		topicY += 15.0f;
 
-		UI::MarkdownRenderer::draw(topicLayout, 10.0f, topicY, 0.4f, ScreenManager::colorText(), -1);
-		topicY += UI::MarkdownRenderer::heightOf(topicLayout, -1);
+		UI::MarkdownRenderer::draw(*topicLayout, 10.0f, topicY, 0.4f, ScreenManager::colorText(), -1);
+		topicY += UI::MarkdownRenderer::heightOf(*topicLayout, -1);
 	}
 
 	C2D_DrawRectSolid(0, 0, 0.45f, 320, 33, ScreenManager::colorBackgroundDark());
 	C2D_DrawRectSolid(0, BOTTOM_SCREEN_HEIGHT - 43.0f, 0.45f, 320, 43.0f, ScreenManager::colorBackgroundDark());
 
-	bool canSend = Discord::DiscordClient::getInstance().canSendMessage(channelId);
+	if (--canSendRecheck <= 0) {
+		canSendCached = Discord::DiscordClient::getInstance().canSendMessage(channelId);
+		canSendRecheck = 60;
+	}
+	bool canSend = canSendCached;
 
-	std::string hints = "\uE079\uE07A: " + TR("common.navigate") + "  ";
-	if (isMenuOpen) {
-		hints += "\uE000: " + TR("common.select") + "  \uE001: " + TR("common.close");
-	} else if (pollMode) {
-		hints += "\uE000: " + TR("poll.vote") + "  \uE001: " + TR("common.close");
-	} else if (isForumView) {
-		hints += "\uE000: " + TR("common.open") + "  \uE001: " + TR("common.back");
-	} else {
-		if (canSend) {
-			hints += "\uE003: " + TR("common.type") + "  ";
+	int hintsKey = (isMenuOpen ? 1 : 0) | (pollMode ? 2 : 0) | (isForumView ? 4 : 0) | (canSend ? 8 : 0);
+	if (hintsKey != cachedHintsKey) {
+		cachedHintsKey = hintsKey;
+		std::string hints = "\uE079\uE07A: " + TR("common.navigate") + "  ";
+		if (isMenuOpen) {
+			hints += "\uE000: " + TR("common.select") + "  \uE001: " + TR("common.close");
+		} else if (pollMode) {
+			hints += "\uE000: " + TR("poll.vote") + "  \uE001: " + TR("common.close");
+		} else if (isForumView) {
+			hints += "\uE000: " + TR("common.open") + "  \uE001: " + TR("common.back");
+		} else {
+			if (canSend) {
+				hints += "\uE003: " + TR("common.type") + "  ";
+			}
+			hints += "\uE002: " + TR("common.menu") + "  \uE001: " + TR("common.back");
 		}
-		hints += "\uE002: " + TR("common.menu") + "  \uE001: " + TR("common.back");
+		cachedHints = hints;
 	}
 
-	drawText(10.0f, BOTTOM_SCREEN_HEIGHT - 25.0f, 0.5f, 0.4f, 0.4f, ScreenManager::colorTextMuted(), hints);
+	drawText(10.0f, BOTTOM_SCREEN_HEIGHT - 25.0f, 0.5f, 0.4f, 0.4f, ScreenManager::colorTextMuted(), cachedHints);
 
 	auto typingUsers = Discord::DiscordClient::getInstance().getTypingUsers(channelId);
 	if (!typingUsers.empty()) {
@@ -2267,7 +2327,7 @@ void MessageScreen::showMessageOptions() {
 	bool canSend = client.canSendMessage(channelId);
 
 	std::string formattedContent = msg.displayContent;
-	if (!formattedContent.empty() && UI::MarkdownRenderer::get(formattedContent, 350.0f, 0.4f).hasSpoiler) {
+	if (!formattedContent.empty() && UI::MarkdownRenderer::get(formattedContent, 350.0f, 0.4f)->hasSpoiler) {
 		addOption("ToggleSpoiler",
 		          revealedSpoilers.count(msg.id) ? "message.menu.hide_spoiler" : "message.menu.reveal_spoiler");
 	}
@@ -2494,7 +2554,8 @@ void MessageScreen::rebuildLayoutCache() {
 	std::string lastDate = "";
 
 	for (size_t i = 0; i < this->messages.size(); i++) {
-		bool showHeader = (i == 0) || !MessageUtils::canGroupWithPrevious(this->messages[i], this->messages[i - 1]);
+		bool canGroupWithPrev = (i > 0) && MessageUtils::canGroupWithPrevious(this->messages[i], this->messages[i - 1]);
+		bool showHeader = !canGroupWithPrev;
 
 		if (this->messages[i].id.substr(0, 8) != "pending_") {
 			std::string currDate = MessageUtils::getLocalDateString(this->messages[i].timestamp);
@@ -2516,6 +2577,7 @@ void MessageScreen::rebuildLayoutCache() {
 		EmojiManager::getInstance().prefetchEmojisFromText(this->messages[i].content);
 
 		MessageRenderCache cache;
+		cache.canGroupWithPrev = canGroupWithPrev;
 		cache.showHeader = showHeader;
 		cache.showDateSeparator = false;
 		if (i == 0) {
@@ -2527,6 +2589,13 @@ void MessageScreen::rebuildLayoutCache() {
 			if (cache.dateString != prevDate) {
 				cache.showDateSeparator = true;
 			}
+		}
+		cache.headerTimestamp = MessageUtils::formatTimestamp(this->messages[i].timestamp);
+		if (this->messages[i].hasPoll) {
+			float pollMaxWidth = 400.0f - 42.0f - 10.0f;
+			cache.pollHeight = calculatePollHeight(this->messages[i].poll, pollMaxWidth);
+			cache.pollQuestionLines =
+			    MessageUtils::wrapText(this->messages[i].poll.question, pollMaxWidth - POLL_PAD * 2.0f, 0.45f);
 		}
 
 		cache.isEmojiOnly = MessageUtils::isEmojiOnly(this->messages[i].displayContent, cache.emojiCount);
@@ -2573,6 +2642,8 @@ void MessageScreen::rebuildLayoutCache() {
 
 		y += h;
 	}
+
+	cacheDayStamp = (MessageUtils::getUtcNow() + (time_t)MessageUtils::get3DSLocalTimeOffset()) / 86400;
 
 	totalContentHeight = y + 2.0f;
 
@@ -2675,25 +2746,29 @@ float MessageScreen::calculateEmbedHeight(const Discord::Embed &embed, float max
 		h += 11.0f;
 	}
 	if (!embed.author_name.empty()) {
-		h += UI::MarkdownRenderer::get(embed.author_name, layout.pixelWidth, 0.38f, 11.0f / 0.38f, 0, false).height;
+		h += UI::MarkdownRenderer::get(embed.author_name, layout.pixelWidth, 0.38f, 11.0f / 0.38f, 0, false)->height;
 	}
 	using UI::MarkdownRenderer::EMBED_STYLES;
 	if (!embed.title.empty()) {
-		h += UI::MarkdownRenderer::get(embed.title, layout.pixelWidth, 0.42f, 14.0f / 0.42f, EMBED_STYLES, false).height;
+		h += UI::MarkdownRenderer::get(embed.title, layout.pixelWidth, 0.42f, 14.0f / 0.42f, EMBED_STYLES, false)
+		         ->height;
 	}
 	if (!embed.description.empty()) {
-		h += UI::MarkdownRenderer::get(embed.description, layout.pixelWidth, 0.36f, 11.0f / 0.36f, EMBED_STYLES, false).height;
+		h += UI::MarkdownRenderer::get(embed.description, layout.pixelWidth, 0.36f, 11.0f / 0.36f, EMBED_STYLES, false)
+		         ->height;
 	}
 	h += 4.0f;
 
 	for (const auto &field : embed.fields) {
-		h += UI::MarkdownRenderer::get(field.name, layout.pixelWidth, 0.35f, 11.0f / 0.35f, EMBED_STYLES, false).height;
-		h += UI::MarkdownRenderer::get(field.value, layout.pixelWidth, 0.34f, 11.0f / 0.34f, EMBED_STYLES, false).height;
+		h +=
+		    UI::MarkdownRenderer::get(field.name, layout.pixelWidth, 0.35f, 11.0f / 0.35f, EMBED_STYLES, false)->height;
+		h += UI::MarkdownRenderer::get(field.value, layout.pixelWidth, 0.34f, 11.0f / 0.34f, EMBED_STYLES, false)
+		         ->height;
 		h += 2.0f;
 	}
 
 	if (!embed.footer_text.empty()) {
-		h += UI::MarkdownRenderer::get(embed.footer_text, layout.pixelWidth, 0.30f, 10.0f / 0.30f, 0, false).height;
+		h += UI::MarkdownRenderer::get(embed.footer_text, layout.pixelWidth, 0.30f, 10.0f / 0.30f, 0, false)->height;
 	}
 
 	if (layout.showThumbnailOnRight) {
@@ -2755,40 +2830,52 @@ float MessageScreen::renderEmbed(const Discord::Embed &embed, float x, float y, 
 		currentY += 11.0f;
 	}
 	if (!embed.author_name.empty()) {
-		const auto &l = embedCache ? embedCache->authorLayout : UI::MarkdownRenderer::get(embed.author_name, layout.pixelWidth, 0.38f, 11.0f / 0.38f, 0, false);
-		UI::MarkdownRenderer::draw(l, textX, currentY, 0.5f, ScreenManager::colorText(), (size_t)-1, false, true);
-		currentY += l.height;
+		auto l = (embedCache && embedCache->authorLayout)
+		             ? embedCache->authorLayout
+		             : UI::MarkdownRenderer::get(embed.author_name, layout.pixelWidth, 0.38f, 11.0f / 0.38f, 0, false);
+		UI::MarkdownRenderer::draw(*l, textX, currentY, 0.5f, ScreenManager::colorText(), (size_t)-1, false, true);
+		currentY += l->height;
 	}
 	using UI::MarkdownRenderer::EMBED_STYLES;
 	if (!embed.title.empty()) {
-		const auto &l = embedCache ? embedCache->titleLayout : UI::MarkdownRenderer::get(embed.title, layout.pixelWidth, 0.42f, 14.0f / 0.42f, EMBED_STYLES, false);
-		UI::MarkdownRenderer::draw(l, textX, currentY, 0.5f, ScreenManager::colorText(), (size_t)-1, false, true);
-		currentY += l.height;
+		auto l =
+		    (embedCache && embedCache->titleLayout)
+		        ? embedCache->titleLayout
+		        : UI::MarkdownRenderer::get(embed.title, layout.pixelWidth, 0.42f, 14.0f / 0.42f, EMBED_STYLES, false);
+		UI::MarkdownRenderer::draw(*l, textX, currentY, 0.5f, ScreenManager::colorText(), (size_t)-1, false, true);
+		currentY += l->height;
 	}
 	if (!embed.description.empty()) {
-		const auto &l = embedCache ? embedCache->descriptionLayout : UI::MarkdownRenderer::get(embed.description, layout.pixelWidth, 0.36f, 11.0f / 0.36f, EMBED_STYLES, false);
-		UI::MarkdownRenderer::draw(l, textX, currentY, 0.5f, ScreenManager::colorText(), (size_t)-1, false, true);
-		currentY += l.height;
+		auto l = (embedCache && embedCache->descriptionLayout)
+		             ? embedCache->descriptionLayout
+		             : UI::MarkdownRenderer::get(embed.description, layout.pixelWidth, 0.36f, 11.0f / 0.36f,
+		                                         EMBED_STYLES, false);
+		UI::MarkdownRenderer::draw(*l, textX, currentY, 0.5f, ScreenManager::colorText(), (size_t)-1, false, true);
+		currentY += l->height;
 	}
 	for (size_t fi = 0; fi < embed.fields.size(); fi++) {
 		const auto &field = embed.fields[fi];
-		const auto &n = (embedCache && fi < embedCache->fieldLayouts.size())
-		                    ? embedCache->fieldLayouts[fi].first
-		                    : UI::MarkdownRenderer::get(field.name, layout.pixelWidth, 0.35f, 11.0f / 0.35f, EMBED_STYLES, false);
-		UI::MarkdownRenderer::draw(n, textX, currentY, 0.5f, ScreenManager::colorText(), (size_t)-1, false, true);
-		currentY += n.height;
+		auto n =
+		    (embedCache && fi < embedCache->fieldLayouts.size() && embedCache->fieldLayouts[fi].first)
+		        ? embedCache->fieldLayouts[fi].first
+		        : UI::MarkdownRenderer::get(field.name, layout.pixelWidth, 0.35f, 11.0f / 0.35f, EMBED_STYLES, false);
+		UI::MarkdownRenderer::draw(*n, textX, currentY, 0.5f, ScreenManager::colorText(), (size_t)-1, false, true);
+		currentY += n->height;
 
-		const auto &v = (embedCache && fi < embedCache->fieldLayouts.size())
-		                    ? embedCache->fieldLayouts[fi].second
-		                    : UI::MarkdownRenderer::get(field.value, layout.pixelWidth, 0.34f, 11.0f / 0.34f, EMBED_STYLES, false);
-		UI::MarkdownRenderer::draw(v, textX, currentY, 0.5f, ScreenManager::colorTextMuted(), (size_t)-1, false, true);
-		currentY += v.height;
+		auto v =
+		    (embedCache && fi < embedCache->fieldLayouts.size() && embedCache->fieldLayouts[fi].second)
+		        ? embedCache->fieldLayouts[fi].second
+		        : UI::MarkdownRenderer::get(field.value, layout.pixelWidth, 0.34f, 11.0f / 0.34f, EMBED_STYLES, false);
+		UI::MarkdownRenderer::draw(*v, textX, currentY, 0.5f, ScreenManager::colorTextMuted(), (size_t)-1, false, true);
+		currentY += v->height;
 		currentY += 2.0f;
 	}
 	if (!embed.footer_text.empty()) {
-		const auto &l = embedCache ? embedCache->footerLayout : UI::MarkdownRenderer::get(embed.footer_text, layout.pixelWidth, 0.30f, 10.0f / 0.30f, 0, false);
-		UI::MarkdownRenderer::draw(l, textX, currentY, 0.5f, ScreenManager::colorTextMuted(), (size_t)-1, false, true);
-		currentY += l.height;
+		auto l = (embedCache && embedCache->footerLayout)
+		             ? embedCache->footerLayout
+		             : UI::MarkdownRenderer::get(embed.footer_text, layout.pixelWidth, 0.30f, 10.0f / 0.30f, 0, false);
+		UI::MarkdownRenderer::draw(*l, textX, currentY, 0.5f, ScreenManager::colorTextMuted(), (size_t)-1, false, true);
+		currentY += l->height;
 	}
 
 	if (layout.showThumbnailOnRight) {
@@ -2974,8 +3061,8 @@ void MessageScreen::renderDmProfile(float y) {
 	infoY += 4.0f;
 
 	if (!profile.bio.empty()) {
-		const auto &bioLayout = UI::MarkdownRenderer::get(profile.bio, 300.0f, 0.4f, 13.0f / 0.4f);
-		float contentHeight = UI::MarkdownRenderer::heightOf(bioLayout, -1) + 8.0f;
+		auto bioLayout = UI::MarkdownRenderer::get(profile.bio, 300.0f, 0.4f, 13.0f / 0.4f);
+		float contentHeight = UI::MarkdownRenderer::heightOf(*bioLayout, -1) + 8.0f;
 
 		float bioStartY = infoY;
 		float viewHeight = BOTTOM_SCREEN_HEIGHT - bioStartY - 43.0f;
@@ -2984,8 +3071,8 @@ void MessageScreen::renderDmProfile(float y) {
 		UI::drawScrollbar(maxScroll, bottomScrollY, bioStartY, viewHeight);
 
 		infoY -= bottomScrollY;
-		UI::MarkdownRenderer::draw(bioLayout, 10.0f, infoY, 0.4f, ScreenManager::colorText(), -1);
-		infoY += UI::MarkdownRenderer::heightOf(bioLayout, -1) + 8.0f;
+		UI::MarkdownRenderer::draw(*bioLayout, 10.0f, infoY, 0.4f, ScreenManager::colorText(), -1);
+		infoY += UI::MarkdownRenderer::heightOf(*bioLayout, -1) + 8.0f;
 	}
 
 	time_t created = MessageUtils::snowflakeToTimestamp(user.id);

@@ -77,26 +77,55 @@ TiledData decodeToTiled(const unsigned char *data, size_t size, int maxWidth, in
 		memset(tiledBuf, 0, vramSize);
 	}
 
-	std::vector<int> colMap(targetW);
-	std::vector<int> rowMap(targetH);
-	for (int x = 0; x < targetW; x++) {
-		colMap[x] = (int)(((int64_t)x * w) / targetW);
-	}
-	for (int y = 0; y < targetH; y++) {
-		rowMap[y] = (int)(((int64_t)y * h) / targetH);
-	}
-
 	const u32 *src = (const u32 *)img;
 	const int tilesPerRow = p2_w >> 3;
 
-	for (int y = 0; y < targetH; y++) {
-		const u32 *srcRow = src + (size_t)rowMap[y] * w;
-		const int *morton = &mortonTable[(y & 7) << 3];
-		u32 *tileRow = tiledBuf + ((size_t)(y >> 3) * tilesPerRow << 6);
+	if (targetW == w && targetH == h) {
+		for (int y = 0; y < targetH; y++) {
+			const u32 *srcRow = src + (size_t)y * w;
+			const int *morton = &mortonTable[(y & 7) << 3];
+			u32 *tileRow = tiledBuf + ((size_t)(y >> 3) * tilesPerRow << 6);
 
-		for (int x = 0; x < targetW; x++) {
-			// stb writes R,G,B,A; the GPU wants the reverse.
-			tileRow[((x >> 3) << 6) + morton[x & 7]] = __builtin_bswap32(srcRow[colMap[x]]);
+			for (int x = 0; x < targetW; x++) {
+				// stb writes R,G,B,A; the GPU wants the reverse.
+				tileRow[((x >> 3) << 6) + morton[x & 7]] = __builtin_bswap32(srcRow[x]);
+			}
+		}
+	} else {
+		std::vector<int> colStart(targetW + 1);
+		std::vector<int> rowStart(targetH + 1);
+		for (int x = 0; x <= targetW; x++) {
+			colStart[x] = (int)(((int64_t)x * w) / targetW);
+		}
+		for (int y = 0; y <= targetH; y++) {
+			rowStart[y] = (int)(((int64_t)y * h) / targetH);
+		}
+
+		for (int y = 0; y < targetH; y++) {
+			int sy0 = rowStart[y];
+			int sy1 = rowStart[y + 1] > sy0 ? rowStart[y + 1] : sy0 + 1;
+			const int *morton = &mortonTable[(y & 7) << 3];
+			u32 *tileRow = tiledBuf + ((size_t)(y >> 3) * tilesPerRow << 6);
+
+			for (int x = 0; x < targetW; x++) {
+				int sx0 = colStart[x];
+				int sx1 = colStart[x + 1] > sx0 ? colStart[x + 1] : sx0 + 1;
+
+				u32 r = 0, g = 0, b = 0, a = 0;
+				for (int sy = sy0; sy < sy1; sy++) {
+					const unsigned char *p = img + (((size_t)sy * w) + sx0) * 4;
+					for (int sx = sx0; sx < sx1; sx++) {
+						r += p[0];
+						g += p[1];
+						b += p[2];
+						a += p[3];
+						p += 4;
+					}
+				}
+
+				u32 n = (u32)((sy1 - sy0) * (sx1 - sx0));
+				tileRow[((x >> 3) << 6) + morton[x & 7]] = ((r / n) << 24) | ((g / n) << 16) | ((b / n) << 8) | (a / n);
+			}
 		}
 	}
 

@@ -3,6 +3,7 @@
 
 #include "discord/types.h"
 #include "network/websocket_client.h"
+#include "utils/worker_thread.h"
 #include <atomic>
 #include <condition_variable>
 #include <deque>
@@ -316,8 +317,8 @@ class DiscordClient {
 	std::string readStateDirtyChannelId;
 	std::atomic<bool> guildDataDirty{false};
 	std::atomic<bool> privateChannelsDirty{false};
-	std::thread workerThread;
-	std::thread networkThread;
+	Utils::WorkerThread workerThread;
+	Utils::WorkerThread networkThread;
 
 	std::deque<std::string> messageQueue;
 	std::mutex queueMutex;

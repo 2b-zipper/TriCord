@@ -70,7 +70,7 @@ void RemoteAuth::prepare() {
 		workerThread.join();
 	}
 
-	workerThread = std::thread([this]() { runInit(); });
+	workerThread.start([this] { runInit(); }, 2);
 }
 
 void RemoteAuth::runInit() {

@@ -3,6 +3,7 @@
 
 #include "network/network_manager.h"
 #include "utils/image_utils.h"
+#include "utils/worker_thread.h"
 #include <atomic>
 #include <citro2d.h>
 #include <deque>
@@ -74,7 +75,7 @@ class ImageManager {
 	std::mutex decodeMutex;
 	std::condition_variable decodeCv;
 	std::condition_variable pendingCv;
-	std::thread decoderThread;
+	Utils::WorkerThread decoderThread;
 	std::atomic<bool> stopDecoder{false};
 
 	std::atomic<int> currentSessionId{0};

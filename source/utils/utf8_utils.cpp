@@ -174,11 +174,36 @@ std::string getFirstChar(const std::string &text) {
 	return text.substr(0, cursor);
 }
 
+static bool needsSanitizing(uint32_t cp) {
+	return (cp >= 0xFE00 && cp <= 0xFE0F) || (cp >= 0xE0100 && cp <= 0xE01EF) || cp == 0x301C || cp == '$';
+}
+
 std::string sanitizeText(const std::string &text) {
+	size_t cursor = 0;
+	bool needsWork = false;
+	while (cursor < text.length()) {
+		unsigned char c = static_cast<unsigned char>(text[cursor]);
+		if (c < 0x80) {
+			if (c == '$') {
+				needsWork = true;
+				break;
+			}
+			cursor++;
+			continue;
+		}
+		if (needsSanitizing(decodeNext(text, cursor))) {
+			needsWork = true;
+			break;
+		}
+	}
+	if (!needsWork) {
+		return text;
+	}
+
 	std::string result;
 	result.reserve(text.length());
 
-	size_t cursor = 0;
+	cursor = 0;
 	while (cursor < text.length()) {
 		size_t start = cursor;
 		uint32_t cp = decodeNext(text, cursor);
@@ -200,7 +225,7 @@ std::string sanitizeText(const std::string &text) {
 			continue;
 		}
 
-		result += text.substr(start, cursor - start);
+		result.append(text, start, cursor - start);
 	}
 
 	return result;

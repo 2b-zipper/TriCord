@@ -31,7 +31,15 @@ float TextMeasureCache::measureText(const std::string &text, float scaleX, float
 		cache[key] = width;
 
 		if (cache.size() > MAX_CACHE_SIZE) {
-			cache.clear();
+			bool drop = false;
+			for (auto it = cache.begin(); it != cache.end();) {
+				if (drop) {
+					it = cache.erase(it);
+				} else {
+					++it;
+				}
+				drop = !drop;
+			}
 			cacheHits = 0;
 			cacheMisses = 0;
 		}
