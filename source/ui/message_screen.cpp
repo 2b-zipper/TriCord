@@ -18,6 +18,7 @@
 #include <ctime>
 
 #include <mutex>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -52,6 +53,8 @@ float bottomButtonY() {
 }
 
 bool pollEnded(const Discord::Poll &poll);
+
+static std::unordered_map<std::string, std::string> channelDrafts;
 } // namespace
 
 MessageScreen::MessageScreen(const std::string &channelId, const std::string &channelName)
@@ -493,10 +496,11 @@ void MessageScreen::update() {
 					                                   : messages[selectedIndex].author.global_name;
 
 					updateLock.unlock();
-					auto res = runKeyboard(TR("common.reply_hint"));
+					auto res = runKeyboard(TR("common.reply_hint"), channelDrafts[channelId]);
 					updateLock.lock();
 
 					if (res.button == SWKBD_BUTTON_RIGHT && !res.text.empty()) {
+						channelDrafts.erase(channelId);
 						Discord::Message replyMsg = createOptimisticMessage(res.text, 19, targetAuthorName);
 						{
 							std::lock_guard<std::recursive_mutex> lock(messageMutex);
@@ -515,6 +519,10 @@ void MessageScreen::update() {
 							    this->handleMessageSendResult(replyMsgId, sentMsg, success, errorCode);
 						    },
 						    replyMsg.nonce);
+					} else if (!res.text.empty()) {
+						channelDrafts[channelId] = res.text;
+					} else {
+						channelDrafts.erase(channelId);
 					}
 				}
 			} else if (action == "Edit") {
@@ -2173,9 +2181,10 @@ void MessageScreen::openKeyboard() {
 
 	client.triggerTypingIndicator(channelId);
 
-	auto res = runKeyboard(TR("common.message_hint"));
+	auto res = runKeyboard(TR("common.message_hint"), channelDrafts[channelId]);
 
 	if (res.button == SWKBD_BUTTON_RIGHT && !res.text.empty()) {
+		channelDrafts.erase(channelId);
 		Discord::Message optimisticMsg = createOptimisticMessage(res.text);
 		{
 			std::lock_guard<std::recursive_mutex> lock(messageMutex);
@@ -2193,12 +2202,17 @@ void MessageScreen::openKeyboard() {
 			    this->handleMessageSendResult(pendingId, sentMsg, success, errorCode);
 		    },
 		    optimisticMsg.nonce);
+	} else if (!res.text.empty()) {
+		channelDrafts[channelId] = res.text;
+	} else {
+		channelDrafts.erase(channelId);
 	}
 }
 
 MessageScreen::KeyboardResult MessageScreen::runKeyboard(const std::string &hint, const std::string &initialText) {
 	SwkbdState swkbd;
 	char mybuf[2000];
+	mybuf[0] = '\0';
 	swkbdInit(&swkbd, SWKBD_TYPE_NORMAL, 2, -1);
 	swkbdSetFeatures(&swkbd, SWKBD_PREDICTIVE_INPUT | SWKBD_DARKEN_TOP_SCREEN | SWKBD_ALLOW_HOME | SWKBD_ALLOW_RESET |
 	                             SWKBD_ALLOW_POWER | SWKBD_MULTILINE);
@@ -2207,11 +2221,11 @@ MessageScreen::KeyboardResult MessageScreen::runKeyboard(const std::string &hint
 		swkbdSetInitialText(&swkbd, initialText.c_str());
 	}
 	swkbdSetHintText(&swkbd, hint.c_str());
-	swkbdSetButton(&swkbd, SWKBD_BUTTON_LEFT, TR("common.cancel").c_str(), false);
+	swkbdSetButton(&swkbd, SWKBD_BUTTON_LEFT, TR("common.cancel").c_str(), true);
 	swkbdSetButton(&swkbd, SWKBD_BUTTON_RIGHT, TR("common.send").c_str(), true);
 
 	SwkbdButton button = swkbdInputText(&swkbd, mybuf, sizeof(mybuf));
-	std::string content = (button == SWKBD_BUTTON_RIGHT) ? mybuf : "";
+	std::string content = mybuf;
 
 	if (!content.empty()) {
 		size_t first = content.find_first_not_of(" \n\r\t");
