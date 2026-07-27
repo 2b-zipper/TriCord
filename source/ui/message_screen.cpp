@@ -260,6 +260,7 @@ void MessageScreen::onEnter() {
 				Discord::Message m;
 				m.id = t.id;
 				m.content = t.name;
+				m.displayContent = t.name;
 				m.author.username = TR("message.thread");
 				m.type = t.type;
 				m.timestamp = "";
@@ -530,6 +531,7 @@ void MessageScreen::update() {
 						for (auto &msg : messages) {
 							if (msg.id == editId) {
 								msg.content = res.text;
+								msg.displayContent = UI::MessageUtils::formatMentions(res.text, msg);
 								break;
 							}
 						}
@@ -1958,12 +1960,10 @@ void MessageScreen::renderBottom(C3D_RenderTarget *target) {
 	C2D_DrawRectSolid(0, 0, 0.0f, 320, 240, ScreenManager::colorBackgroundDark());
 
 	if (bottomMode == BottomScreenMode::EMOJI_PICKER) {
+		std::lock_guard<std::recursive_mutex> lock(messageMutex);
 		const Discord::Message *activeMsg = nullptr;
-		{
-			std::lock_guard<std::recursive_mutex> lock(messageMutex);
-			if (selectedIndex >= 0 && selectedIndex < (int)messages.size()) {
-				activeMsg = &messages[selectedIndex];
-			}
+		if (selectedIndex >= 0 && selectedIndex < (int)messages.size()) {
+			activeMsg = &messages[selectedIndex];
 		}
 		emojiPicker->render(target, activeMsg);
 		return;
@@ -2147,15 +2147,13 @@ void MessageScreen::fetchOlderMessages() {
 				    this->messages.insert(this->messages.begin(), reversed.begin(), reversed.end());
 				    selectedIndex += reversed.size();
 				    addedCount = reversed.size();
+				    rebuildLayoutCache();
+
+				    float heightDiff = totalContentHeight - oldTotalHeight;
+				    currentScrollY += heightDiff;
+				    targetScrollY += heightDiff;
+				    Logger::log("Loaded %d older messages async, adjusted scroll by %.2f", addedCount, heightDiff);
 			    }
-
-			    rebuildLayoutCache();
-
-			    float heightDiff = totalContentHeight - oldTotalHeight;
-			    currentScrollY += heightDiff;
-			    targetScrollY += heightDiff;
-
-			    Logger::log("Loaded %d older messages async, adjusted scroll by %.2f", addedCount, heightDiff);
 		    } else {
 
 			    hasMoreHistory = false;
@@ -2338,6 +2336,7 @@ Discord::Message MessageScreen::createOptimisticMessage(const std::string &conte
 	msg.id = "pending_" + std::to_string(osGetTime());
 	msg.nonce = msg.id;
 	msg.content = content;
+	msg.displayContent = UI::MessageUtils::formatMentions(content, msg);
 	msg.channelId = channelId;
 	msg.author = Discord::DiscordClient::getInstance().getCurrentUser();
 	msg.timestamp = TR("message.status.sending");
