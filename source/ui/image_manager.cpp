@@ -20,7 +20,7 @@ ImageManager::~ImageManager() {
 void ImageManager::init() {
 	if (!decoderThread.joinable()) {
 		stopDecoder = false;
-		decoderThread.start([this] { decoderWorker(); }, 3);
+		decoderThread.start([this] { decoderWorker(); }, 3, 32 * 1024, true);
 	}
 }
 

@@ -261,7 +261,7 @@ void EmojiManager::ensureLoaderLocked() {
 	if (!loaderStarted) {
 		loaderStarted = true;
 		stopLoader = false;
-		loaderThread.start([this] { loaderWorker(); }, 3);
+		loaderThread.start([this] { loaderWorker(); }, 3, 32 * 1024, true);
 	}
 }
 
