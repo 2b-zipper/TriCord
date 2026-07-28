@@ -87,6 +87,8 @@ class EmojiManager {
 	bool loaderStarted = false;
 	bool stopLoader = false;
 
+	static const int TWEMOJI_DECODE_DIM = 32;
+
 	static const size_t MAX_TWEMOJI_CACHE = 250;
 	static const size_t MAX_PENDING_EMOJI = 4;
 	static const size_t MAX_UPLOADS_PER_FRAME = 4;

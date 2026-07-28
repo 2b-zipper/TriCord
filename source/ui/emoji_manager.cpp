@@ -237,7 +237,7 @@ void EmojiManager::loaderWorker() {
 			std::vector<unsigned char> buffer(size);
 			fread(buffer.data(), 1, size, f);
 			fclose(f);
-			tiled = Utils::Image::decodeToTiled(buffer.data(), size);
+			tiled = Utils::Image::decodeToTiled(buffer.data(), size, TWEMOJI_DECODE_DIM, TWEMOJI_DECODE_DIM);
 		}
 
 		lock.lock();
