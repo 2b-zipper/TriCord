@@ -148,32 +148,35 @@ C3D_Tex *ImageManager::getImage(const std::string &url) {
 	return nullptr;
 }
 
-ImageManager::ImageInfo ImageManager::getImageInfo(const std::string &url) {
+ImageManager::ImageInfo ImageManager::getImageInfo(std::string_view url) {
 	std::lock_guard<std::mutex> lock(cacheMutex);
-	if (textureCache.find(url) != textureCache.end()) {
-		touchImage(url);
-		return textureCache[url];
+	auto it = textureCache.find(url);
+	if (it != textureCache.end()) {
+		touchImage(it->first);
+		return it->second;
 	}
 	return ImageInfo();
 }
 
-C3D_Tex *ImageManager::getLocalImage(const std::string &path, bool noResize) {
+C3D_Tex *ImageManager::getLocalImage(std::string_view path, bool noResize) {
 	if (path.empty()) {
 		return nullptr;
 	}
 
 	{
 		std::lock_guard<std::mutex> lock(cacheMutex);
-		if (textureCache.find(path) != textureCache.end()) {
-			return textureCache[path].tex;
+		auto it = textureCache.find(path);
+		if (it != textureCache.end()) {
+			return it->second.tex;
 		}
 	}
 
-	Logger::log("[Image] Loading local: %s", path.c_str());
+	std::string pathStr(path);
+	Logger::log("[Image] Loading local: %s", pathStr.c_str());
 
-	FILE *f = fopen(path.c_str(), "rb");
+	FILE *f = fopen(pathStr.c_str(), "rb");
 	if (!f) {
-		Logger::log("[Image] Failed to open local file: %s", path.c_str());
+		Logger::log("[Image] Failed to open local file: %s", pathStr.c_str());
 		return nullptr;
 	}
 
@@ -199,7 +202,7 @@ C3D_Tex *ImageManager::getLocalImage(const std::string &path, bool noResize) {
 		info.originalW = outW;
 		info.originalH = outH;
 		std::lock_guard<std::mutex> lock(cacheMutex);
-		textureCache[path] = info;
+		textureCache[pathStr] = info;
 		return tex;
 	}
 

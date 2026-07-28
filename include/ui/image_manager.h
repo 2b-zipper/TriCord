@@ -12,6 +12,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <string_view>
 
 namespace UI {
 
@@ -31,9 +32,9 @@ class ImageManager {
 	};
 
 	C3D_Tex *getImage(const std::string &url);
-	ImageInfo getImageInfo(const std::string &url);
+	ImageInfo getImageInfo(std::string_view url);
 
-	C3D_Tex *getLocalImage(const std::string &path, bool noResize = false);
+	C3D_Tex *getLocalImage(std::string_view path, bool noResize = false);
 
 	void prefetch(const std::string &url, int origW = 0, int origH = 0,
 	              Network::RequestPriority priority = Network::RequestPriority::BACKGROUND);
@@ -65,7 +66,7 @@ class ImageManager {
 		Network::RequestPriority priority;
 	};
 
-	std::map<std::string, ImageInfo> textureCache;
+	std::map<std::string, ImageInfo, std::less<>> textureCache;
 	std::list<std::string> lruList;
 	std::set<std::string> fetchingUrls;
 	std::deque<PendingTexture> pendingTextures;
@@ -81,7 +82,7 @@ class ImageManager {
 	std::atomic<int> currentSessionId{0};
 	std::atomic<uint32_t> generation{0};
 
-	static constexpr size_t MAX_CACHE_BYTES = 8 * 1024 * 1024;
+	static constexpr size_t MAX_CACHE_BYTES = 12 * 1024 * 1024;
 	static constexpr size_t MIN_CACHE_ENTRIES = 8;
 	static constexpr size_t MAX_PENDING_TEXTURES = 4;
 	size_t currentCacheBytes = 0;

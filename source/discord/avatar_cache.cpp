@@ -16,8 +16,35 @@ void AvatarCache::init() {}
 
 void AvatarCache::shutdown() { clear(); }
 
+void AvatarCache::evictOldestLocked() {
+	while (cache.size() > MAX_CACHE_ENTRIES) {
+		uint32_t oldestFrame = 0xFFFFFFFF;
+		auto oldestIt = cache.end();
+
+		for (auto it = cache.begin(); it != cache.end(); ++it) {
+			if (it->second.loading) {
+				continue;
+			}
+			if (it->second.lastUsedFrame < oldestFrame) {
+				oldestFrame = it->second.lastUsedFrame;
+				oldestIt = it;
+			}
+		}
+
+		if (oldestIt == cache.end()) {
+			break;
+		}
+		if (oldestIt->second.tex) {
+			C3D_TexDelete(oldestIt->second.tex);
+			free(oldestIt->second.tex);
+		}
+		cache.erase(oldestIt);
+	}
+}
+
 void AvatarCache::update() {
 	std::lock_guard<std::recursive_mutex> lock(cacheMutex);
+	frameCounter++;
 
 	size_t uploads = 0;
 	while (!pendingAvatars.empty() && uploads < MAX_UPLOADS_PER_FRAME) {
@@ -44,6 +71,7 @@ void AvatarCache::update() {
 				it->second.attempts = MAX_ATTEMPTS;
 			}
 			it->second.loading = false;
+			it->second.lastUsedFrame = frameCounter;
 		}
 
 		if (pa.tiled.pixels) {
@@ -51,6 +79,8 @@ void AvatarCache::update() {
 			pa.tiled.pixels = nullptr;
 		}
 	}
+
+	evictOldestLocked();
 }
 
 void AvatarCache::freePendingLocked() {
@@ -84,6 +114,9 @@ C3D_Tex *AvatarCache::getAvatar(const std::string &userId, const std::string &av
 	std::lock_guard<std::recursive_mutex> lock(cacheMutex);
 	auto it = cache.find(userId);
 	C3D_Tex *current = (it != cache.end()) ? it->second.tex : nullptr;
+	if (it != cache.end()) {
+		it->second.lastUsedFrame = frameCounter;
+	}
 	if (current && it->second.hash == avatarHash) {
 		return current;
 	}
@@ -100,6 +133,9 @@ C3D_Tex *AvatarCache::getGuildIcon(const std::string &guildId, const std::string
 	std::lock_guard<std::recursive_mutex> lock(cacheMutex);
 	auto it = cache.find(guildId);
 	C3D_Tex *current = (it != cache.end()) ? it->second.tex : nullptr;
+	if (it != cache.end()) {
+		it->second.lastUsedFrame = frameCounter;
+	}
 	if (current && it->second.hash == iconHash) {
 		return current;
 	}
@@ -116,6 +152,9 @@ C3D_Tex *AvatarCache::getChannelIcon(const std::string &channelId, const std::st
 	std::lock_guard<std::recursive_mutex> lock(cacheMutex);
 	auto it = cache.find(channelId);
 	C3D_Tex *current = (it != cache.end()) ? it->second.tex : nullptr;
+	if (it != cache.end()) {
+		it->second.lastUsedFrame = frameCounter;
+	}
 	if (current && it->second.hash == iconHash) {
 		return current;
 	}
@@ -162,6 +201,7 @@ void AvatarCache::startFetchLocked(const std::string &key, const std::string &ur
 	info.loading = true;
 	info.attempts = attempts;
 	info.tex = current;
+	info.lastUsedFrame = frameCounter;
 	cache[key] = info;
 
 	Network::NetworkManager::getInstance().enqueue(

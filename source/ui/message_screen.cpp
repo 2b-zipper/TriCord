@@ -2539,10 +2539,122 @@ void MessageScreen::scrollToBottom() {
 	showNewMessageIndicator = false;
 }
 
+size_t MessageScreen::messageFingerprint(const Discord::Message &msg) {
+	size_t fp = std::hash<std::string>{}(msg.displayContent);
+	auto mix = [&fp](size_t v) { fp = fp * 31 + v; };
+
+	mix(std::hash<std::string>{}(msg.timestamp));
+	mix(msg.edited_timestamp.size());
+	mix(msg.type);
+
+	mix(msg.reactions.size());
+	for (const auto &react : msg.reactions) {
+		mix((size_t)react.count * 2 + (react.me ? 1 : 0));
+	}
+
+	mix(msg.embeds.size());
+	for (const auto &embed : msg.embeds) {
+		mix(embed.title.size() * 7 + embed.description.size() * 13 + embed.fields.size() * 17);
+		mix(embed.image_url.size() + embed.thumbnail_url.size() + (size_t)embed.image_width +
+		    (size_t)embed.thumbnail_width);
+	}
+
+	mix(msg.attachments.size());
+	for (const auto &attach : msg.attachments) {
+		mix(attach.filename.size() + (size_t)attach.width * 3 + (size_t)attach.height * 5);
+	}
+
+	mix(msg.stickers.size());
+
+	if (msg.hasPoll) {
+		mix(msg.poll.answers.size());
+		for (const auto &answer : msg.poll.answers) {
+			mix((size_t)answer.count * 2 + (answer.meVoted ? 1 : 0));
+		}
+	}
+
+	return fp;
+}
+
+void MessageScreen::buildMessageCache(const Discord::Message &msg, MessageRenderCache &cache) {
+	for (const auto &react : msg.reactions) {
+		if (!react.emoji.id.empty()) {
+			EmojiManager::getInstance().prefetchEmoji(react.emoji.id);
+		}
+	}
+	EmojiManager::getInstance().prefetchEmojisFromText(msg.content);
+
+	cache.dateKey = MessageUtils::getLocalDateString(msg.timestamp);
+	cache.headerTimestamp = MessageUtils::formatTimestamp(msg.timestamp);
+
+	if (msg.hasPoll) {
+		float pollMaxWidth = 400.0f - 42.0f - 10.0f;
+		cache.pollHeight = calculatePollHeight(msg.poll, pollMaxWidth);
+		cache.pollQuestionLines = MessageUtils::wrapText(msg.poll.question, pollMaxWidth - POLL_PAD * 2.0f, 0.45f);
+	}
+
+	cache.isEmojiOnly = MessageUtils::isEmojiOnly(msg.displayContent, cache.emojiCount);
+	if (!cache.isEmojiOnly || cache.emojiCount > 10) {
+		cache.contentLayout = UI::MarkdownRenderer::get(msg.displayContent, 350.0f, 0.4f);
+	}
+
+	for (const auto &attach : msg.attachments) {
+		if (attach.content_type.find("image/") != std::string::npos ||
+		    attach.filename.find(".png") != std::string::npos || attach.filename.find(".jpg") != std::string::npos ||
+		    attach.filename.find(".jpeg") != std::string::npos) {
+			cache.dependsOnImages = true;
+			break;
+		}
+	}
+
+	for (const auto &embed : msg.embeds) {
+		EmbedRenderCache eCache;
+		float maxW = 400.0f - 42.0f - 10.0f;
+		eCache.layout = getEmbedLayout(embed, maxW);
+		eCache.height = calculateEmbedHeight(embed, maxW);
+
+		if (eCache.layout.hasImage || eCache.layout.hasThumbnail) {
+			cache.dependsOnImages = true;
+		}
+
+		if (!embed.provider_name.empty()) {
+			eCache.providerLayout = UI::MarkdownRenderer::get(embed.provider_name, eCache.layout.pixelWidth, 0.32f,
+			                                                  11.0f / 0.32f, 0, false);
+		}
+		if (!embed.author_name.empty()) {
+			eCache.authorLayout =
+			    UI::MarkdownRenderer::get(embed.author_name, eCache.layout.pixelWidth, 0.38f, 11.0f / 0.38f, 0, false);
+		}
+		using UI::MarkdownRenderer::EMBED_STYLES;
+		if (!embed.title.empty()) {
+			eCache.titleLayout = UI::MarkdownRenderer::get(embed.title, eCache.layout.pixelWidth, 0.42f, 14.0f / 0.42f,
+			                                               EMBED_STYLES, false);
+		}
+		if (!embed.description.empty()) {
+			eCache.descriptionLayout = UI::MarkdownRenderer::get(embed.description, eCache.layout.pixelWidth, 0.36f,
+			                                                     11.0f / 0.36f, EMBED_STYLES, false);
+		}
+		for (const auto &field : embed.fields) {
+			auto nLayout = UI::MarkdownRenderer::get(field.name, eCache.layout.pixelWidth, 0.35f, 11.0f / 0.35f,
+			                                         EMBED_STYLES, false);
+			auto vLayout = UI::MarkdownRenderer::get(field.value, eCache.layout.pixelWidth, 0.34f, 11.0f / 0.34f,
+			                                         EMBED_STYLES, false);
+			eCache.fieldLayouts.push_back({nLayout, vLayout});
+		}
+		if (!embed.footer_text.empty()) {
+			eCache.footerLayout =
+			    UI::MarkdownRenderer::get(embed.footer_text, eCache.layout.pixelWidth, 0.30f, 10.0f / 0.30f, 0, false);
+		}
+		cache.embeds.push_back(eCache);
+	}
+}
+
 void MessageScreen::rebuildLayoutCache() {
+	std::vector<MessageRenderCache> oldCaches;
+	oldCaches.swap(renderCaches);
+
 	messagePositions.clear();
 	messageHeights.clear();
-	renderCaches.clear();
 	embedHeightCache.clear();
 
 	if (messages.empty()) {
@@ -2550,95 +2662,80 @@ void MessageScreen::rebuildLayoutCache() {
 		return;
 	}
 
+	std::unordered_map<std::string, size_t> oldIndex;
+	oldIndex.reserve(oldCaches.size());
+	for (size_t i = 0; i < oldCaches.size(); i++) {
+		oldIndex.emplace(oldCaches[i].msgId, i);
+	}
+
+	uint32_t generation = ImageManager::getInstance().getGeneration();
+	static const std::string noPrev;
+
 	float y = 10.0f;
 	std::string lastDate = "";
 
 	for (size_t i = 0; i < this->messages.size(); i++) {
-		bool canGroupWithPrev = (i > 0) && MessageUtils::canGroupWithPrevious(this->messages[i], this->messages[i - 1]);
-		bool showHeader = !canGroupWithPrev;
+		const Discord::Message &msg = this->messages[i];
+		const std::string &prevId = (i > 0) ? this->messages[i - 1].id : noPrev;
+		size_t fingerprint = messageFingerprint(msg);
 
-		if (this->messages[i].id.substr(0, 8) != "pending_") {
-			std::string currDate = MessageUtils::getLocalDateString(this->messages[i].timestamp);
-			if (this->messages[i].timestamp != TR("message.status.sending") &&
-			    this->messages[i].timestamp != TR("message.status.failed")) {
-				if (currDate != lastDate) {
+		MessageRenderCache cache;
+		bool reused = false;
+
+		auto oldIt = oldIndex.find(msg.id);
+		if (oldIt != oldIndex.end()) {
+			MessageRenderCache &old = oldCaches[oldIt->second];
+			if (old.fingerprint == fingerprint && old.prevId == prevId &&
+			    (!old.dependsOnImages || old.imageGeneration == generation)) {
+				cache = std::move(old);
+				reused = true;
+			}
+		}
+
+		if (!reused) {
+			buildMessageCache(msg, cache);
+			cache.msgId = msg.id;
+			cache.prevId = prevId;
+			cache.fingerprint = fingerprint;
+			cache.imageGeneration = generation;
+			cache.canGroupWithPrev = (i > 0) && MessageUtils::canGroupWithPrevious(msg, this->messages[i - 1]);
+		}
+
+		bool showHeader = !cache.canGroupWithPrev;
+
+		if (msg.id.substr(0, 8) != "pending_") {
+			if (msg.timestamp != TR("message.status.sending") && msg.timestamp != TR("message.status.failed")) {
+				if (cache.dateKey != lastDate) {
 					y += 28.0f;
-					lastDate = currDate;
+					lastDate = cache.dateKey;
 					showHeader = true;
 				}
 			}
 		}
 
-		for (const auto &react : this->messages[i].reactions) {
-			if (!react.emoji.id.empty()) {
-				EmojiManager::getInstance().prefetchEmoji(react.emoji.id);
-			}
-		}
-		EmojiManager::getInstance().prefetchEmojisFromText(this->messages[i].content);
-
-		MessageRenderCache cache;
-		cache.canGroupWithPrev = canGroupWithPrev;
-		cache.showHeader = showHeader;
 		cache.showDateSeparator = false;
+		cache.dateString.clear();
 		if (i == 0) {
 			cache.showDateSeparator = true;
-			cache.dateString = MessageUtils::getLocalDateString(this->messages[i].timestamp);
-		} else if (this->messages[i].timestamp != TR("message.status.sending")) {
-			cache.dateString = MessageUtils::getLocalDateString(this->messages[i].timestamp);
-			std::string prevDate = MessageUtils::getLocalDateString(this->messages[i - 1].timestamp);
-			if (cache.dateString != prevDate) {
+			cache.dateString = cache.dateKey;
+		} else if (msg.timestamp != TR("message.status.sending")) {
+			cache.dateString = cache.dateKey;
+			if (cache.dateString != renderCaches[i - 1].dateKey) {
 				cache.showDateSeparator = true;
 			}
 		}
-		cache.headerTimestamp = MessageUtils::formatTimestamp(this->messages[i].timestamp);
-		if (this->messages[i].hasPoll) {
-			float pollMaxWidth = 400.0f - 42.0f - 10.0f;
-			cache.pollHeight = calculatePollHeight(this->messages[i].poll, pollMaxWidth);
-			cache.pollQuestionLines =
-			    MessageUtils::wrapText(this->messages[i].poll.question, pollMaxWidth - POLL_PAD * 2.0f, 0.45f);
-		}
 
-		cache.isEmojiOnly = MessageUtils::isEmojiOnly(this->messages[i].displayContent, cache.emojiCount);
-		if (!cache.isEmojiOnly || cache.emojiCount > 10) {
-			cache.contentLayout = UI::MarkdownRenderer::get(this->messages[i].displayContent, 350.0f, 0.4f);
+		float h = cache.height;
+		if (!reused || cache.showHeader != showHeader || h <= 0.0f) {
+			h = calculateMessageHeight(msg, showHeader);
 		}
-
-		for (const auto &embed : this->messages[i].embeds) {
-			EmbedRenderCache eCache;
-			float maxW = 400.0f - 42.0f - 10.0f;
-			eCache.layout = getEmbedLayout(embed, maxW);
-			eCache.height = calculateEmbedHeight(embed, maxW);
-
-			if (!embed.provider_name.empty()) {
-				eCache.providerLayout = UI::MarkdownRenderer::get(embed.provider_name, eCache.layout.pixelWidth, 0.32f, 11.0f / 0.32f, 0, false);
-			}
-			if (!embed.author_name.empty()) {
-				eCache.authorLayout = UI::MarkdownRenderer::get(embed.author_name, eCache.layout.pixelWidth, 0.38f, 11.0f / 0.38f, 0, false);
-			}
-			using UI::MarkdownRenderer::EMBED_STYLES;
-			if (!embed.title.empty()) {
-				eCache.titleLayout = UI::MarkdownRenderer::get(embed.title, eCache.layout.pixelWidth, 0.42f, 14.0f / 0.42f, EMBED_STYLES, false);
-			}
-			if (!embed.description.empty()) {
-				eCache.descriptionLayout = UI::MarkdownRenderer::get(embed.description, eCache.layout.pixelWidth, 0.36f, 11.0f / 0.36f, EMBED_STYLES, false);
-			}
-			for (const auto &field : embed.fields) {
-				auto nLayout = UI::MarkdownRenderer::get(field.name, eCache.layout.pixelWidth, 0.35f, 11.0f / 0.35f, EMBED_STYLES, false);
-				auto vLayout = UI::MarkdownRenderer::get(field.value, eCache.layout.pixelWidth, 0.34f, 11.0f / 0.34f, EMBED_STYLES, false);
-				eCache.fieldLayouts.push_back({nLayout, vLayout});
-			}
-			if (!embed.footer_text.empty()) {
-				eCache.footerLayout = UI::MarkdownRenderer::get(embed.footer_text, eCache.layout.pixelWidth, 0.30f, 10.0f / 0.30f, 0, false);
-			}
-			cache.embeds.push_back(eCache);
-		}
+		cache.showHeader = showHeader;
 
 		messagePositions.push_back(y);
-		float h = calculateMessageHeight(this->messages[i], showHeader);
 		messageHeights.push_back(h);
 		cache.position = y;
 		cache.height = h;
-		renderCaches.push_back(cache);
+		renderCaches.push_back(std::move(cache));
 
 		y += h;
 	}

@@ -17,6 +17,7 @@ struct AvatarInfo {
 	bool loading = false;
 	int attempts = 0;
 	u64 retryAt = 0;
+	uint32_t lastUsedFrame = 0;
 };
 
 class AvatarCache {
@@ -53,6 +54,10 @@ class AvatarCache {
 	static constexpr int GUILD_ICON_SIZE = 64;
 	static constexpr size_t MAX_UPLOADS_PER_FRAME = 4;
 	static constexpr int MAX_ATTEMPTS = 3;
+	static constexpr size_t MAX_CACHE_ENTRIES = 128;
+
+	uint32_t frameCounter = 0;
+	void evictOldestLocked();
 
 	bool shouldFetchLocked(const std::string &key, const std::string &hash);
 	static constexpr float GUILD_ICON_CORNER_RATIO = 1.0f / 3.0f;

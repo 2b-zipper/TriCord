@@ -54,6 +54,13 @@ class MessageScreen : public Screen {
 		std::string headerTimestamp;
 		float pollHeight = 0.0f;
 		std::vector<std::string> pollQuestionLines;
+
+		std::string msgId;
+		std::string prevId;
+		std::string dateKey;
+		size_t fingerprint = 0;
+		bool dependsOnImages = false;
+		uint32_t imageGeneration = 0;
 	};
 
 	MessageScreen(const std::string &channelId, const std::string &channelName);
@@ -150,6 +157,8 @@ class MessageScreen : public Screen {
 	float drawReactions(const Discord::Message &msg, float x, float y, bool isSelected);
 	float drawPoll(const Discord::Message &msg, float x, float y, float maxWidth, bool isSelected,
 	               const MessageRenderCache *renderCache = nullptr);
+	static size_t messageFingerprint(const Discord::Message &msg);
+	void buildMessageCache(const Discord::Message &msg, MessageRenderCache &cache);
 	float calculatePollHeight(const Discord::Poll &poll, float maxWidth);
 	void submitPollVote(int answerIndex);
 	float calculateMessageHeight(const Discord::Message &msg, bool showHeader);
