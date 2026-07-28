@@ -332,6 +332,16 @@ void EmojiManager::update() {
 	}
 }
 
+size_t EmojiManager::getTwemojiCount() {
+	std::shared_lock<std::shared_mutex> lock(cacheMutex);
+	return twemojiCache.size();
+}
+
+size_t EmojiManager::getCustomCount() {
+	std::shared_lock<std::shared_mutex> lock(cacheMutex);
+	return emojiCache.size();
+}
+
 EmojiManager::EmojiInfo EmojiManager::getEmojiInfo(const std::string &emojiId) {
 	std::shared_lock<std::shared_mutex> lock(cacheMutex);
 	auto it = emojiCache.find(emojiId);

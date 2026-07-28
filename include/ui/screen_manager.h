@@ -69,6 +69,9 @@ class ScreenManager {
 	bool isDebugOverlayEnabled() const { return debugOverlayEnabled; }
 	void toggleDebugOverlay();
 
+	void renderStatsOverlay();
+	void toggleStatsOverlay();
+
 	HamburgerMenu &getHamburgerMenu() { return hamburgerMenu; }
 
 	void setSelectedGuildId(const std::string &id) { selectedGuildId = id; }
@@ -148,6 +151,12 @@ class ScreenManager {
 	std::string selectedGuildId;
 	bool debugOverlayEnabled;
 	float debugScrollOffset = 0.0f;
+
+	bool statsOverlayEnabled = false;
+	uint32_t statsFrames = 0;
+	uint64_t statsWindowStart = 0;
+	float statsFps = 0.0f;
+	float statsFrameMs = 0.0f;
 	bool appExitRequested;
 	HamburgerMenu hamburgerMenu;
 	IncomingCall incomingCall;

@@ -33,6 +33,8 @@ class AvatarCache {
 	C3D_Tex *getGuildIcon(const std::string &guildId, const std::string &iconHash);
 	C3D_Tex *getChannelIcon(const std::string &channelId, const std::string &iconHash);
 
+	size_t getCacheCount();
+
 	void prefetchAvatar(const std::string &userId, const std::string &avatarHash, const std::string &discriminator);
 	void prefetchGuildIcon(const std::string &guildId, const std::string &iconHash);
 	void prefetchChannelIcon(const std::string &channelId, const std::string &iconHash);

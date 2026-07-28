@@ -25,8 +25,12 @@ class WorkerThread {
 	bool joinable() const { return thread != nullptr; }
 	void join();
 
+	static bool extraCoreAvailable();
+	static int extraCoreThreads();
+
   private:
 	Thread thread = nullptr;
+	bool onExtraCore = false;
 };
 
 } // namespace Utils

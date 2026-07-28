@@ -39,6 +39,8 @@ class NetworkManager {
 	             std::function<void(const HttpResponse &)> callback,
 	             const std::map<std::string, std::string> &extraHeaders = {});
 
+	void getQueueDepths(size_t &realtime, size_t &interactive, size_t &background);
+
 	void get(const std::string &url, RequestPriority priority, std::function<void(const HttpResponse &)> callback);
 	void post(const std::string &url, const std::string &body, RequestPriority priority,
 	          std::function<void(const HttpResponse &)> callback);

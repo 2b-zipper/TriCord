@@ -46,6 +46,10 @@ class ImageManager {
 	void clearRemote();
 	uint32_t getGeneration() const { return generation; }
 
+	size_t getCacheBytes();
+	size_t getCacheCount();
+	static constexpr size_t getCacheBudget() { return MAX_CACHE_BYTES; }
+
   private:
 	ImageManager() = default;
 	~ImageManager();

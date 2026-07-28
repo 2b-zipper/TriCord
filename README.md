@@ -100,7 +100,7 @@ Output: `TriCord.3dsx`, `TriCord.cia`, `TriCord.elf`
 - D-Pad: Scroll | B: Back | X: Open Menu | Y: Text input
 
 **General**
-- Start: Exit the app | Select: Open the hamburger menu | L+R: Toggle Debug Log
+- Start: Exit the app | Select: Open the hamburger menu | L+R: Toggle Debug Log | R+L: Toggle Stats Overlay
 
 Config: `sdmc:/3ds/TriCord/config.json`
 

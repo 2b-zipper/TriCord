@@ -46,6 +46,9 @@ class EmojiManager {
 	void prefetchEmoji(const std::string &emojiId);
 	void prefetchEmojisFromText(const std::string &text);
 
+	size_t getTwemojiCount();
+	size_t getCustomCount();
+
 	const std::vector<EmojiCategory> &getCategories();
 	const std::vector<std::string> &getCodepoints();
 	void onCategoryChanged(const std::unordered_set<std::string> &keep = {});

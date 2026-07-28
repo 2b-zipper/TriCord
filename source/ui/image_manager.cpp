@@ -131,6 +131,16 @@ void ImageManager::clearRemote() {
 	currentSessionId++;
 }
 
+size_t ImageManager::getCacheBytes() {
+	std::lock_guard<std::mutex> lock(cacheMutex);
+	return currentCacheBytes;
+}
+
+size_t ImageManager::getCacheCount() {
+	std::lock_guard<std::mutex> lock(cacheMutex);
+	return textureCache.size();
+}
+
 C3D_Tex *ImageManager::getImage(const std::string &url) {
 	if (url.empty()) {
 		return nullptr;

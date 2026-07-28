@@ -105,6 +105,11 @@ void AvatarCache::clear() {
 	freePendingLocked();
 }
 
+size_t AvatarCache::getCacheCount() {
+	std::lock_guard<std::recursive_mutex> lock(cacheMutex);
+	return cache.size();
+}
+
 C3D_Tex *AvatarCache::getAvatar(const std::string &userId, const std::string &avatarHash,
                                 const std::string &discriminator) {
 	if (avatarHash.empty() && discriminator.empty()) {

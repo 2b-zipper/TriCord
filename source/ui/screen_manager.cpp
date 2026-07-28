@@ -19,6 +19,8 @@
 #include "utils/utf8_utils.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdarg>
+#include <cstdio>
 #include <unordered_map>
 
 namespace UI {
@@ -413,6 +415,8 @@ void ScreenManager::update() {
 	if ((kHeld & KEY_L) && (kDown & KEY_R)) {
 		toggleDebugOverlay();
 		Logger::log("Debug overlay toggled: %s", debugOverlayEnabled ? "ON" : "OFF");
+	} else if ((kHeld & KEY_R) && (kDown & KEY_L)) {
+		toggleStatsOverlay();
 	}
 
 	if (toastTimer > 0) {
@@ -443,6 +447,10 @@ void ScreenManager::render() {
 
 	if (debugOverlayEnabled) {
 		renderDebugOverlay();
+	}
+
+	if (statsOverlayEnabled) {
+		renderStatsOverlay();
 	}
 
 	C2D_TargetClear(bottomTarget, colorBackground());
@@ -495,6 +503,118 @@ void ScreenManager::renderDebugOverlay() {
 		}
 		C2D_TextOptimize(&text);
 		C2D_DrawText(&text, C2D_WithColor, 5.0f, y, 1.0f, 0.4f, 0.4f, C2D_Color32(0, 255, 0, 255));
+	}
+}
+
+void ScreenManager::toggleStatsOverlay() {
+	statsOverlayEnabled = !statsOverlayEnabled;
+	statsFrames = 0;
+	statsWindowStart = osGetTime();
+	statsFps = 0.0f;
+	statsFrameMs = 0.0f;
+}
+
+void ScreenManager::renderStatsOverlay() {
+	statsFrames++;
+	uint64_t now = osGetTime();
+	uint64_t elapsed = now - statsWindowStart;
+	if (elapsed >= 500) {
+		statsFps = (float)statsFrames * 1000.0f / (float)elapsed;
+		statsFrameMs = (float)elapsed / (float)statsFrames;
+		statsFrames = 0;
+		statsWindowStart = now;
+	}
+
+	auto &images = ImageManager::getInstance();
+	auto &emoji = EmojiManager::getInstance();
+	auto &config = Config::getInstance();
+	auto &client = Discord::DiscordClient::getInstance();
+	auto &voice = Discord::VoiceClient::getInstance();
+
+	size_t netR = 0, netI = 0, netB = 0;
+	Network::NetworkManager::getInstance().getQueueDepths(netR, netI, netB);
+
+	static const char *const GW_NAMES[] = {"OFF", "CONN", "WS", "IDENT", "AUTH", "READY", "RECON", "ERR"};
+	int gwState = (int)client.getState();
+	const char *gwName = (gwState >= 0 && gwState < 8) ? GW_NAMES[gwState] : "?";
+
+	static const char *const VC_NAMES[] = {"OFF", "WAIT", "CONN", "IDENT", "READY", "PROTO", "ON", "FAIL"};
+	int vcState = (int)voice.getState();
+	const char *vcName = (vcState >= 0 && vcState < 8) ? VC_NAMES[vcState] : "?";
+
+	size_t linFree = linearSpaceFree();
+	size_t imgBytes = images.getCacheBytes();
+
+	struct Line {
+		char text[44];
+		u32 color;
+	};
+	Line lines[12];
+	int n = 0;
+
+	const u32 kOk = C2D_Color32(120, 255, 160, 255);
+	const u32 kDim = C2D_Color32(150, 150, 150, 255);
+	const u32 kWarn = C2D_Color32(255, 200, 80, 255);
+	const u32 kBad = C2D_Color32(255, 110, 110, 255);
+
+	auto add = [&](u32 color, const char *fmt, ...) {
+		if (n >= (int)(sizeof(lines) / sizeof(lines[0]))) {
+			return;
+		}
+		va_list args;
+		va_start(args, fmt);
+		vsnprintf(lines[n].text, sizeof(lines[0].text), fmt, args);
+		va_end(args);
+		lines[n].color = color;
+		n++;
+	};
+
+	add(statsFps < 50.0f ? kWarn : kOk, "FPS %.1f  GPU %.1f/%.1f", statsFps, C3D_GetProcessingTime(),
+	    C3D_GetDrawingTime());
+	add(linFree < 4u * 1024 * 1024 ? kBad : (linFree < 8u * 1024 * 1024 ? kWarn : kOk), "LIN %luK  APP %luK",
+	    (unsigned long)(linFree / 1024), (unsigned long)(osGetMemRegionFree(MEMREGION_APPLICATION) / 1024));
+	add(imgBytes >= ImageManager::getCacheBudget() ? kWarn : kOk, "IMG %luK/%luK x%lu",
+	    (unsigned long)(imgBytes / 1024), (unsigned long)(ImageManager::getCacheBudget() / 1024),
+	    (unsigned long)images.getCacheCount());
+	add(kOk, "EMO %lu/%lu  AVA %lu", (unsigned long)emoji.getTwemojiCount(), (unsigned long)emoji.getCustomCount(),
+	    (unsigned long)Discord::AvatarCache::getInstance().getCacheCount());
+	add(kOk, "TXT %lu  GLD %lu", (unsigned long)TextMeasureCache::getInstance().getCacheSize(),
+	    (unsigned long)client.getGuilds().size());
+	add((netR + netI + netB) > 16 ? kWarn : kDim, "NET r%lu i%lu b%lu", (unsigned long)netR, (unsigned long)netI,
+	    (unsigned long)netB);
+
+	add(gwState == (int)Discord::ConnectionState::READY ? kOk : kWarn, "GW %s  WIFI %d", gwName,
+	    (int)osGetWifiStrength());
+	add(vcState == (int)Discord::VoiceState::ESTABLISHED ? kOk : kDim, "VC %s%s%s", vcName, voice.isMuted() ? " M" : "",
+	    voice.isDeafened() ? " D" : "");
+
+	int extraThreads = Utils::WorkerThread::extraCoreThreads();
+	add(extraThreads > 0 ? kOk : kDim, "N3DS %s  CORE2 %d thr",
+	    Utils::WorkerThread::extraCoreAvailable() ? "yes" : "no", extraThreads);
+	add(kDim, "AVATAR %s  TYPE %s", config.isShowAvatarsEnabled() ? "on" : "off",
+	    config.isTypingIndicatorEnabled() ? "on" : "off");
+	add(config.isSslVerificationDisabled() ? kBad : kDim, "SSL %s  FLOG %s",
+	    config.isSslVerificationDisabled() ? "OFF" : "on", config.isFileLoggingEnabled() ? "on" : "off");
+
+	const float scale = 0.4f;
+	const float lineHeight = 10.0f;
+	const float pad = 3.0f;
+	const float right = 400.0f;
+
+	float boxW = 0.0f;
+	for (int i = 0; i < n; i++) {
+		boxW = std::max(boxW, measureText(lines[i].text, scale, scale));
+	}
+	boxW += pad * 2.0f;
+	float boxH = n * lineHeight + pad * 2.0f;
+	float boxX = right - boxW;
+
+	C2D_DrawRectSolid(boxX, 0.0f, 1.0f, boxW, boxH, C2D_Color32(0, 0, 0, 200));
+
+	float y = pad;
+	for (int i = 0; i < n; i++) {
+		drawText(boxX + pad, y, 1.0f, scale, scale, lines[i].color, lines[i].text);
+		y += lineHeight;
 	}
 }
 

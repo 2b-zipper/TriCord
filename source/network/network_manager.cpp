@@ -125,6 +125,13 @@ void NetworkManager::enqueue(const std::string &url, const std::string &method, 
 	condition.notify_all();
 }
 
+void NetworkManager::getQueueDepths(size_t &realtime, size_t &interactive, size_t &background) {
+	std::lock_guard<std::mutex> lock(mutex);
+	realtime = realtimeQueue.size();
+	interactive = interactiveQueue.size();
+	background = backgroundQueue.size();
+}
+
 void NetworkManager::workerThread(RequestPriority type) {
 	HttpClient client;
 	client.setVerifySSL(true);

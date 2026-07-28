@@ -11,6 +11,8 @@ void trampoline(void *arg) {
 	delete fn;
 }
 
+int extraCoreThreadCount = 0;
+
 bool hasExtraCore() {
 	static const bool available = [] {
 		bool isNew3DS = false;
@@ -36,18 +38,27 @@ s32 workerPriority(int delta) {
 
 } // namespace
 
-WorkerThread::WorkerThread(WorkerThread &&other) noexcept : thread(other.thread) { other.thread = nullptr; }
+WorkerThread::WorkerThread(WorkerThread &&other) noexcept : thread(other.thread), onExtraCore(other.onExtraCore) {
+	other.thread = nullptr;
+	other.onExtraCore = false;
+}
 
 WorkerThread &WorkerThread::operator=(WorkerThread &&other) noexcept {
 	if (this != &other) {
 		join();
 		thread = other.thread;
+		onExtraCore = other.onExtraCore;
 		other.thread = nullptr;
+		other.onExtraCore = false;
 	}
 	return *this;
 }
 
 WorkerThread::~WorkerThread() { join(); }
+
+bool WorkerThread::extraCoreAvailable() { return hasExtraCore(); }
+
+int WorkerThread::extraCoreThreads() { return extraCoreThreadCount; }
 
 void WorkerThread::start(std::function<void()> fn, int priorityDelta, size_t stackSize, bool preferExtraCore) {
 	join();
@@ -57,6 +68,10 @@ void WorkerThread::start(std::function<void()> fn, int priorityDelta, size_t sta
 
 	if (preferExtraCore && hasExtraCore()) {
 		thread = threadCreate(trampoline, heapFn, stackSize, prio, 2, false);
+		if (thread) {
+			onExtraCore = true;
+			extraCoreThreadCount++;
+		}
 	}
 	if (!thread) {
 		thread = threadCreate(trampoline, heapFn, stackSize, prio, -2, false);
@@ -72,6 +87,10 @@ void WorkerThread::join() {
 		threadJoin(thread, U64_MAX);
 		threadFree(thread);
 		thread = nullptr;
+		if (onExtraCore) {
+			onExtraCore = false;
+			extraCoreThreadCount--;
+		}
 	}
 }
 
