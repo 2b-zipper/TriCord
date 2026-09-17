@@ -8,6 +8,7 @@
 #include "ui/screen_manager.h"
 #include "utils/message_utils.h"
 #include "utils/sound_player.h"
+#include "utils/system_utils.h"
 #include <3ds.h>
 #include <citro2d.h>
 #include <citro3d.h>
@@ -47,7 +48,12 @@ int main(int argc, char **argv) {
 	            (unsigned long)(osGetMemRegionFree(MEMREGION_APPLICATION) / 1024),
 	            (unsigned long)(linearSpaceFree() / 1024));
 	Config::getInstance().load();
-	Network::NetworkManager::getInstance().init(3, 2);
+	// Each worker holds its own TLS connection, and on Old 3DS they all share the one app core.
+	if (Utils::System::isNew3DS()) {
+		Network::NetworkManager::getInstance().init(3, 2);
+	} else {
+		Network::NetworkManager::getInstance().init(2, 1);
+	}
 
 	Network::HttpClient timeClient;
 	timeClient.setTimeout(3);

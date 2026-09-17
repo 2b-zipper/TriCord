@@ -1,5 +1,6 @@
 #include "utils/worker_thread.h"
 #include "log.h"
+#include "utils/system_utils.h"
 
 namespace Utils {
 
@@ -15,8 +16,7 @@ int extraCoreThreadCount = 0;
 
 bool hasExtraCore() {
 	static const bool available = [] {
-		bool isNew3DS = false;
-		bool ok = R_SUCCEEDED(APT_CheckNew3DS(&isNew3DS)) && isNew3DS;
+		bool ok = System::isNew3DS();
 		Logger::log("[Thread] Extra core %s", ok ? "available" : "unavailable");
 		return ok;
 	}();

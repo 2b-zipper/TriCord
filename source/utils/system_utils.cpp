@@ -1,4 +1,5 @@
 #include "utils/system_utils.h"
+#include "log.h"
 #include <3ds.h>
 
 namespace Utils {
@@ -38,6 +39,16 @@ static std::string detectDeviceModelName() {
 const std::string &getDeviceModelName() {
 	static const std::string name = detectDeviceModelName();
 	return name;
+}
+
+bool isNew3DS() {
+	static const bool isNew = [] {
+		bool value = false;
+		Result rc = APT_CheckNew3DS(&value);
+		Logger::log("[System] APT_CheckNew3DS rc=0x%08lX new3ds=%d", (unsigned long)rc, value ? 1 : 0);
+		return R_SUCCEEDED(rc) && value;
+	}();
+	return isNew;
 }
 
 } // namespace System
