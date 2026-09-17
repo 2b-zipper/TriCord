@@ -1,6 +1,7 @@
 #include "discord/avatar_cache.h"
 #include "core/config.h"
 #include "network/network_manager.h"
+#include "ui/image_manager.h"
 
 #include "utils/image_utils.h"
 #include <malloc.h>
@@ -212,28 +213,37 @@ void AvatarCache::startFetchLocked(const std::string &key, const std::string &ur
 	Network::NetworkManager::getInstance().enqueue(
 	    url, "GET", "", Network::RequestPriority::BACKGROUND,
 	    [this, key, cornerRatio](const Network::HttpResponse &resp) {
-		    if (resp.statusCode == 200 && !resp.body.empty()) {
-			    Utils::Image::TiledData tiled = Utils::Image::decodeToTiled(
-			        (const unsigned char *)resp.body.data(), resp.body.size(), Utils::Image::MAX_REMOTE_DIM,
-			        Utils::Image::MAX_REMOTE_DIM, true, cornerRatio);
-			    if (tiled.pixels) {
-				    std::lock_guard<std::recursive_mutex> lock(this->cacheMutex);
-				    PendingAvatar pa;
-				    pa.id = key;
-				    pa.tiled = tiled;
-				    this->pendingAvatars.push_back(pa);
-				    return;
-			    }
+		    if (resp.statusCode != 200 || resp.body.empty()) {
+			    std::lock_guard<std::recursive_mutex> lock(cacheMutex);
+			    markFailedLocked(key);
+			    return;
 		    }
 
-		    std::lock_guard<std::recursive_mutex> lock(this->cacheMutex);
-		    auto it = this->cache.find(key);
-		    if (it != this->cache.end()) {
-			    it->second.loading = false;
-			    it->second.attempts++;
-			    it->second.retryAt = osGetTime() + (u64)3000 * it->second.attempts;
-		    }
+		    UI::ImageManager::getInstance().runOnDecoder([this, key, cornerRatio, body = resp.body] {
+			    Utils::Image::TiledData tiled = Utils::Image::decodeToTiled(
+			        (const unsigned char *)body.data(), body.size(), Utils::Image::MAX_REMOTE_DIM,
+			        Utils::Image::MAX_REMOTE_DIM, true, cornerRatio);
+
+			    std::lock_guard<std::recursive_mutex> lock(cacheMutex);
+			    if (!tiled.pixels) {
+				    markFailedLocked(key);
+				    return;
+			    }
+			    PendingAvatar pa;
+			    pa.id = key;
+			    pa.tiled = tiled;
+			    pendingAvatars.push_back(pa);
+		    });
 	    });
+}
+
+void AvatarCache::markFailedLocked(const std::string &key) {
+	auto it = cache.find(key);
+	if (it != cache.end()) {
+		it->second.loading = false;
+		it->second.attempts++;
+		it->second.retryAt = osGetTime() + (u64)3000 * it->second.attempts;
+	}
 }
 
 void AvatarCache::prefetchAvatar(const std::string &userId, const std::string &avatarHash,

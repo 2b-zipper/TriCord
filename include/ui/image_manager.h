@@ -7,6 +7,7 @@
 #include <atomic>
 #include <citro2d.h>
 #include <deque>
+#include <functional>
 #include <list>
 #include <map>
 #include <mutex>
@@ -40,6 +41,8 @@ class ImageManager {
 	              Network::RequestPriority priority = Network::RequestPriority::BACKGROUND);
 
 	void update();
+
+	void runOnDecoder(std::function<void()> job);
 
 	void clear();
 	void clearFailed(const std::string &url);
@@ -75,6 +78,8 @@ class ImageManager {
 	std::set<std::string> fetchingUrls;
 	std::deque<PendingTexture> pendingTextures;
 	std::deque<DecodeRequest> decodeQueue;
+	// Kept out of decodeQueue so clear() cannot drop a job whose owner is waiting on it.
+	std::deque<std::function<void()>> jobQueue;
 
 	std::mutex cacheMutex;
 	std::mutex decodeMutex;

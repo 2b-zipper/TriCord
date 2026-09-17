@@ -34,6 +34,10 @@ void ImageManager::shutdown() {
 	if (decoderThread.joinable()) {
 		decoderThread.join();
 	}
+	{
+		std::lock_guard<std::mutex> lock(decodeMutex);
+		jobQueue.clear();
+	}
 
 	clear();
 }
@@ -324,17 +328,36 @@ void ImageManager::prefetch(const std::string &url, int origW, int origH, Networ
 	    });
 }
 
+void ImageManager::runOnDecoder(std::function<void()> job) {
+	{
+		std::lock_guard<std::mutex> lock(decodeMutex);
+		jobQueue.push_back(std::move(job));
+	}
+	decodeCv.notify_one();
+}
+
 void ImageManager::decoderWorker() {
 	while (true) {
 		DecodeRequest req;
+		std::function<void()> job;
 		{
 			std::unique_lock<std::mutex> lock(decodeMutex);
-			decodeCv.wait(lock, [this] { return stopDecoder || !decodeQueue.empty(); });
+			decodeCv.wait(lock, [this] { return stopDecoder || !jobQueue.empty() || !decodeQueue.empty(); });
 			if (stopDecoder) {
 				return;
 			}
-			req = std::move(decodeQueue.front());
-			decodeQueue.pop_front();
+			if (!jobQueue.empty()) {
+				job = std::move(jobQueue.front());
+				jobQueue.pop_front();
+			} else {
+				req = std::move(decodeQueue.front());
+				decodeQueue.pop_front();
+			}
+		}
+
+		if (job) {
+			job();
+			continue;
 		}
 
 		if (currentSessionId != req.sessionId) {
