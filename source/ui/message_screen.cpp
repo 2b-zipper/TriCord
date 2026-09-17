@@ -870,7 +870,7 @@ float MessageScreen::calculateMessageHeight(const Discord::Message &msg, bool sh
 
 					int imgW = attach.width;
 					int imgH = attach.height;
-					if (info.tex) {
+					if (info.tex && (imgW <= 0 || imgH <= 0)) {
 						imgW = info.originalW;
 						imgH = info.originalH;
 					}

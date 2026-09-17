@@ -221,8 +221,8 @@ void AvatarCache::startFetchLocked(const std::string &key, const std::string &ur
 
 		    UI::ImageManager::getInstance().runOnDecoder([this, key, cornerRatio, body = resp.body] {
 			    Utils::Image::TiledData tiled = Utils::Image::decodeToTiled(
-			        (const unsigned char *)body.data(), body.size(), Utils::Image::MAX_REMOTE_DIM,
-			        Utils::Image::MAX_REMOTE_DIM, true, cornerRatio);
+			        (const unsigned char *)body.data(), body.size(), Utils::Image::maxRemoteDim(),
+			        Utils::Image::maxRemoteDim(), true, cornerRatio);
 
 			    std::lock_guard<std::recursive_mutex> lock(cacheMutex);
 			    if (!tiled.pixels) {

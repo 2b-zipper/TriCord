@@ -2,6 +2,7 @@
 #include "stb_image.h"
 
 #include "utils/image_utils.h"
+#include "utils/system_utils.h"
 #include <malloc.h>
 #include <math.h>
 #include <string.h>
@@ -14,6 +15,12 @@ static const int mortonTable[] = {0,  1,  4,  5,  16, 17, 20, 21, 2,  3,  6,  7,
                                   8,  9,  12, 13, 24, 25, 28, 29, 10, 11, 14, 15, 26, 27, 30, 31,
                                   32, 33, 36, 37, 48, 49, 52, 53, 34, 35, 38, 39, 50, 51, 54, 55,
                                   40, 41, 44, 45, 56, 57, 60, 61, 42, 43, 46, 47, 58, 59, 62, 63};
+
+// Media is drawn at most 330x260, so Old 3DS takes a slight upscale for a quarter of the texture memory.
+int maxRemoteDim() {
+	static const int dim = System::isNew3DS() ? 512 : 256;
+	return dim;
+}
 
 TiledData decodeToTiled(const unsigned char *data, size_t size, int maxWidth, int maxHeight, bool noResize,
                         float cornerRatio) {
@@ -186,7 +193,7 @@ TiledData decodeToTiled(const unsigned char *data, size_t size, int maxWidth, in
 }
 
 C3D_Tex *loadTextureFromMemory(const unsigned char *data, size_t size, int &outW, int &outH, bool noResize) {
-	TiledData tiled = decodeToTiled(data, size, MAX_REMOTE_DIM, MAX_REMOTE_DIM, noResize);
+	TiledData tiled = decodeToTiled(data, size, maxRemoteDim(), maxRemoteDim(), noResize);
 	if (!tiled.pixels) {
 		return nullptr;
 	}

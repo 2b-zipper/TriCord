@@ -252,8 +252,8 @@ void ImageManager::prefetch(const std::string &url, int origW, int origH, Networ
 
 	if (optimizedUrl.find("media.discordapp.net") != std::string::npos ||
 	    optimizedUrl.find("images-ext-") != std::string::npos) {
-		int targetW = Utils::Image::MAX_REMOTE_DIM;
-		int targetH = Utils::Image::MAX_REMOTE_DIM;
+		int targetW = Utils::Image::maxRemoteDim();
+		int targetH = Utils::Image::maxRemoteDim();
 		if (origW > 0 && origH > 0) {
 			if (origW > targetW || origH > targetH) {
 				if (origW > origH) {
