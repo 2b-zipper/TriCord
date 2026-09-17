@@ -1,6 +1,7 @@
 #include "ui/emoji_manager.h"
 #include "log.h"
 #include "network/network_manager.h"
+#include "ui/image_manager.h"
 #include "utils/image_utils.h"
 #include <3ds.h>
 #include <algorithm>
@@ -138,7 +139,7 @@ void EmojiManager::onCategoryChanged(const std::unordered_set<std::string> &keep
 		}
 	}
 
-	freePendingLocked();
+	freePendingLocked(pendingEmoji);
 	pendingCv.notify_all();
 
 	if (!backgroundQueue.empty()) {
@@ -147,14 +148,14 @@ void EmojiManager::onCategoryChanged(const std::unordered_set<std::string> &keep
 	}
 }
 
-void EmojiManager::freePendingLocked() {
-	for (auto &pending : pendingEmoji) {
+void EmojiManager::freePendingLocked(std::deque<PendingEmoji> &queue) {
+	for (auto &pending : queue) {
 		if (pending.tiled.pixels) {
 			free(pending.tiled.pixels);
 			pending.tiled.pixels = nullptr;
 		}
 	}
-	pendingEmoji.clear();
+	queue.clear();
 }
 
 void EmojiManager::shutdown() {
@@ -169,7 +170,8 @@ void EmojiManager::shutdown() {
 	std::unique_lock<std::shared_mutex> lock(cacheMutex);
 	loaderStarted = false;
 	stopLoader = false;
-	freePendingLocked();
+	freePendingLocked(pendingEmoji);
+	freePendingLocked(pendingCustom);
 	for (auto &pair : emojiCache) {
 		if (pair.second.tex) {
 			C3D_TexDelete(pair.second.tex);
@@ -249,7 +251,7 @@ void EmojiManager::loaderWorker() {
 		}
 
 		PendingEmoji pending;
-		pending.hex = hex;
+		pending.key = hex;
 		pending.tiled = tiled;
 		pendingEmoji.push_back(pending);
 
@@ -272,40 +274,19 @@ void EmojiManager::update() {
 
 	size_t uploads = 0;
 	while (!pendingEmoji.empty() && uploads < MAX_UPLOADS_PER_FRAME) {
-		PendingEmoji p = pendingEmoji.front();
+		uploadPendingLocked(twemojiCache, pendingEmoji.front());
 		pendingEmoji.pop_front();
 		uploads++;
-
-		C3D_Tex *tex = nullptr;
-		if (p.tiled.pixels) {
-			tex = (C3D_Tex *)malloc(sizeof(C3D_Tex));
-			if (tex && C3D_TexInit(tex, p.tiled.p2w, p.tiled.p2h, GPU_RGBA8)) {
-				C3D_TexSetFilter(tex, GPU_LINEAR, GPU_LINEAR);
-				memcpy(tex->data, p.tiled.pixels, p.tiled.vramSize);
-				GSPGPU_FlushDataCache(tex->data, p.tiled.vramSize);
-			} else {
-				free(tex);
-				tex = nullptr;
-			}
-			free(p.tiled.pixels);
-			p.tiled.pixels = nullptr;
-		}
-
-		auto it = twemojiCache.find(p.hex);
-		if (it != twemojiCache.end()) {
-			it->second.tex = tex;
-			it->second.originalW = p.tiled.w;
-			it->second.originalH = p.tiled.h;
-			it->second.isLoading = false;
-			it->second.lastUsedFrame = frameCounter;
-		} else if (tex) {
-			C3D_TexDelete(tex);
-			free(tex);
-		}
 	}
 	if (uploads > 0) {
 		pendingCv.notify_one();
 	}
+
+	for (size_t i = 0; i < MAX_UPLOADS_PER_FRAME && !pendingCustom.empty(); i++) {
+		uploadPendingLocked(emojiCache, pendingCustom.front());
+		pendingCustom.pop_front();
+	}
+	evictCustomLocked();
 
 	if (twemojiCache.size() > MAX_TWEMOJI_CACHE) {
 		while (twemojiCache.size() > MAX_TWEMOJI_CACHE - 50) {
@@ -329,6 +310,62 @@ void EmojiManager::update() {
 				break;
 			}
 		}
+	}
+}
+
+void EmojiManager::uploadPendingLocked(std::unordered_map<std::string, EmojiInfo> &cache, PendingEmoji &pending) {
+	C3D_Tex *tex = nullptr;
+	if (pending.tiled.pixels) {
+		tex = (C3D_Tex *)malloc(sizeof(C3D_Tex));
+		if (tex && C3D_TexInit(tex, pending.tiled.p2w, pending.tiled.p2h, GPU_RGBA8)) {
+			C3D_TexSetFilter(tex, GPU_LINEAR, GPU_LINEAR);
+			memcpy(tex->data, pending.tiled.pixels, pending.tiled.vramSize);
+			GSPGPU_FlushDataCache(tex->data, pending.tiled.vramSize);
+		} else {
+			free(tex);
+			tex = nullptr;
+		}
+		free(pending.tiled.pixels);
+		pending.tiled.pixels = nullptr;
+	}
+
+	auto it = cache.find(pending.key);
+	if (it != cache.end()) {
+		it->second.tex = tex;
+		it->second.originalW = pending.tiled.w;
+		it->second.originalH = pending.tiled.h;
+		it->second.isLoading = false;
+		it->second.lastUsedFrame = frameCounter;
+	} else if (tex) {
+		C3D_TexDelete(tex);
+		free(tex);
+	}
+}
+
+// In-flight entries stay: their request cannot be cancelled, and dropping one
+// would only make the next frame fetch it again.
+void EmojiManager::evictCustomLocked() {
+	if (emojiCache.size() <= MAX_CUSTOM_CACHE) {
+		return;
+	}
+	while (emojiCache.size() > MAX_CUSTOM_CACHE - 50) {
+		auto oldestIt = emojiCache.end();
+		for (auto it = emojiCache.begin(); it != emojiCache.end(); ++it) {
+			if (it->second.isLoading) {
+				continue;
+			}
+			if (oldestIt == emojiCache.end() || it->second.lastUsedFrame < oldestIt->second.lastUsedFrame) {
+				oldestIt = it;
+			}
+		}
+		if (oldestIt == emojiCache.end()) {
+			break;
+		}
+		if (oldestIt->second.tex) {
+			C3D_TexDelete(oldestIt->second.tex);
+			free(oldestIt->second.tex);
+		}
+		emojiCache.erase(oldestIt);
 	}
 }
 
@@ -369,21 +406,18 @@ void EmojiManager::prefetchEmoji(const std::string &emojiId) {
 	std::string url = "https://media.discordapp.net/emojis/" + emojiId + ".png?size=32";
 	Network::NetworkManager::getInstance().enqueue(
 	    url, "GET", "", Network::RequestPriority::INTERACTIVE, [this, emojiId](const Network::HttpResponse &resp) {
-		    if (resp.statusCode == 200 && !resp.body.empty()) {
-			    int w, h;
-			    C3D_Tex *tex = Utils::Image::loadTextureFromMemory((const unsigned char *)resp.body.data(),
-			                                                       resp.body.size(), w, h);
-			    if (tex) {
-				    std::unique_lock<std::shared_mutex> lock(cacheMutex);
-				    EmojiInfo info;
-				    info.tex = tex;
-				    info.originalW = w;
-				    info.originalH = h;
-				    info.lastUsedFrame = frameCounter;
-				    info.isLoading = false;
-				    emojiCache[emojiId] = info;
-			    }
+		    if (resp.statusCode != 200 || resp.body.empty()) {
+			    std::unique_lock<std::shared_mutex> lock(cacheMutex);
+			    pendingCustom.push_back({emojiId, {}});
+			    return;
 		    }
+
+		    ImageManager::getInstance().runOnDecoder([this, emojiId, body = resp.body] {
+			    Utils::Image::TiledData tiled =
+			        Utils::Image::decodeToTiled((const unsigned char *)body.data(), body.size());
+			    std::unique_lock<std::shared_mutex> lock(cacheMutex);
+			    pendingCustom.push_back({emojiId, tiled});
+		    });
 	    });
 }
 
