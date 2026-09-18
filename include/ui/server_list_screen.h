@@ -75,6 +75,13 @@ class ServerListScreen : public Screen {
 	static const int SUBSCRIBE_SETTLE_FRAMES = 20;
 	void subscribeHighlightedGuild();
 
+	std::string channelLoadFor;
+	std::string channelLoadPending;
+	int channelLoadTimer = 0;
+	bool channelLoadAttempted = false;
+	void loadHighlightedGuildChannels();
+	void selectFirstChannel();
+
 	int repeatTimer;
 	u32 lastKey;
 	static const int REPEAT_DELAY_INITIAL = 30;

@@ -2,7 +2,9 @@
 #define DISCORD_CLIENT_H
 
 #include "discord/types.h"
+#include "network/json_input_stream.h"
 #include "network/websocket_client.h"
+#include "utils/json_pull.h"
 #include "utils/worker_thread.h"
 #include <atomic>
 #include <condition_variable>
@@ -14,8 +16,13 @@
 #include <optional>
 #include <rapidjson/document.h>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
+
+namespace Network {
+struct HttpResponse;
+}
 
 namespace Discord {
 
@@ -42,6 +49,7 @@ using PollVoteCallback = std::function<void(const std::string &channelId, const 
                                             const std::string &userId, int answerId, bool added)>;
 using LoginCallback = std::function<void(bool success, const std::string &token, bool mfaRequired,
                                          const std::string &ticket, const std::string &error)>;
+using JsonPull = Utils::Json::Pull<Network::JsonInputStream>;
 
 struct TypingUser {
 	std::string userId;
@@ -224,6 +232,11 @@ class DiscordClient {
 	std::string getMemberDisplayName(const std::string &guildId, const std::string &userId, const User &user);
 	std::string getGuildIdFromChannel(const std::string &channelId);
 
+	enum class GuildChannelsState { LOADED, UNLOADED, LOADING, FAILED };
+	GuildChannelsState getGuildChannelsState(const std::string &guildId);
+	// For guilds whose channels READY left out; false when no load started.
+	bool loadGuildChannels(const std::string &guildId);
+
   private:
 	DiscordClient();
 	~DiscordClient();
@@ -231,20 +244,48 @@ class DiscordClient {
 	void workerLoop();
 	void sendHeartbeat();
 	void sendIdentify();
+	void requestGuildCount();
+	bool parseGuildBody(const Network::HttpResponse &resp, Guild &guild);
 	void sendResume();
 	void queueSend(const std::string &message);
 	void runNetworkThread(const std::string &token);
 
-	void handleMessage(std::string &message);
+	struct GatewayMessage {
+		std::string data;
+		bool compressed = false;
+		uint32_t generation = 0;
+	};
+
+	struct ReadyData;
+	struct GuildLoad;
+
+	void enqueueGatewayMessage(std::string &data, bool compressed);
+	void handleGatewayFrame(std::string &frame);
+	void processGatewayMessage(GatewayMessage &message);
 	void processMessage(std::string &message);
+	void processStreamedMessage(Network::JsonInputStream &stream, const std::string &event);
 	void handleHello(const rapidjson::Document &doc);
 	void handleDispatch(const rapidjson::Document &doc);
 	void handleInvalidSession(const rapidjson::Document &doc);
 	void handleReconnect();
 
-	void handleReady(const rapidjson::Value &d);
+	bool parseReady(JsonPull &p, ReadyData &ready, rapidjson::Document &voiceStates);
+	bool parseReadyGuilds(JsonPull &p, ReadyData &ready, rapidjson::Document &voiceStates);
+	bool parseReadySupplemental(JsonPull &p, rapidjson::Document &voiceStates);
+	bool parseGuildFields(JsonPull &p, Guild &guild, const std::string &userId, rapidjson::Document *voiceStates,
+	                      bool keepDetails, bool *unavailable = nullptr);
+	bool parseChannelArray(JsonPull &p, rapidjson::Document &item, std::vector<Channel> &out, bool &fits);
+	void finishParsedGuild(Guild &guild, const std::string &userId);
+	void computeViewable(Guild &guild, const std::string &userId);
+	void applyReady(ReadyData &ready, rapidjson::Document &voiceStates);
+	void applyVoiceStatesLocked(rapidjson::Document &voiceStates);
+	void invalidateSession();
+	void applyGuildCreate(Guild &guild, rapidjson::Document &voiceStates);
+	void applyGuildDetailsLocked(Guild &guild, Guild &details);
+	void completeGuildLoadLocked(GuildLoad &load);
+	Guild *findGuildLocked(const std::string &guildId);
+
 	void handleResumed();
-	void handleGuildCreate(const rapidjson::Value &d);
 	void handleChannelCreateUpdate(const rapidjson::Value &d, const std::string &guildIdOverride = "");
 	void handleGuildMembersChunk(const rapidjson::Value &d);
 	void applyVoiceMemberName(const std::string &userId, const Member &member);
@@ -261,8 +302,7 @@ class DiscordClient {
 	void handleUserSettingsUpdate(const rapidjson::Value &d);
 	void handleUserGuildSettingsUpdate(const rapidjson::Value &d);
 	void handleSessionsReplace(const rapidjson::Value &d);
-	void parseUserGuildSettings(const rapidjson::Value &arr, std::map<std::string, GuildNotificationSettings> &out);
-	void parseGuildObject(const rapidjson::Value &gObj, Guild &guild, const std::string &userId);
+	void parseUserGuildSettings(const rapidjson::Value &entry, std::map<std::string, GuildNotificationSettings> &out);
 	void parseChannelObject(const rapidjson::Value &cObj, Channel &channel);
 	void parseOverwrites(const rapidjson::Value &ows, std::vector<Overwrite> &overwrites);
 
@@ -281,6 +321,8 @@ class DiscordClient {
 
 	uint64_t calcBasePermissions(const Guild &guild, const std::string &userId,
 	                             const std::vector<std::string> &memberRoleIds);
+	uint64_t applyChannelOverwrites(uint64_t base, const Guild &guild, const Channel *parent, const Channel &channel,
+	                                const std::string &userId, const std::vector<std::string> &memberRoleIds);
 	uint64_t computeChannelPermissions(const Guild &guild, const Channel &channel, const std::string &userId,
 	                                   const std::vector<std::string> &memberRoleIds);
 	uint64_t computeOverwrites(uint64_t base, const std::string &guildId, const std::string &userId,
@@ -303,12 +345,14 @@ class DiscordClient {
 	std::string token;
 	std::atomic<ConnectionState> state;
 
-	int heartbeatInterval;
-	uint64_t lastHeartbeat;
-	bool waitingForHeartbeatAck;
+	std::atomic<int> heartbeatInterval;
+	std::atomic<uint64_t> lastHeartbeat;
+	std::atomic<bool> waitingForHeartbeatAck;
 	bool hasReceivedHello;
 	std::string sessionId;
-	int lastSequence;
+	std::string resumeGatewayUrl;
+	std::atomic<uint64_t> lastSequence;
+	std::atomic<bool> reconnectRequested{false};
 
 	bool isConnecting;
 	bool stopWorker;
@@ -320,9 +364,21 @@ class DiscordClient {
 	Utils::WorkerThread workerThread;
 	Utils::WorkerThread networkThread;
 
-	std::deque<std::string> messageQueue;
+	std::deque<GatewayMessage> messageQueue;
 	std::mutex queueMutex;
 	std::condition_variable queueCv;
+
+	// Network thread only.
+	std::string pendingFrames;
+	uint32_t connectionGeneration = 0;
+	// Worker thread only.
+	Network::ZlibInflater inflater;
+	uint32_t inflaterGeneration = 0;
+
+	std::atomic<int> expectedGuildCount{-1};
+
+	std::string guildLoadInFlight;
+	std::string guildLoadFailed;
 
 	std::deque<std::string> sendQueue;
 	std::mutex sendQueueMutex;

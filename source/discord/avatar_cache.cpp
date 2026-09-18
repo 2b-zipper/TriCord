@@ -57,18 +57,14 @@ void AvatarCache::update() {
 		bool wanted = (it != cache.end() && it->second.loading);
 
 		if (wanted && pa.tiled.pixels) {
-			C3D_Tex *tex = (C3D_Tex *)malloc(sizeof(C3D_Tex));
-			if (tex && C3D_TexInit(tex, pa.tiled.p2w, pa.tiled.p2h, GPU_RGBA8)) {
-				C3D_TexSetFilter(tex, GPU_LINEAR, GPU_LINEAR);
-				memcpy(tex->data, pa.tiled.pixels, pa.tiled.vramSize);
-				GSPGPU_FlushDataCache(tex->data, pa.tiled.vramSize);
+			C3D_Tex *tex = Utils::Image::createTexture(pa.tiled);
+			if (tex) {
 				if (it->second.tex) {
 					C3D_TexDelete(it->second.tex);
 					free(it->second.tex);
 				}
 				it->second.tex = tex;
 			} else {
-				free(tex);
 				it->second.attempts = MAX_ATTEMPTS;
 			}
 			it->second.loading = false;
@@ -212,14 +208,14 @@ void AvatarCache::startFetchLocked(const std::string &key, const std::string &ur
 
 	Network::NetworkManager::getInstance().enqueue(
 	    url, "GET", "", Network::RequestPriority::BACKGROUND,
-	    [this, key, cornerRatio](const Network::HttpResponse &resp) {
+	    [this, key, cornerRatio](Network::HttpResponse &resp) {
 		    if (resp.statusCode != 200 || resp.body.empty()) {
 			    std::lock_guard<std::recursive_mutex> lock(cacheMutex);
 			    markFailedLocked(key);
 			    return;
 		    }
 
-		    UI::ImageManager::getInstance().runOnDecoder([this, key, cornerRatio, body = resp.body] {
+		    UI::ImageManager::getInstance().runOnDecoder([this, key, cornerRatio, body = std::move(resp.body)] {
 			    Utils::Image::TiledData tiled = Utils::Image::decodeToTiled(
 			        (const unsigned char *)body.data(), body.size(), Utils::Image::maxRemoteDim(),
 			        Utils::Image::maxRemoteDim(), true, cornerRatio);

@@ -101,7 +101,7 @@ void NetworkManager::shutdown() {
 }
 
 void NetworkManager::enqueue(const std::string &url, const std::string &method, const std::string &body,
-                             RequestPriority priority, std::function<void(const HttpResponse &)> callback,
+                             RequestPriority priority, ResponseCallback callback,
                              const std::map<std::string, std::string> &extraHeaders) {
 
 	{

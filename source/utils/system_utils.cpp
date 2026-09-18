@@ -1,6 +1,10 @@
 #include "utils/system_utils.h"
 #include "log.h"
 #include <3ds.h>
+#include <malloc.h>
+
+extern "C" u32 __ctru_heap_size;
+extern "C" u32 __ctru_linear_heap_size;
 
 namespace Utils {
 namespace System {
@@ -50,6 +54,16 @@ bool isNew3DS() {
 	}();
 	return isNew;
 }
+
+// Heap that newlib's arena has not claimed yet is free too.
+size_t heapFreeBytes() {
+	struct mallinfo info = mallinfo();
+	size_t arena = (size_t)info.arena;
+	size_t untouched = __ctru_heap_size > arena ? __ctru_heap_size - arena : 0;
+	return untouched + (size_t)info.fordblks;
+}
+
+size_t linearHeapSize() { return __ctru_linear_heap_size; }
 
 } // namespace System
 } // namespace Utils

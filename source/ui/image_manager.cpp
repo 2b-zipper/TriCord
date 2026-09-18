@@ -2,6 +2,7 @@
 #include "log.h"
 #include "network/network_manager.h"
 #include "utils/image_utils.h"
+#include "utils/system_utils.h"
 
 #include <cstring>
 
@@ -10,6 +11,12 @@ namespace UI {
 ImageManager &ImageManager::getInstance() {
 	static ImageManager instance;
 	return instance;
+}
+
+size_t ImageManager::getCacheBudget() {
+	static const size_t budget =
+	    Utils::System::linearHeapSize() >= 32 * 1024 * 1024 ? 12 * 1024 * 1024 : 8 * 1024 * 1024;
+	return budget;
 }
 
 ImageManager::~ImageManager() {
@@ -301,7 +308,7 @@ void ImageManager::prefetch(const std::string &url, int origW, int origH, Networ
 
 	int sessionId = currentSessionId;
 	Network::NetworkManager::getInstance().enqueue(
-	    optimizedUrl, "GET", "", priority, [this, url, sessionId, priority](const Network::HttpResponse &resp) {
+	    optimizedUrl, "GET", "", priority, [this, url, sessionId, priority](Network::HttpResponse &resp) {
 		    if (currentSessionId != sessionId) {
 			    return;
 		    }
@@ -409,40 +416,29 @@ void ImageManager::update() {
 
 	if (decoded) {
 		std::lock_guard<std::mutex> lock(cacheMutex);
-		while (currentCacheBytes + p.tiled.vramSize > MAX_CACHE_BYTES && !lruList.empty()) {
+		while (currentCacheBytes + p.tiled.vramSize > getCacheBudget() && !lruList.empty()) {
 			evictOldest();
 		}
 	}
 
 	ImageInfo info;
 	if (decoded) {
-		C3D_Tex *tex = (C3D_Tex *)malloc(sizeof(C3D_Tex));
-		bool initSuccess = false;
-		if (tex) {
-			while (!(initSuccess = C3D_TexInit(tex, p.tiled.p2w, p.tiled.p2h, GPU_RGBA8))) {
-				std::lock_guard<std::mutex> lock(cacheMutex);
-				if (!lruList.empty()) {
-					Logger::log("[Image] C3D_TexInit failed. Evicting texture to free VRAM...");
-					evictOldest();
-				} else {
-					break;
-				}
+		C3D_Tex *tex = nullptr;
+		while (!(tex = Utils::Image::createTexture(p.tiled))) {
+			std::lock_guard<std::mutex> lock(cacheMutex);
+			if (lruList.empty()) {
+				break;
 			}
+			Logger::log("[Image] C3D_TexInit failed. Evicting texture to free VRAM...");
+			evictOldest();
 		}
 
-		if (initSuccess) {
-			C3D_TexSetFilter(tex, GPU_LINEAR, GPU_LINEAR);
-			memcpy(tex->data, p.tiled.pixels, p.tiled.vramSize);
-			GSPGPU_FlushDataCache(tex->data, p.tiled.vramSize);
-
+		if (tex) {
 			info.tex = tex;
 			info.originalW = p.width;
 			info.originalH = p.height;
 			info.vramSize = p.tiled.vramSize;
 		} else {
-			if (tex) {
-				free(tex);
-			}
 			info.failed = true;
 			Logger::log("[Image] C3D_TexInit completely failed for %s", p.url.c_str());
 		}

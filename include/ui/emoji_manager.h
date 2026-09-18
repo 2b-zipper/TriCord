@@ -67,7 +67,7 @@ class EmojiManager {
 	void ensureLoaderLocked();
 	void freePendingLocked(std::deque<PendingEmoji> &queue);
 	void uploadPendingLocked(std::unordered_map<std::string, EmojiInfo> &cache, PendingEmoji &pending);
-	void evictCustomLocked();
+	void evictLocked(std::unordered_map<std::string, EmojiInfo> &cache, size_t limit);
 
 	std::unordered_map<std::string, EmojiInfo> emojiCache;
 	std::unordered_map<std::string, EmojiInfo> twemojiCache;
@@ -84,7 +84,7 @@ class EmojiManager {
 	uint32_t frameCounter = 0;
 
 	// Uploaded in update(): off-thread C3D_TexInit races the image cache for linear memory.
-	std::deque<PendingEmoji> pendingEmoji;
+	std::deque<PendingEmoji> pendingTwemoji;
 	std::deque<PendingEmoji> pendingCustom;
 
 	Utils::WorkerThread loaderThread;
@@ -97,6 +97,7 @@ class EmojiManager {
 
 	static const size_t MAX_TWEMOJI_CACHE = 250;
 	static const size_t MAX_CUSTOM_CACHE = 250;
+	static const size_t EVICT_BATCH = 50;
 	static const size_t MAX_PENDING_EMOJI = 4;
 	static const size_t MAX_UPLOADS_PER_FRAME = 4;
 };

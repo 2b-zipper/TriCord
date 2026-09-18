@@ -166,6 +166,58 @@ void ServerListScreen::rebuildList() {
 	updateUnreadCache();
 }
 
+void ServerListScreen::loadHighlightedGuildChannels() {
+	using ChannelsState = Discord::DiscordClient::GuildChannelsState;
+	if (selectedIndex < 0 || selectedIndex >= (int)listItems.size()) {
+		return;
+	}
+	const auto &item = listItems[selectedIndex];
+	Discord::DiscordClient &client = Discord::DiscordClient::getInstance();
+
+	if (!channelLoadPending.empty()) {
+		if (client.getGuildChannelsState(channelLoadPending) == ChannelsState::LOADING) {
+			return;
+		}
+		bool visible = channelLoadPending == item.id;
+		channelLoadPending.clear();
+		if (visible) {
+			refreshChannels();
+			if (state != State::SELECTING_SERVER) {
+				selectFirstChannel();
+			}
+		}
+	}
+
+	if (item.isFolder || item.isDm) {
+		return;
+	}
+	if (item.id != channelLoadFor) {
+		channelLoadFor = item.id;
+		channelLoadTimer = 0;
+		channelLoadAttempted = false;
+	}
+	if (channelLoadAttempted || client.getGuildChannelsState(item.id) == ChannelsState::LOADED) {
+		return;
+	}
+	if (++channelLoadTimer < SUBSCRIBE_SETTLE_FRAMES) {
+		return;
+	}
+
+	// Another guild may still be loading; retry on a later frame until this one starts.
+	if (client.loadGuildChannels(item.id)) {
+		channelLoadAttempted = true;
+		channelLoadPending = item.id;
+	}
+}
+
+void ServerListScreen::selectFirstChannel() {
+	selectedChannelIndex = 0;
+	while (selectedChannelIndex < (int)sortedChannels.size() && sortedChannels[selectedChannelIndex].type == 4) {
+		selectedChannelIndex++;
+	}
+	channelScrollOffset = 0;
+}
+
 void ServerListScreen::subscribeHighlightedGuild() {
 	if (selectedIndex < 0 || selectedIndex >= (int)listItems.size()) {
 		return;
@@ -924,6 +976,7 @@ void ServerListScreen::update() {
 		}
 	}
 
+	loadHighlightedGuildChannels();
 	subscribeHighlightedGuild();
 
 	u32 kDown = hidKeysDown();
@@ -1103,11 +1156,6 @@ void ServerListScreen::update() {
 			sm.setLastServerScroll(scrollOffset);
 			refreshChannels();
 			channelScrollOffset = 0;
-			selectedChannelIndex = 0;
-			while (selectedChannelIndex < (int)sortedChannels.size() &&
-			       sortedChannels[selectedChannelIndex].type == 4) {
-				selectedChannelIndex++;
-			}
 			selectedChannelIndex = -1;
 
 			sm.setLastChannelIndex(sm.getSelectedGuildId(), selectedChannelIndex);
@@ -1141,12 +1189,7 @@ void ServerListScreen::update() {
 					state = State::TRANSITION_TO_CHANNEL;
 					ScreenManager::getInstance().setSelectedGuildId(item.id);
 
-					selectedChannelIndex = 0;
-					while (selectedChannelIndex < (int)sortedChannels.size() &&
-					       sortedChannels[selectedChannelIndex].type == 4) {
-						selectedChannelIndex++;
-					}
-					channelScrollOffset = 0;
+					selectFirstChannel();
 
 					sm.setLastChannelIndex(item.id, selectedChannelIndex);
 					sm.setLastChannelScroll(item.id, channelScrollOffset);
@@ -1379,13 +1422,26 @@ void ServerListScreen::drawChannelList(float x, float y, float alpha) {
 	float startY = y + headerH + 4.0f;
 
 	if (sortedChannels.empty()) {
-		if (selectedIndex >= 0 && selectedIndex < (int)listItems.size() && listItems[selectedIndex].isFolder) {
+		const ListItem *item =
+		    (selectedIndex >= 0 && selectedIndex < (int)listItems.size()) ? &listItems[selectedIndex] : nullptr;
+		if (item && item->isFolder) {
 			return;
 		}
 
-		bool isDmPane = selectedIndex >= 0 && selectedIndex < (int)listItems.size() && listItems[selectedIndex].isDm;
+		const char *emptyKey = "channel.no_visible";
+		if (item && item->isDm) {
+			emptyKey = "dm.no_messages";
+		} else if (item) {
+			using ChannelsState = Discord::DiscordClient::GuildChannelsState;
+			ChannelsState channelsState = Discord::DiscordClient::getInstance().getGuildChannelsState(item->id);
+			if (channelsState == ChannelsState::FAILED) {
+				emptyKey = "channel.load_failed";
+			} else if (channelsState != ChannelsState::LOADED) {
+				emptyKey = "common.loading";
+			}
+		}
 		drawText(startX, startY + 20, 0.5f, 0.5f, 0.5f, ScreenManager::colorTextMuted(),
-		         Core::I18n::getInstance().get(isDmPane ? "dm.no_messages" : "channel.no_visible"));
+		         Core::I18n::getInstance().get(emptyKey));
 		return;
 	}
 

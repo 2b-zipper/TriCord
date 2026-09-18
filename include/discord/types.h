@@ -112,6 +112,8 @@ struct Guild {
 	std::vector<std::string> myRoles;
 	std::vector<Role> roles;
 	std::vector<Member> members;
+	bool channelsLoaded = true;
+	bool loadedOnDemand = false;
 };
 
 struct ReadState {

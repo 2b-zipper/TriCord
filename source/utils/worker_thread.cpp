@@ -14,14 +14,7 @@ void trampoline(void *arg) {
 
 int extraCoreThreadCount = 0;
 
-bool hasExtraCore() {
-	static const bool available = [] {
-		bool ok = System::isNew3DS();
-		Logger::log("[Thread] Extra core %s", ok ? "available" : "unavailable");
-		return ok;
-	}();
-	return available;
-}
+bool hasExtraCore() { return System::isNew3DS(); }
 
 s32 workerPriority(int delta) {
 	s32 prio = 0x30;

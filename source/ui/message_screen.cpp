@@ -113,7 +113,8 @@ void MessageScreen::onEnter() {
 	this->channelType = channel.type;
 	this->channelTopic = channel.topic;
 	this->guildId = client.getGuildIdFromChannel(channelId);
-	this->rulesChannelId = client.getGuild(guildId).rules_channel_id;
+	const Discord::Guild *guildInfo = client.getGuildPtr(guildId);
+	this->rulesChannelId = guildInfo ? guildInfo->rules_channel_id : "";
 
 	if (!this->guildId.empty() && this->guildId != "DM") {
 		const auto &guilds = client.getGuilds();
@@ -256,7 +257,7 @@ void MessageScreen::onEnter() {
 	// DMs carry no guild permissions, so the viewable flag never applies to them.
 	bool isPrivate = (channel.type == 1 || channel.type == 3);
 	isHiddenChannel = !isPrivate && !channel.viewable &&
-	                  (guildId.empty() || client.getGuild(guildId).ownerId != client.getCurrentUser().id);
+	                  (guildId.empty() || !guildInfo || guildInfo->ownerId != client.getCurrentUser().id);
 
 	if (isHiddenChannel) {
 		isLoading = false;
