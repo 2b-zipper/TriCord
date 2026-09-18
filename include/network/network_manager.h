@@ -39,14 +39,12 @@ class NetworkManager {
 	void shutdown();
 
 	void enqueue(const std::string &url, const std::string &method, const std::string &body, RequestPriority priority,
-	             ResponseCallback callback,
-	             const std::map<std::string, std::string> &extraHeaders = {});
+	             ResponseCallback callback, const std::map<std::string, std::string> &extraHeaders = {});
 
 	void getQueueDepths(size_t &realtime, size_t &interactive, size_t &background);
 
 	void get(const std::string &url, RequestPriority priority, ResponseCallback callback);
-	void post(const std::string &url, const std::string &body, RequestPriority priority,
-	          ResponseCallback callback);
+	void post(const std::string &url, const std::string &body, RequestPriority priority, ResponseCallback callback);
 
   private:
 	NetworkManager();

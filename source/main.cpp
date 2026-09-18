@@ -50,8 +50,8 @@ void __system_allocateHeaps(void) {
 	__ctru_linear_heap_size = linear;
 	__ctru_heap_size = remaining - linear;
 
-	if (R_FAILED(svcControlMemory(&__ctru_heap, OS_HEAP_AREA_BEGIN, 0, __ctru_heap_size, MEMOP_ALLOC,
-	                              MEMPERM_READWRITE))) {
+	if (R_FAILED(
+	        svcControlMemory(&__ctru_heap, OS_HEAP_AREA_BEGIN, 0, __ctru_heap_size, MEMOP_ALLOC, MEMPERM_READWRITE))) {
 		svcBreak(USERBREAK_PANIC);
 	}
 	if (R_FAILED(svcControlMemory(&__ctru_linear_heap, 0, 0, __ctru_linear_heap_size, MEMOP_ALLOC_LINEAR,

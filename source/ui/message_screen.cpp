@@ -524,8 +524,8 @@ void MessageScreen::update() {
 
 						client.sendReply(
 						    channelId, res.text, targetMsgId,
-						    [this, token = aliveToken, replyMsgId = replyMsg.id](const Discord::Message &sentMsg, bool success,
-						                                                         int errorCode) {
+						    [this, token = aliveToken, replyMsgId = replyMsg.id](const Discord::Message &sentMsg,
+						                                                         bool success, int errorCode) {
 							    if (!*token) {
 								    return;
 							    }
@@ -1296,7 +1296,8 @@ float MessageScreen::drawAuthorHeader(const Discord::Message &msg, float x, floa
 	return y + 14.0f;
 }
 
-float MessageScreen::drawMessageContent(const Discord::Message &msg, float x, float y, const MessageRenderCache *renderCache) {
+float MessageScreen::drawMessageContent(const Discord::Message &msg, float x, float y,
+                                        const MessageRenderCache *renderCache) {
 	std::string content = msg.displayContent;
 	if (content.empty()) {
 		return y;
@@ -1502,7 +1503,7 @@ bool drawEmojiGlyph(const Discord::Emoji &emoji, float x, float y, float box, fl
 	EmojiManager::EmojiInfo info;
 	if (emoji.id.empty()) {
 		if (emoji.hex.empty()) {
-			const_cast<Discord::Emoji&>(emoji).hex = Utils::Utf8::utf8ToHex(emoji.name);
+			const_cast<Discord::Emoji &>(emoji).hex = Utils::Utf8::utf8ToHex(emoji.name);
 		}
 		info = mgr.getTwemojiInfo(emoji.hex);
 	} else {
@@ -1748,8 +1749,9 @@ float MessageScreen::drawReactions(const Discord::Message &msg, float x, float y
 	return newY + rowHeight + 4.0f;
 }
 
-float MessageScreen::drawMessage(const Discord::Message &msg, float y, float maxWidth, bool isSelected,
-                                 bool showHeader, bool prevGroupedMention, bool nextGroupedMention, const MessageRenderCache *renderCache) {
+float MessageScreen::drawMessage(const Discord::Message &msg, float y, float maxWidth, bool isSelected, bool showHeader,
+                                 bool prevGroupedMention, bool nextGroupedMention,
+                                 const MessageRenderCache *renderCache) {
 	float height = renderCache ? renderCache->height : calculateMessageHeight(msg, showHeader);
 	float topMargin = showHeader ? 4.0f : 0.0f;
 	const float textOffsetX = 42.0f;
@@ -1765,16 +1767,18 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y, float max
 	if (isMentioned) {
 		float highlightY = y + topMargin;
 		float highlightH = height - topMargin;
-		u32 mentionBg = (Config::getInstance().getThemeType() == 1) ? C2D_Color32(250, 234, 184, 255) : C2D_Color32(65, 54, 30, 255);
+		u32 mentionBg = (Config::getInstance().getThemeType() == 1) ? C2D_Color32(250, 234, 184, 255)
+		                                                            : C2D_Color32(65, 54, 30, 255);
 		u32 mentionBorder = C2D_Color32(250, 166, 26, 255);
 
 		if (isSelected) {
-			mentionBg = (Config::getInstance().getThemeType() == 1) ? C2D_Color32(255, 244, 194, 255) : C2D_Color32(80, 69, 45, 255);
+			mentionBg = (Config::getInstance().getThemeType() == 1) ? C2D_Color32(255, 244, 194, 255)
+			                                                        : C2D_Color32(80, 69, 45, 255);
 		}
-		
+
 		drawRoundedRect(4.0f, highlightY, 0.1f, 392.0f, highlightH, 6.0f, mentionBg);
 		C2D_DrawRectSolid(4.0f, highlightY, 0.1f, 6.0f, highlightH, mentionBg);
-		
+
 		if (prevGroupedMention) {
 			C2D_DrawRectSolid(390.0f, highlightY, 0.1f, 6.0f, 6.0f, mentionBg);
 		}
@@ -1820,7 +1824,8 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y, float max
 	if (!msg.embeds.empty()) {
 		for (size_t ei = 0; ei < msg.embeds.size(); ei++) {
 			const auto &embed = msg.embeds[ei];
-			const EmbedRenderCache *eCache = (renderCache && ei < renderCache->embeds.size()) ? &renderCache->embeds[ei] : nullptr;
+			const EmbedRenderCache *eCache =
+			    (renderCache && ei < renderCache->embeds.size()) ? &renderCache->embeds[ei] : nullptr;
 			contentY += renderEmbed(embed, textOffsetX, contentY, 400.0f - textOffsetX - 10.0f, eCache);
 			contentY += 6.0f;
 		}
@@ -1995,7 +2000,8 @@ void MessageScreen::renderTop(C3D_RenderTarget *target) {
 			}
 		}
 
-		drawMessage(this->messages[i], msgY, 400.0f, isSelected, showHeader, prevGroupedMention, nextGroupedMention, renderCache);
+		drawMessage(this->messages[i], msgY, 400.0f, isSelected, showHeader, prevGroupedMention, nextGroupedMention,
+		            renderCache);
 	}
 
 	if (showNewMessageIndicator) {
@@ -2256,7 +2262,8 @@ void MessageScreen::openKeyboard() {
 
 		client.sendMessage(
 		    channelId, res.text,
-		    [this, token = aliveToken, pendingId = optimisticMsg.id](const Discord::Message &sentMsg, bool success, int errorCode) {
+		    [this, token = aliveToken, pendingId = optimisticMsg.id](const Discord::Message &sentMsg, bool success,
+		                                                             int errorCode) {
 			    if (!*token) {
 				    return;
 			    }
@@ -2406,7 +2413,8 @@ void MessageScreen::checkAndMarkChannelRead() {
 	}
 }
 
-Discord::Message MessageScreen::createOptimisticMessage(const std::string &content, int type, const std::string &referencedAuthor) {
+Discord::Message MessageScreen::createOptimisticMessage(const std::string &content, int type,
+                                                        const std::string &referencedAuthor) {
 	Discord::Message msg;
 	msg.id = "pending_" + std::to_string(osGetTime());
 	msg.nonce = msg.id;
@@ -2420,7 +2428,8 @@ Discord::Message MessageScreen::createOptimisticMessage(const std::string &conte
 	return msg;
 }
 
-void MessageScreen::handleMessageSendResult(const std::string &pendingId, const Discord::Message &sentMsg, bool success, int errorCode) {
+void MessageScreen::handleMessageSendResult(const std::string &pendingId, const Discord::Message &sentMsg, bool success,
+                                            int errorCode) {
 	std::lock_guard<std::recursive_mutex> lock(messageMutex);
 	if (!*aliveToken) {
 		return;
@@ -2816,9 +2825,8 @@ void MessageScreen::renderMenu() {
 }
 
 float MessageScreen::calculateEmbedHeight(const Discord::Embed &embed, float maxWidth) {
-	std::string keyStr = embed.title + "|" + embed.description + "|" + embed.author_name + "|" +
-	                     embed.image_url + "|" + embed.thumbnail_url + "|" + embed.footer_text + "|" +
-	                     std::to_string((int)maxWidth);
+	std::string keyStr = embed.title + "|" + embed.description + "|" + embed.author_name + "|" + embed.image_url + "|" +
+	                     embed.thumbnail_url + "|" + embed.footer_text + "|" + std::to_string((int)maxWidth);
 	for (const auto &f : embed.fields) {
 		keyStr += "|" + f.name + "|" + f.value;
 	}
@@ -2834,7 +2842,7 @@ float MessageScreen::calculateEmbedHeight(const Discord::Embed &embed, float max
 	if (layout.hasImage || layout.hasThumbnail) {
 		std::string mediaUrl =
 		    layout.hasImage ? (embed.image_proxy_url.empty() ? embed.image_url : embed.image_proxy_url)
-		             : (embed.thumbnail_proxy_url.empty() ? embed.thumbnail_url : embed.thumbnail_proxy_url);
+		                    : (embed.thumbnail_proxy_url.empty() ? embed.thumbnail_url : embed.thumbnail_proxy_url);
 		mediaInfo = ImageManager::getInstance().getImageInfo(mediaUrl);
 	}
 
@@ -2907,7 +2915,8 @@ float MessageScreen::calculateEmbedHeight(const Discord::Embed &embed, float max
 	return h;
 }
 
-float MessageScreen::renderEmbed(const Discord::Embed &embed, float x, float y, float maxWidth, const EmbedRenderCache *embedCache) {
+float MessageScreen::renderEmbed(const Discord::Embed &embed, float x, float y, float maxWidth,
+                                 const EmbedRenderCache *embedCache) {
 	EmbedLayout layout = embedCache ? embedCache->layout : getEmbedLayout(embed, maxWidth);
 
 	u32 embedColor = embed.color != 0
@@ -3015,7 +3024,7 @@ float MessageScreen::renderEmbed(const Discord::Embed &embed, float x, float y, 
 	if (layout.hasImage || (layout.isMedia && layout.hasThumbnail)) {
 		std::string mediaUrl =
 		    layout.hasImage ? (!embed.image_proxy_url.empty() ? embed.image_proxy_url : embed.image_url)
-		             : (!embed.thumbnail_proxy_url.empty() ? embed.thumbnail_proxy_url : embed.thumbnail_url);
+		                    : (!embed.thumbnail_proxy_url.empty() ? embed.thumbnail_proxy_url : embed.thumbnail_url);
 		int imgW = layout.hasImage ? embed.image_width : embed.thumbnail_width;
 		int imgH = layout.hasImage ? embed.image_height : embed.thumbnail_height;
 		auto info = ImageManager::getInstance().getImageInfo(mediaUrl);
@@ -3058,7 +3067,8 @@ float MessageScreen::renderEmbed(const Discord::Embed &embed, float x, float y, 
 		} else {
 			ImageManager::getInstance().prefetch(mediaUrl, imgW, imgH, Network::RequestPriority::INTERACTIVE);
 			C2D_DrawRectSolid(textX, currentY, 0.49f, drawW, drawH,
-			                  layout.isSimpleMedia ? ScreenManager::colorBackgroundDark() : ScreenManager::colorEmbedMedia());
+			                  layout.isSimpleMedia ? ScreenManager::colorBackgroundDark()
+			                                       : ScreenManager::colorEmbedMedia());
 			drawText(textX + 5, currentY + (drawH / 2) - 6, 0.5f, 0.35f, 0.35f, ScreenManager::colorTextMuted(),
 			         TR("common.loading"));
 		}

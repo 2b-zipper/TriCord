@@ -1382,8 +1382,7 @@ void ServerListScreen::renderTop(C3D_RenderTarget *target) {
 				float badgeY = 3.0f;
 				drawRoundedRect(badgeX - 1.0f, badgeY - 1.0f, 0.58f, badgeW + 2.0f, badgeH + 2.0f,
 				                (badgeH + 2.0f) / 2.0f, ScreenManager::colorBackgroundDark());
-				drawRoundedRect(badgeX, badgeY, 0.59f, badgeW, badgeH, badgeH / 2.0f,
-				                C2D_Color32(237, 66, 69, 255));
+				drawRoundedRect(badgeX, badgeY, 0.59f, badgeW, badgeH, badgeH / 2.0f, C2D_Color32(237, 66, 69, 255));
 				drawText(badgeX + (badgeW - textW) / 2.0f, badgeY + 2.0f, 0.60f, 0.42f, 0.42f,
 				         C2D_Color32(255, 255, 255, 255), badgeText);
 			}
@@ -1392,8 +1391,7 @@ void ServerListScreen::renderTop(C3D_RenderTarget *target) {
 				float badgeY = 240.0f - badgeH - 3.0f;
 				drawRoundedRect(badgeX - 1.0f, badgeY - 1.0f, 0.58f, badgeW + 2.0f, badgeH + 2.0f,
 				                (badgeH + 2.0f) / 2.0f, ScreenManager::colorBackgroundDark());
-				drawRoundedRect(badgeX, badgeY, 0.59f, badgeW, badgeH, badgeH / 2.0f,
-				                C2D_Color32(237, 66, 69, 255));
+				drawRoundedRect(badgeX, badgeY, 0.59f, badgeW, badgeH, badgeH / 2.0f, C2D_Color32(237, 66, 69, 255));
 				drawText(badgeX + (badgeW - textW) / 2.0f, badgeY + 2.0f, 0.60f, 0.42f, 0.42f,
 				         C2D_Color32(255, 255, 255, 255), badgeText);
 			}
@@ -1612,8 +1610,7 @@ void ServerListScreen::drawChannelList(float x, float y, float alpha) {
 				float badgeX = x + (400.0f - x) - badgeW - 6.0f;
 				float badgeY = badgeCY - badgeR;
 
-				drawRoundedRect(badgeX, badgeY, 0.52f, badgeW, badgeR * 2.0f, badgeR,
-				                C2D_Color32(237, 66, 69, 255));
+				drawRoundedRect(badgeX, badgeY, 0.52f, badgeW, badgeR * 2.0f, badgeR, C2D_Color32(237, 66, 69, 255));
 				drawText(badgeX + (badgeW - textW) / 2.0f, badgeCY - 4.5f, 0.53f, tScale, tScale,
 				         C2D_Color32(255, 255, 255, 255), cntStr);
 			}

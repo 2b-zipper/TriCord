@@ -207,8 +207,7 @@ void AvatarCache::startFetchLocked(const std::string &key, const std::string &ur
 	cache[key] = info;
 
 	Network::NetworkManager::getInstance().enqueue(
-	    url, "GET", "", Network::RequestPriority::BACKGROUND,
-	    [this, key, cornerRatio](Network::HttpResponse &resp) {
+	    url, "GET", "", Network::RequestPriority::BACKGROUND, [this, key, cornerRatio](Network::HttpResponse &resp) {
 		    if (resp.statusCode != 200 || resp.body.empty()) {
 			    std::lock_guard<std::recursive_mutex> lock(cacheMutex);
 			    markFailedLocked(key);

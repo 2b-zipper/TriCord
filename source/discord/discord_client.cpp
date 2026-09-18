@@ -915,8 +915,7 @@ JsonPull::Token openValue(JsonPull &p) {
 }
 
 // Walks the members of an object whose opening brace was just consumed.
-template <typename Fn>
-bool forEachMember(JsonPull &p, Fn fn) {
+template <typename Fn> bool forEachMember(JsonPull &p, Fn fn) {
 	std::string key;
 	while (p.nextKey(key)) {
 		if (!fn(key)) {
@@ -926,8 +925,7 @@ bool forEachMember(JsonPull &p, Fn fn) {
 	return p.ok();
 }
 
-template <typename Fn>
-bool captureObjects(JsonPull &p, rapidjson::Document &item, Fn fn) {
+template <typename Fn> bool captureObjects(JsonPull &p, rapidjson::Document &item, Fn fn) {
 	while (p.captureValue(item)) {
 		if (item.IsObject()) {
 			fn(item);
@@ -937,8 +935,7 @@ bool captureObjects(JsonPull &p, rapidjson::Document &item, Fn fn) {
 }
 
 // Calls fn with each object of the array value that comes next; any other value is skipped.
-template <typename Fn>
-bool forEachElement(JsonPull &p, rapidjson::Document &item, Fn fn) {
+template <typename Fn> bool forEachElement(JsonPull &p, rapidjson::Document &item, Fn fn) {
 	switch (openValue(p)) {
 	case JsonPull::Token::START_ARRAY:
 		return captureObjects(p, item, fn);
@@ -952,8 +949,7 @@ bool forEachElement(JsonPull &p, rapidjson::Document &item, Fn fn) {
 }
 
 // Versioned READY fields come either as an array or as {"entries": [...]}.
-template <typename Fn>
-bool forEachEntry(JsonPull &p, rapidjson::Document &item, Fn fn) {
+template <typename Fn> bool forEachEntry(JsonPull &p, rapidjson::Document &item, Fn fn) {
 	switch (openValue(p)) {
 	case JsonPull::Token::START_ARRAY:
 		return captureObjects(p, item, fn);
@@ -968,8 +964,7 @@ bool forEachEntry(JsonPull &p, rapidjson::Document &item, Fn fn) {
 }
 
 // body() starts after the object's '{' and must consume through its '}'.
-template <typename Body>
-bool forEachObject(JsonPull &p, Body body) {
+template <typename Body> bool forEachObject(JsonPull &p, Body body) {
 	switch (openValue(p)) {
 	case JsonPull::Token::START_ARRAY:
 		break;
@@ -2962,8 +2957,7 @@ bool DiscordClient::parseGuildBody(const Network::HttpResponse &resp, Guild &gui
 	}
 	Network::JsonInputStream stream(resp.body.data(), resp.body.size());
 	JsonPull p(stream);
-	return p.next() && p.token() == JsonPull::Token::START_OBJECT &&
-	       parseGuildFields(p, guild, "", nullptr, true);
+	return p.next() && p.token() == JsonPull::Token::START_OBJECT && parseGuildFields(p, guild, "", nullptr, true);
 }
 
 void DiscordClient::fetchGuildDetails(const std::string &guildId, std::function<void(bool)> cb) {
@@ -2977,23 +2971,22 @@ void DiscordClient::fetchGuildDetails(const std::string &guildId, std::function<
 
 	std::string url = "https://discord.com/api/v10/guilds/" + guildId + "?with_counts=true";
 
-	Network::NetworkManager::getInstance().enqueue(
-	    url, "GET", "", Network::RequestPriority::INTERACTIVE,
-	    [this, guildId, cb](Network::HttpResponse &resp) {
-		    Guild details;
-		    bool parsed = parseGuildBody(resp, details);
-		    if (parsed) {
-			    std::lock_guard<std::recursive_mutex> lock(clientMutex);
-			    Guild *guild = findGuildLocked(guildId);
-			    if (guild) {
-				    applyGuildDetailsLocked(*guild, details);
-			    }
-		    }
-		    if (cb) {
-			    cb(parsed);
-		    }
-	    },
-	    {{"Authorization", token}});
+	Network::NetworkManager::getInstance().enqueue(url, "GET", "", Network::RequestPriority::INTERACTIVE,
+	                                               [this, guildId, cb](Network::HttpResponse &resp) {
+		                                               Guild details;
+		                                               bool parsed = parseGuildBody(resp, details);
+		                                               if (parsed) {
+			                                               std::lock_guard<std::recursive_mutex> lock(clientMutex);
+			                                               Guild *guild = findGuildLocked(guildId);
+			                                               if (guild) {
+				                                               applyGuildDetailsLocked(*guild, details);
+			                                               }
+		                                               }
+		                                               if (cb) {
+			                                               cb(parsed);
+		                                               }
+	                                               },
+	                                               {{"Authorization", token}});
 }
 
 UserProfile DiscordClient::getUserProfile(const std::string &userId) {

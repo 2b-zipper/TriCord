@@ -283,7 +283,7 @@ void EmojiPicker::render(C3D_RenderTarget *target, const Discord::Message *activ
 		for (const auto &r : activeMsg->reactions) {
 			if (r.me) {
 				if (r.emoji.hex.empty()) {
-					const_cast<Discord::Emoji&>(r.emoji).hex = Utils::Utf8::utf8ToHex(r.emoji.name);
+					const_cast<Discord::Emoji &>(r.emoji).hex = Utils::Utf8::utf8ToHex(r.emoji.name);
 				}
 				activeMsgReactedHexes.insert(r.emoji.hex);
 			}

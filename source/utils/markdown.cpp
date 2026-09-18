@@ -181,7 +181,7 @@ void parseInline(const std::string &t, uint16_t style, const std::string &url, s
 					uint32_t fg = std::stoul(t.substr(i + 1, sc1 - i - 1));
 					uint32_t bg = std::stoul(t.substr(sc1 + 1, sc2 - sc1 - 1));
 					std::string mText = t.substr(sc2 + 1, close - sc2 - 1);
-					
+
 					flush(buf, style, url, out);
 					Span s;
 					s.text = mText;
@@ -190,7 +190,7 @@ void parseInline(const std::string &t, uint16_t style, const std::string &url, s
 					s.bgColor = bg;
 					s.url = url;
 					out.push_back(s);
-					
+
 					i = close + 1;
 					continue;
 				}

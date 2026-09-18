@@ -916,7 +916,8 @@ void drawRichText(float x, float y, float z, float scaleX, float scaleY, u32 col
 				if (info.tex) {
 					float uMax = (float)info.originalW / info.tex->width;
 					float vMax = (float)info.originalH / info.tex->height;
-					Tex3DS_SubTexture subtex = {(u16)info.originalW, (u16)info.originalH, 0.0f, 1.0f, uMax, 1.0f - vMax};
+					Tex3DS_SubTexture subtex = {(u16)info.originalW, (u16)info.originalH, 0.0f, 1.0f, uMax,
+					                            1.0f - vMax};
 					const C2D_Image img = {info.tex, &subtex};
 					C2D_DrawImageAt(img, currentX, y + 1.0f, z, nullptr, emojiSize / info.originalW,
 					                emojiSize / info.originalH);

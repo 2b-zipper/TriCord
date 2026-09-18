@@ -23,8 +23,7 @@ class ScratchDocument {
 	rapidjson::Document doc;
 };
 
-template <typename Stream>
-class Pull {
+template <typename Stream> class Pull {
   public:
 	enum class Token { NONE, NUL, BOOL, NUMBER, STRING, KEY, START_OBJECT, END_OBJECT, START_ARRAY, END_ARRAY };
 
