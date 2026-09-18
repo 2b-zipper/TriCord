@@ -43,7 +43,8 @@ class EmojiManager {
 	EmojiInfo getEmojiInfo(const std::string &emojiId);
 	EmojiInfo getTwemojiInfo(const std::string &codepointHex);
 
-	void prefetchEmoji(const std::string &emojiId);
+	// Visible emoji are fetched ahead of anything prefetched for off-screen messages.
+	void prefetchEmoji(const std::string &emojiId, bool visible = true);
 	void prefetchEmojisFromText(const std::string &text);
 
 	size_t getTwemojiCount();
@@ -68,6 +69,7 @@ class EmojiManager {
 	void freePendingLocked(std::deque<PendingEmoji> &queue);
 	void uploadPendingLocked(std::unordered_map<std::string, EmojiInfo> &cache, PendingEmoji &pending);
 	void evictLocked(std::unordered_map<std::string, EmojiInfo> &cache, size_t limit);
+	void fetchQueuedCustomLocked();
 
 	std::unordered_map<std::string, EmojiInfo> emojiCache;
 	std::unordered_map<std::string, EmojiInfo> twemojiCache;
@@ -86,6 +88,11 @@ class EmojiManager {
 	// Uploaded in update(): off-thread C3D_TexInit races the image cache for linear memory.
 	std::deque<PendingEmoji> pendingTwemoji;
 	std::deque<PendingEmoji> pendingCustom;
+
+	// Kept here rather than in the network queue so a visible emoji can still jump ahead.
+	std::deque<std::string> visibleCustomQueue;
+	std::deque<std::string> prefetchCustomQueue;
+	size_t customInFlight = 0;
 
 	Utils::WorkerThread loaderThread;
 	std::condition_variable_any loaderCv;

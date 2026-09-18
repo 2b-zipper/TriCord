@@ -2600,7 +2600,7 @@ size_t MessageScreen::messageFingerprint(const Discord::Message &msg) {
 void MessageScreen::buildMessageCache(const Discord::Message &msg, MessageRenderCache &cache) {
 	for (const auto &react : msg.reactions) {
 		if (!react.emoji.id.empty()) {
-			EmojiManager::getInstance().prefetchEmoji(react.emoji.id);
+			EmojiManager::getInstance().prefetchEmoji(react.emoji.id, false);
 		}
 	}
 	EmojiManager::getInstance().prefetchEmojisFromText(msg.content);
