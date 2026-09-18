@@ -292,26 +292,25 @@ void MessageScreen::onEnter() {
 			isLoading = false;
 		});
 	} else {
-		client.fetchMessagesAsync(
-		    channelId, 50, [this, token = aliveToken](const std::vector<Discord::Message> &fetched) {
-			    if (!*token) {
-				    return;
-			    }
-			    {
-				    std::lock_guard<std::recursive_mutex> lock(messageMutex);
-				    if (!*token) {
-					    return;
-				    }
-				    this->messages = fetched;
-				    std::reverse(this->messages.begin(), this->messages.end());
-				    rebuildLayoutCache();
-				    scrollToBottom();
-			    }
-			    isLoading = false;
-			    if (!fetched.empty()) {
-				    Discord::DiscordClient::getInstance().markChannelRead(this->channelId, fetched.front().id);
-			    }
-		    });
+		client.fetchMessagesAsync(channelId, 50,
+		                          [this, token = aliveToken](const std::vector<Discord::Message> &fetched) {
+			                          if (!*token) {
+				                          return;
+			                          }
+			                          {
+				                          std::lock_guard<std::recursive_mutex> lock(messageMutex);
+				                          if (!*token) {
+					                          return;
+				                          }
+				                          this->messages = fetched;
+				                          std::reverse(this->messages.begin(), this->messages.end());
+				                          rebuildLayoutCache();
+				                          scrollToBottom();
+			                          }
+			                          isLoading = false;
+			                          Discord::DiscordClient::getInstance().markChannelReadLatest(
+			                              this->channelId, fetched.empty() ? "" : fetched.front().id);
+		                          });
 	}
 
 	if (!this->guildId.empty()) {
@@ -436,8 +435,9 @@ void MessageScreen::update() {
 			return;
 		}
 
-		if (wasAtBottom && !isLoading && !isForumView && !messages.empty()) {
-			checkAndMarkChannelRead();
+		// Leaving before the messages arrive still counts as having opened the channel.
+		if (!isForumView && (isLoading || wasAtBottom)) {
+			Discord::DiscordClient::getInstance().markChannelReadLatest(channelId, getLatestRealMessageId());
 		}
 
 		Discord::DiscordClient::getInstance().setMessageCallback(nullptr);
@@ -2419,9 +2419,11 @@ std::string MessageScreen::getLatestRealMessageId() const {
 
 void MessageScreen::checkAndMarkChannelRead() {
 	std::string latestRealId = getLatestRealMessageId();
-	if (!latestRealId.empty()) {
-		Discord::DiscordClient::getInstance().markChannelRead(channelId, latestRealId);
+	if (latestRealId.empty() || latestRealId == lastMarkedMessageId) {
+		return;
 	}
+	lastMarkedMessageId = latestRealId;
+	Discord::DiscordClient::getInstance().markChannelReadLatest(channelId, latestRealId);
 }
 
 Discord::Message MessageScreen::createOptimisticMessage(const std::string &content, int type,

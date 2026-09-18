@@ -213,7 +213,7 @@ class DiscordClient {
 	bool isUserMentioned(const Message &msg);
 
 	void markChannelRead(const std::string &channelId, const std::string &messageId);
-	void markChannelReadLatest(const std::string &channelId);
+	void markChannelReadLatest(const std::string &channelId, const std::string &seenMessageId = "");
 	void markGuildRead(const std::string &guildId);
 	void updatePresence(UserStatus status);
 	void setGuildMuted(const std::string &guildId, bool muted, int timeWindowMinutes);

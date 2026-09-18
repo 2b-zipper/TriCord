@@ -127,6 +127,7 @@ class MessageScreen : public Screen {
 	bool pollMode = false;
 	int pollAnswerIndex = 0;
 	bool wasAtBottom = false;
+	std::string lastMarkedMessageId;
 	std::vector<std::string> menuOptions;
 	std::vector<std::string> menuActions;
 	std::set<std::string> pendingMemberFetches;

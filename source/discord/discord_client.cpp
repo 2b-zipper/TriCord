@@ -2138,31 +2138,13 @@ void DiscordClient::markChannelRead(const std::string &channelId, const std::str
 	    {{"Authorization", token}, {"Content-Type", "application/json"}});
 }
 
-void DiscordClient::markChannelReadLatest(const std::string &channelId) {
-	std::string lastMsgId;
+void DiscordClient::markChannelReadLatest(const std::string &channelId, const std::string &seenMessageId) {
+	std::string lastMsgId = seenMessageId;
 	{
 		std::lock_guard<std::recursive_mutex> lock(clientMutex);
-		auto gIt = channelToGuildCache.find(channelId);
-		if (gIt != channelToGuildCache.end() && !gIt->second.empty()) {
-			for (const auto &guild : guilds) {
-				if (guild.id != gIt->second) {
-					continue;
-				}
-				for (const auto &ch : guild.channels) {
-					if (ch.id == channelId) {
-						lastMsgId = ch.last_message_id;
-						break;
-					}
-				}
-				break;
-			}
-		} else {
-			for (const auto &ch : privateChannels) {
-				if (ch.id == channelId) {
-					lastMsgId = ch.last_message_id;
-					break;
-				}
-			}
+		const Channel *channel = getChannelPtr(channelId);
+		if (channel && UI::MessageUtils::isNewerSnowflake(channel->last_message_id, lastMsgId)) {
+			lastMsgId = channel->last_message_id;
 		}
 	}
 	if (!lastMsgId.empty()) {
