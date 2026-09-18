@@ -7,6 +7,7 @@
 #include "network/network_manager.h"
 #include "utils/json_utils.h"
 #include "utils/message_utils.h"
+#include "utils/redraw.h"
 #include "utils/system_utils.h"
 #include "utils/sound_player.h"
 #include <3ds.h>
@@ -380,6 +381,7 @@ void DiscordClient::workerLoop() {
 
 		if (!message.data.empty()) {
 			processGatewayMessage(message);
+			Utils::requestRedraw();
 		}
 	}
 	Logger::log("[Worker] Message processing thread stopped");
@@ -393,6 +395,7 @@ void DiscordClient::update() {
 		for (auto userIt = users.begin(); userIt != users.end();) {
 			if (now - userIt->timestamp > 10) {
 				userIt = users.erase(userIt);
+				Utils::requestRedraw();
 			} else {
 				++userIt;
 			}
@@ -539,8 +542,11 @@ void DiscordClient::setState(ConnectionState newState, const std::string &messag
 }
 
 void DiscordClient::setStatus(const std::string &message) {
-	std::lock_guard<std::mutex> lock(statusMutex);
-	statusMessage = message;
+	{
+		std::lock_guard<std::mutex> lock(statusMutex);
+		statusMessage = message;
+	}
+	Utils::requestRedraw();
 }
 
 void DiscordClient::enqueueGatewayMessage(std::string &data, bool compressed) {

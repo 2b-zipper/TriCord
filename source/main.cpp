@@ -124,7 +124,11 @@ int main(int argc, char **argv) {
 			break;
 		}
 
-		UI::ScreenManager::getInstance().render();
+		if (UI::ScreenManager::getInstance().shouldRender()) {
+			UI::ScreenManager::getInstance().render();
+		} else {
+			gspWaitForVBlank();
+		}
 	}
 
 	// Its destructor would otherwise run after socExit and ndspExit.

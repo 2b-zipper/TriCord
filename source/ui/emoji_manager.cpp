@@ -3,6 +3,7 @@
 #include "network/network_manager.h"
 #include "ui/image_manager.h"
 #include "utils/image_utils.h"
+#include "utils/redraw.h"
 #include <3ds.h>
 #include <algorithm>
 #include <cstdio>
@@ -285,6 +286,10 @@ void EmojiManager::update() {
 	for (size_t i = 0; i < MAX_UPLOADS_PER_FRAME && !pendingCustom.empty(); i++) {
 		uploadPendingLocked(emojiCache, pendingCustom.front());
 		pendingCustom.pop_front();
+		uploads++;
+	}
+	if (uploads > 0) {
+		Utils::requestRedraw();
 	}
 	evictLocked(twemojiCache, MAX_TWEMOJI_CACHE);
 	evictLocked(emojiCache, MAX_CUSTOM_CACHE);

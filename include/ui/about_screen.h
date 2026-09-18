@@ -14,6 +14,7 @@ class AboutScreen : public Screen {
 	void renderTop(C3D_RenderTarget *target) override;
 	void renderBottom(C3D_RenderTarget *target) override;
 	void onEnter() override;
+	bool isAnimating() const override { return true; }
 
   private:
 	float animTimer;

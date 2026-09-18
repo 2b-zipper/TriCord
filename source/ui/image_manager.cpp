@@ -2,6 +2,7 @@
 #include "log.h"
 #include "network/network_manager.h"
 #include "utils/image_utils.h"
+#include "utils/redraw.h"
 #include "utils/system_utils.h"
 
 #include <cstring>
@@ -459,6 +460,7 @@ void ImageManager::update() {
 		touchImage(p.url);
 	}
 	generation++;
+	Utils::requestRedraw();
 }
 
 } // namespace UI

@@ -17,6 +17,7 @@ class ServerListScreen : public Screen {
 	~ServerListScreen() override = default;
 
 	void update() override;
+	bool isAnimating() const override;
 	void renderTop(C3D_RenderTarget *target) override;
 	void renderBottom(C3D_RenderTarget *target) override;
 

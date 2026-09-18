@@ -8,6 +8,7 @@
 #include "ui/image_manager.h"
 #include "ui/voice_controls.h"
 #include "utils/message_utils.h"
+#include "utils/redraw.h"
 #include "utils/utf8_utils.h"
 #include <3ds.h>
 #include <algorithm>
@@ -57,6 +58,13 @@ ServerListScreen::ServerListScreen()
 	}
 
 	Logger::log("ServerListScreen: Constructor finished");
+}
+
+bool ServerListScreen::isAnimating() const {
+	if (state == State::TRANSITION_TO_CHANNEL || state == State::TRANSITION_TO_SERVER) {
+		return true;
+	}
+	return listItems.empty() && Discord::DiscordClient::getInstance().getState() != Discord::ConnectionState::READY;
 }
 
 void ServerListScreen::resetToServerView() {
@@ -922,6 +930,7 @@ void ServerListScreen::update() {
 	if (ackForVisibleChannel || guildDataChanged || ++unreadCacheTimer >= UNREAD_CACHE_INTERVAL) {
 		unreadCacheTimer = 0;
 		updateUnreadCache();
+		Utils::requestRedraw();
 	}
 
 	if (privateChannelsChanged && !listItems.empty() && selectedIndex >= 0 && selectedIndex < (int)listItems.size() &&

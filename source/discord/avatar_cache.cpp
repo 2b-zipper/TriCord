@@ -4,6 +4,7 @@
 #include "ui/image_manager.h"
 
 #include "utils/image_utils.h"
+#include "utils/redraw.h"
 #include <malloc.h>
 
 namespace Discord {
@@ -77,6 +78,9 @@ void AvatarCache::update() {
 		}
 	}
 
+	if (uploads > 0) {
+		Utils::requestRedraw();
+	}
 	evictOldestLocked();
 }
 

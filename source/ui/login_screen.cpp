@@ -6,6 +6,7 @@
 #include "qrcodegen.h"
 #include "ui/image_manager.h"
 #include "utils/file_utils.h"
+#include "utils/redraw.h"
 #include "utils/string_utils.h"
 #include <3ds.h>
 #include <cmath>
@@ -479,7 +480,13 @@ void LoginScreen::startQRLogin() {
 	}
 }
 
+bool LoginScreen::isAnimating() const {
+	auto state = Discord::DiscordClient::getInstance().getState();
+	return state == Discord::ConnectionState::CONNECTING || state == Discord::ConnectionState::AUTHENTICATING;
+}
+
 void LoginScreen::onStateChange(Discord::RemoteAuthState state, const std::string &info) {
+	Utils::requestRedraw();
 	statusMessage = info;
 
 	if (state == Discord::RemoteAuthState::FAILED) {
@@ -495,10 +502,12 @@ void LoginScreen::onStateChange(Discord::RemoteAuthState state, const std::strin
 }
 
 void LoginScreen::onUserScanned(const Discord::RemoteAuthUser &user) {
+	Utils::requestRedraw();
 	statusMessage = Core::I18n::getInstance().get("login.status.scan_complete");
 }
 
 void LoginScreen::onTokenReceived(const std::string &ticket) {
+	Utils::requestRedraw();
 	Logger::log("[LoginScreen] Ticket received (len %zu)", ticket.size());
 	statusMessage = Core::I18n::getInstance().get("login.status.exchanging");
 

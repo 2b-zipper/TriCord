@@ -15,6 +15,7 @@
 #include <3ds.h>
 #include <algorithm>
 #include <citro2d.h>
+#include <cmath>
 #include <ctime>
 
 #include <mutex>
@@ -316,6 +317,13 @@ void MessageScreen::onEnter() {
 	if (!this->guildId.empty()) {
 		client.sendLazyRequest(this->guildId, channelId);
 	}
+}
+
+bool MessageScreen::isAnimating() const {
+	if (bottomMode == BottomScreenMode::EMOJI_PICKER && emojiPicker && emojiPicker->isAnimating()) {
+		return true;
+	}
+	return currentScrollY != targetScrollY;
 }
 
 bool MessageScreen::hidesMenu() const { return bottomMode == BottomScreenMode::EMOJI_PICKER; }
@@ -631,6 +639,9 @@ void MessageScreen::update() {
 
 	float scrollSpeed = 0.5f;
 	currentScrollY += (targetScrollY - currentScrollY) * scrollSpeed;
+	if (std::fabs(targetScrollY - currentScrollY) < 0.5f) {
+		currentScrollY = targetScrollY;
+	}
 
 	if (bottomMode == BottomScreenMode::EMOJI_PICKER) {
 		int oldCat = emojiPicker->getCurrentCategory();

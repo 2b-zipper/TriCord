@@ -28,6 +28,7 @@ class HamburgerMenu {
 	void reset();
 	bool isOpen() const { return state == State::OPEN || state == State::OPENING; }
 	bool isClosed() const { return state == State::CLOSED; }
+	bool isAnimating() const { return state == State::OPENING || state == State::CLOSING; }
 	void refreshStrings();
 
   private:

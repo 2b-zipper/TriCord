@@ -111,6 +111,9 @@ void EmojiPicker::update(u32 kDown, u32 kHeld, u32 kUp, circlePosition circle) {
 	if (!isDragging) {
 		targetEmojiScrollY -= touchVelocityY;
 		touchVelocityY *= 0.85f;
+		if (std::fabs(touchVelocityY) < 0.1f) {
+			touchVelocityY = 0.0f;
+		}
 	}
 
 	if (abs(circle.dy) > 35) {
@@ -217,6 +220,9 @@ void EmojiPicker::update(u32 kDown, u32 kHeld, u32 kUp, circlePosition circle) {
 	}
 
 	emojiScrollY += (targetEmojiScrollY - emojiScrollY) * 0.25f;
+	if (std::fabs(targetEmojiScrollY - emojiScrollY) < 0.5f) {
+		emojiScrollY = targetEmojiScrollY;
+	}
 }
 
 void EmojiPicker::ensureSelectionVisible() {
