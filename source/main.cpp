@@ -60,6 +60,7 @@ int main(int argc, char **argv) {
 	Discord::DiscordClient::getInstance().init();
 	UI::ScreenManager::getInstance().init();
 
+	unsigned callFrame = 0;
 	while (aptMainLoop()) {
 		hidScanInput();
 
@@ -70,7 +71,15 @@ int main(int argc, char **argv) {
 			break;
 		}
 
-		UI::ScreenManager::getInstance().render();
+		// During a call the CPU is better spent on audio: draw every other frame
+		// (30 fps) and sleep through the other vblank. Input and logic still run
+		// at full rate.
+		const bool inCall = Discord::VoiceClient::getInstance().getState() == Discord::VoiceState::ESTABLISHED;
+		if (inCall && (++callFrame & 1)) {
+			gspWaitForVBlank();
+		} else {
+			UI::ScreenManager::getInstance().render();
+		}
 	}
 
 	// Its destructor would otherwise run after socExit and ndspExit.

@@ -61,11 +61,15 @@ bool VoiceCapture::start() {
 	opus_encoder_ctl(encoder, OPUS_SET_BITRATE(OPUS_BITRATE));
 	opus_encoder_ctl(encoder, OPUS_SET_SIGNAL(OPUS_SIGNAL_VOICE));
 	opus_encoder_ctl(encoder, OPUS_SET_VBR(1));
+	// Constrained, so a loud frame cannot spike far above the average and arrive
+	// late behind the others.
+	opus_encoder_ctl(encoder, OPUS_SET_VBR_CONSTRAINT(1));
 	opus_encoder_ctl(encoder, OPUS_SET_INBAND_FEC(0));
 	opus_encoder_ctl(encoder, OPUS_SET_DTX(0));
 
 	readOffset = micGetLastSampleOffset();
-	resamplePos = 0.0f;
+	resamplePos = 0;
+	backlog = 0;
 	running = true;
 	Logger::log("[VoiceCapture] started (mic buffer %lu bytes)", (unsigned long)micBufferSize);
 	return true;
@@ -90,78 +94,86 @@ void VoiceCapture::stop() {
 	Logger::log("[VoiceCapture] stopped");
 }
 
-int VoiceCapture::poll(uint8_t *out, size_t outSize) {
+bool VoiceCapture::readFrame(int16_t *pcm) {
 	std::lock_guard<std::mutex> lock(mutex);
-	if (!running || !encoder) {
-		return 0;
+	if (!running || !micBuffer) {
+		return false;
 	}
 
-	const uint32_t sampleBytes = 2;
-	uint32_t writeOffset = micGetLastSampleOffset();
+	const uint32_t totalSamples = micBufferSize / 2;
+	const uint32_t writeOffset = micGetLastSampleOffset();
 
 	uint32_t available =
 	    (writeOffset >= readOffset) ? (writeOffset - readOffset) : (micBufferSize - readOffset + writeOffset);
-	available /= sampleBytes;
+	available /= 2;
 
-	uint32_t needed = (uint32_t)(FRAME_SAMPLES * (MIC_RATE / ENCODE_RATE)) + 2;
-	if (available < needed) {
-		return 0;
+	if (available < SRC_PER_FRAME) {
+		backlog = 0;
+		return false;
 	}
 
-	if (available > (micBufferSize / sampleBytes) / 2) {
+	// A second behind or more: the stream is not worth catching up on.
+	if (available > totalSamples / 2) {
 		readOffset = writeOffset;
-		resamplePos = 0.0f;
-		return 0;
+		resamplePos = 0;
+		backlog = 0;
+		return false;
 	}
 
-	int16_t pcm[FRAME_SAMPLES];
-	const float step = MIC_RATE / (float)ENCODE_RATE;
-	float pos = resamplePos;
-	uint32_t totalSamples = micBufferSize / sampleBytes;
+	const int16_t *samples = (const int16_t *)micBuffer;
+	const uint32_t base = readOffset / 2;
+	uint32_t pos = resamplePos;
 
 	for (int i = 0; i < FRAME_SAMPLES; i++) {
-		uint32_t index = (uint32_t)pos;
-		float frac = pos - (float)index;
+		uint32_t a = base + (pos >> 20);
+		if (a >= totalSamples) {
+			a -= totalSamples;
+		}
+		uint32_t b = a + 1;
+		if (b >= totalSamples) {
+			b -= totalSamples;
+		}
 
-		uint32_t a = (readOffset / sampleBytes + index) % totalSamples;
-		uint32_t b = (a + 1) % totalSamples;
-
-		int16_t sa, sb;
-		memcpy(&sa, micBuffer + a * sampleBytes, sampleBytes);
-		memcpy(&sb, micBuffer + b * sampleBytes, sampleBytes);
-
-		pcm[i] = (int16_t)((float)sa + ((float)sb - (float)sa) * frac);
-		pos += step;
+		const int32_t sa = samples[a];
+		const int32_t sb = samples[b];
+		const int32_t frac = (int32_t)((pos >> 6) & 0x3FFF); // 14 bits
+		pcm[i] = (int16_t)(sa + (((sb - sa) * frac) >> 14));
+		pos += STEP_Q20;
 	}
 
-	uint32_t consumed = (uint32_t)pos;
-	resamplePos = pos - (float)consumed;
-	readOffset = (readOffset + consumed * sampleBytes) % micBufferSize;
+	const uint32_t consumed = pos >> 20;
+	resamplePos = pos & 0xFFFFF;
+	uint32_t next = base + consumed;
+	if (next >= totalSamples) {
+		next -= totalSamples;
+	}
+	readOffset = next * 2;
+
+	backlog = (int)((available - consumed) / SRC_PER_FRAME);
 
 	// Ahead of the peak, so the speaking indicator ignores the speaker's output.
-	static_assert(FRAME_SAMPLES % EchoCanceller::CHUNK == 0, "frame must divide into AECM chunks");
 	if (echo) {
 		echo->process(pcm, FRAME_SAMPLES);
 	}
 
 	int peak = 0;
 	for (int i = 0; i < FRAME_SAMPLES; i++) {
-		int magnitude = pcm[i] < 0 ? -pcm[i] : pcm[i];
+		const int magnitude = pcm[i] < 0 ? -pcm[i] : pcm[i];
 		if (magnitude > peak) {
 			peak = magnitude;
 		}
 	}
 	peakLevel = peak;
+	return true;
+}
 
-	if (muted) {
+int VoiceCapture::encode(const int16_t *pcm, uint8_t *out, size_t outSize) {
+	std::lock_guard<std::mutex> lock(mutex);
+	if (!running || !encoder) {
 		return 0;
 	}
-
-	int encoded = opus_encode(encoder, pcm, FRAME_SAMPLES, out, (opus_int32)outSize);
-	if (encoded < 0) {
-		return 0;
-	}
-	return encoded;
+	const int encoded = opus_encode(encoder, pcm, FRAME_SAMPLES, out, (opus_int32)outSize);
+	return encoded < 0 ? 0 : encoded;
 }
 
 } // namespace Discord

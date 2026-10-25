@@ -75,7 +75,7 @@ CFLAGS	+=	$(INCLUDE) -D__3DS__
 CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17 -Wno-psabi
 
 ASFLAGS	:=	-g $(ARCH)
-LDFLAGS	=	-specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
+LDFLAGS	=	-specs=3dsx.specs -g $(ARCH) -Wl,--gc-sections -Wl,-Map,$(notdir $*.map)
 
 LIBS	:= -lcurl -lopus -lmbedtls -lmbedx509 -lmbedcrypto -lz -lcitro2d -lcitro3d -lctru -lm
 
@@ -241,7 +241,7 @@ MLSPP_OBJS := $(notdir $(patsubst %.cpp,%.o,$(wildcard $(TOPDIR)/library/mlspp/s
 	$(wildcard $(TOPDIR)/library/libdave/src/mls/*.cpp) \
 	$(wildcard $(TOPDIR)/library/libdave/src/utils/*.cpp)) \
 	dave_session.o)
-$(MLSPP_OBJS): CXXFLAGS := $(filter-out -fno-rtti -fno-exceptions,$(CXXFLAGS)) -frtti -fexceptions -DWITH_MBEDTLS
+$(MLSPP_OBJS): CXXFLAGS := $(subst -O3,-Os,$(filter-out -fno-rtti -fno-exceptions,$(CXXFLAGS))) -frtti -fexceptions -DWITH_MBEDTLS
 
 ifneq ("$(wildcard $(TOPDIR)/$(BANNER_IMAGE).cgfx)","")
 	BANNER_IMAGE_FILE := $(TOPDIR)/$(BANNER_IMAGE).cgfx

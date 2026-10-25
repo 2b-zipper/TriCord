@@ -82,6 +82,10 @@ class VoiceClient {
 	std::thread worker;
 	static constexpr size_t MEDIA_STACK_SIZE = 64 * 1024;
 	Thread media = nullptr;
+	// Priority of the thread that placed the call (the UI thread). The media thread
+	// is created above it so the render loop and the network workers can never
+	// starve audio.
+	s32 callerPriority = 0x30;
 	std::atomic<bool> stopWorker{false};
 	std::atomic<bool> stopMedia{false};
 	VoiceAudio audio;
@@ -127,6 +131,14 @@ class VoiceClient {
 	static constexpr uint64_t SPEAKING_HOLD_MS = 200;
 	static constexpr uint64_t TRANSMIT_HOLD_MS = 200;
 	static constexpr int SPEAKING_PEAK_THRESHOLD = 1200;
+	// While the far side is talking the transmit threshold rises to this share of
+	// the playback level (capped), so what the echo canceller fails to remove is
+	// not mistaken for the user speaking.
+	static constexpr int ECHO_GATE_PERCENT = 25;
+	static constexpr int ECHO_GATE_MAX = 6000;
+	// Microphone frames handled per pass of the media loop, so the speaker side
+	// is serviced between them.
+	static constexpr int MAX_MIC_FRAMES_PER_PASS = 3;
 	void markSpeaking(const std::string &userId);
 	void clearSpeaking(const std::string &userId);
 	std::vector<uint8_t> externalSenderPackage;
