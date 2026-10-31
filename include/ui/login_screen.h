@@ -14,6 +14,7 @@ class LoginScreen : public Screen {
 	~LoginScreen() override;
 
 	void update() override;
+	bool isAnimating() const override;
 	void renderTop(C3D_RenderTarget *target) override;
 	void renderBottom(C3D_RenderTarget *target) override;
 	void onEnter() override;

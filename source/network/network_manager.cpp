@@ -2,6 +2,7 @@
 #include "log.h"
 #include "network/http_client.h"
 #include "utils/message_utils.h"
+#include "utils/redraw.h"
 
 namespace Network {
 
@@ -101,7 +102,7 @@ void NetworkManager::shutdown() {
 }
 
 void NetworkManager::enqueue(const std::string &url, const std::string &method, const std::string &body,
-                             RequestPriority priority, std::function<void(const HttpResponse &)> callback,
+                             RequestPriority priority, ResponseCallback callback,
                              const std::map<std::string, std::string> &extraHeaders) {
 
 	{
@@ -199,6 +200,7 @@ void NetworkManager::workerThread(RequestPriority type) {
 			if (req.callback) {
 				req.callback(resp);
 			}
+			Utils::requestRedraw();
 
 			auto it = resp.headers.find("Date");
 			if (it != resp.headers.end()) {

@@ -15,6 +15,7 @@
 #include <3ds.h>
 #include <algorithm>
 #include <citro2d.h>
+#include <cmath>
 #include <ctime>
 
 #include <mutex>
@@ -64,22 +65,20 @@ MessageScreen::MessageScreen(const std::string &channelId, const std::string &ch
       currentScrollY(0.0f), totalContentHeight(0.0f), isMenuOpen(false), menuIndex(0),
       bottomMode(BottomScreenMode::TOPIC) {
 	emojiPicker = std::make_unique<EmojiPicker>();
-	emojiPicker->setOnEmojiSelected([this](const std::string &emoji) {
-		if (selectedIndex < (int)messages.size()) {
-			const auto &msg = messages[selectedIndex];
-			bool alreadyReacted = false;
-			for (const auto &r : msg.reactions) {
-				if (r.me && r.emoji.name == emoji) {
-					alreadyReacted = true;
-					break;
-				}
-			}
-			if (alreadyReacted) {
-				Discord::DiscordClient::getInstance().removeReaction(this->channelId, msg.id, emoji);
-			} else {
-				Discord::DiscordClient::getInstance().addReaction(this->channelId, msg.id, emoji);
+	emojiPicker->setOnEmojiSelected([this](const std::string &name) {
+		if (selectedIndex < 0 || selectedIndex >= (int)messages.size()) {
+			return;
+		}
+		const auto &msg = messages[selectedIndex];
+		Discord::Emoji emoji;
+		emoji.name = name;
+		for (const auto &r : msg.reactions) {
+			if (r.me && r.emoji.matches(emoji)) {
+				Discord::DiscordClient::getInstance().removeReaction(this->channelId, msg.id, r.emoji);
+				return;
 			}
 		}
+		Discord::DiscordClient::getInstance().addReaction(this->channelId, msg.id, emoji);
 	});
 	emojiPicker->setOnClosed([this]() { bottomMode = BottomScreenMode::TOPIC; });
 
@@ -113,7 +112,8 @@ void MessageScreen::onEnter() {
 	this->channelType = channel.type;
 	this->channelTopic = channel.topic;
 	this->guildId = client.getGuildIdFromChannel(channelId);
-	this->rulesChannelId = client.getGuild(guildId).rules_channel_id;
+	const Discord::Guild *guildInfo = client.getGuildPtr(guildId);
+	this->rulesChannelId = guildInfo ? guildInfo->rules_channel_id : "";
 
 	if (!this->guildId.empty() && this->guildId != "DM") {
 		const auto &guilds = client.getGuilds();
@@ -156,65 +156,15 @@ void MessageScreen::onEnter() {
 
 	client.setMessageReactionAddCallback([this](const std::string &channelId, const std::string &messageId,
 	                                            const std::string &userId, const Discord::Emoji &emoji) {
-		if (channelId != this->channelId) {
-			return;
-		}
-		std::lock_guard<std::recursive_mutex> lock(messageMutex);
-		for (auto &msg : this->messages) {
-			if (msg.id == messageId) {
-				bool atBottom = isAtBottom();
-				bool found = false;
-				bool isMe = (userId == Discord::DiscordClient::getInstance().getCurrentUser().id);
-				for (auto &r : msg.reactions) {
-					if (r.emoji.id == emoji.id && r.emoji.name == emoji.name) {
-						r.count++;
-						if (isMe) {
-							r.me = true;
-						}
-						found = true;
-						break;
-					}
-				}
-				if (!found) {
-					Discord::Reaction newR;
-					newR.emoji = emoji;
-					newR.count = 1;
-					newR.me = isMe;
-					msg.reactions.push_back(newR);
-				}
-				rebuildLayoutCache();
-				syncScrollAfterRebuild(atBottom);
-				break;
-			}
+		if (channelId == this->channelId) {
+			onReaction(messageId, emoji, userId, true);
 		}
 	});
 
 	client.setMessageReactionRemoveCallback([this](const std::string &channelId, const std::string &messageId,
 	                                               const std::string &userId, const Discord::Emoji &emoji) {
-		if (channelId != this->channelId) {
-			return;
-		}
-		std::lock_guard<std::recursive_mutex> lock(messageMutex);
-		for (auto &msg : this->messages) {
-			if (msg.id == messageId) {
-				bool atBottom = isAtBottom();
-				bool isMe = (userId == Discord::DiscordClient::getInstance().getCurrentUser().id);
-				for (auto it = msg.reactions.begin(); it != msg.reactions.end(); ++it) {
-					if (it->emoji.id == emoji.id && it->emoji.name == emoji.name) {
-						it->count--;
-						if (isMe) {
-							it->me = false;
-						}
-						if (it->count <= 0) {
-							msg.reactions.erase(it);
-						}
-						rebuildLayoutCache();
-						syncScrollAfterRebuild(atBottom);
-						break;
-					}
-				}
-				break;
-			}
+		if (channelId == this->channelId) {
+			onReaction(messageId, emoji, userId, false);
 		}
 	});
 
@@ -256,7 +206,7 @@ void MessageScreen::onEnter() {
 	// DMs carry no guild permissions, so the viewable flag never applies to them.
 	bool isPrivate = (channel.type == 1 || channel.type == 3);
 	isHiddenChannel = !isPrivate && !channel.viewable &&
-	                  (guildId.empty() || client.getGuild(guildId).ownerId != client.getCurrentUser().id);
+	                  (guildId.empty() || !guildInfo || guildInfo->ownerId != client.getCurrentUser().id);
 
 	if (isHiddenChannel) {
 		isLoading = false;
@@ -290,31 +240,37 @@ void MessageScreen::onEnter() {
 			isLoading = false;
 		});
 	} else {
-		client.fetchMessagesAsync(
-		    channelId, 50, [this, token = aliveToken](const std::vector<Discord::Message> &fetched) {
-			    if (!*token) {
-				    return;
-			    }
-			    {
-				    std::lock_guard<std::recursive_mutex> lock(messageMutex);
-				    if (!*token) {
-					    return;
-				    }
-				    this->messages = fetched;
-				    std::reverse(this->messages.begin(), this->messages.end());
-				    rebuildLayoutCache();
-				    scrollToBottom();
-			    }
-			    isLoading = false;
-			    if (!fetched.empty()) {
-				    Discord::DiscordClient::getInstance().markChannelRead(this->channelId, fetched.front().id);
-			    }
-		    });
+		client.fetchMessagesAsync(channelId, 50,
+		                          [this, token = aliveToken](const std::vector<Discord::Message> &fetched) {
+			                          if (!*token) {
+				                          return;
+			                          }
+			                          {
+				                          std::lock_guard<std::recursive_mutex> lock(messageMutex);
+				                          if (!*token) {
+					                          return;
+				                          }
+				                          this->messages = fetched;
+				                          std::reverse(this->messages.begin(), this->messages.end());
+				                          rebuildLayoutCache();
+				                          scrollToBottom();
+			                          }
+			                          isLoading = false;
+			                          Discord::DiscordClient::getInstance().markChannelReadLatest(
+			                              this->channelId, fetched.empty() ? "" : fetched.front().id);
+		                          });
 	}
 
 	if (!this->guildId.empty()) {
 		client.sendLazyRequest(this->guildId, channelId);
 	}
+}
+
+bool MessageScreen::isAnimating() const {
+	if (bottomMode == BottomScreenMode::EMOJI_PICKER && emojiPicker && emojiPicker->isAnimating()) {
+		return true;
+	}
+	return currentScrollY != targetScrollY;
 }
 
 bool MessageScreen::hidesMenu() const { return bottomMode == BottomScreenMode::EMOJI_PICKER; }
@@ -427,8 +383,9 @@ void MessageScreen::update() {
 			return;
 		}
 
-		if (wasAtBottom && !isLoading && !isForumView && !messages.empty()) {
-			checkAndMarkChannelRead();
+		// Leaving before the messages arrive still counts as having opened the channel.
+		if (!isForumView && (isLoading || wasAtBottom)) {
+			Discord::DiscordClient::getInstance().markChannelReadLatest(channelId, getLatestRealMessageId());
 		}
 
 		Discord::DiscordClient::getInstance().setMessageCallback(nullptr);
@@ -488,12 +445,7 @@ void MessageScreen::update() {
 			std::string action = menuActions[menuIndex];
 			isMenuOpen = false;
 
-			if (action.find("RemoveReaction_") == 0) {
-				if (selectedIndex >= 0 && selectedIndex < (int)messages.size()) {
-					std::string emoji = action.substr(15);
-					Discord::DiscordClient::getInstance().removeReaction(channelId, messages[selectedIndex].id, emoji);
-				}
-			} else if (action == "ToggleSpoiler") {
+			if (action == "ToggleSpoiler") {
 				if (selectedIndex >= 0 && selectedIndex < (int)messages.size()) {
 					const std::string &id = messages[selectedIndex].id;
 					if (!revealedSpoilers.erase(id)) {
@@ -523,8 +475,8 @@ void MessageScreen::update() {
 
 						client.sendReply(
 						    channelId, res.text, targetMsgId,
-						    [this, token = aliveToken, replyMsgId = replyMsg.id](const Discord::Message &sentMsg, bool success,
-						                                                         int errorCode) {
+						    [this, token = aliveToken, replyMsgId = replyMsg.id](const Discord::Message &sentMsg,
+						                                                         bool success, int errorCode) {
 							    if (!*token) {
 								    return;
 							    }
@@ -630,6 +582,9 @@ void MessageScreen::update() {
 
 	float scrollSpeed = 0.5f;
 	currentScrollY += (targetScrollY - currentScrollY) * scrollSpeed;
+	if (std::fabs(targetScrollY - currentScrollY) < 0.5f) {
+		currentScrollY = targetScrollY;
+	}
 
 	if (bottomMode == BottomScreenMode::EMOJI_PICKER) {
 		int oldCat = emojiPicker->getCurrentCategory();
@@ -870,7 +825,7 @@ float MessageScreen::calculateMessageHeight(const Discord::Message &msg, bool sh
 
 					int imgW = attach.width;
 					int imgH = attach.height;
-					if (info.tex) {
+					if (info.tex && (imgW <= 0 || imgH <= 0)) {
 						imgW = info.originalW;
 						imgH = info.originalH;
 					}
@@ -1295,7 +1250,8 @@ float MessageScreen::drawAuthorHeader(const Discord::Message &msg, float x, floa
 	return y + 14.0f;
 }
 
-float MessageScreen::drawMessageContent(const Discord::Message &msg, float x, float y, const MessageRenderCache *renderCache) {
+float MessageScreen::drawMessageContent(const Discord::Message &msg, float x, float y,
+                                        const MessageRenderCache *renderCache) {
 	std::string content = msg.displayContent;
 	if (content.empty()) {
 		return y;
@@ -1501,7 +1457,7 @@ bool drawEmojiGlyph(const Discord::Emoji &emoji, float x, float y, float box, fl
 	EmojiManager::EmojiInfo info;
 	if (emoji.id.empty()) {
 		if (emoji.hex.empty()) {
-			const_cast<Discord::Emoji&>(emoji).hex = Utils::Utf8::utf8ToHex(emoji.name);
+			const_cast<Discord::Emoji &>(emoji).hex = Utils::Utf8::utf8ToHex(emoji.name);
 		}
 		info = mgr.getTwemojiInfo(emoji.hex);
 	} else {
@@ -1747,8 +1703,9 @@ float MessageScreen::drawReactions(const Discord::Message &msg, float x, float y
 	return newY + rowHeight + 4.0f;
 }
 
-float MessageScreen::drawMessage(const Discord::Message &msg, float y, float maxWidth, bool isSelected,
-                                 bool showHeader, bool prevGroupedMention, bool nextGroupedMention, const MessageRenderCache *renderCache) {
+float MessageScreen::drawMessage(const Discord::Message &msg, float y, float maxWidth, bool isSelected, bool showHeader,
+                                 bool prevGroupedMention, bool nextGroupedMention,
+                                 const MessageRenderCache *renderCache) {
 	float height = renderCache ? renderCache->height : calculateMessageHeight(msg, showHeader);
 	float topMargin = showHeader ? 4.0f : 0.0f;
 	const float textOffsetX = 42.0f;
@@ -1764,16 +1721,18 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y, float max
 	if (isMentioned) {
 		float highlightY = y + topMargin;
 		float highlightH = height - topMargin;
-		u32 mentionBg = (Config::getInstance().getThemeType() == 1) ? C2D_Color32(250, 234, 184, 255) : C2D_Color32(65, 54, 30, 255);
+		u32 mentionBg = (Config::getInstance().getThemeType() == 1) ? C2D_Color32(250, 234, 184, 255)
+		                                                            : C2D_Color32(65, 54, 30, 255);
 		u32 mentionBorder = C2D_Color32(250, 166, 26, 255);
 
 		if (isSelected) {
-			mentionBg = (Config::getInstance().getThemeType() == 1) ? C2D_Color32(255, 244, 194, 255) : C2D_Color32(80, 69, 45, 255);
+			mentionBg = (Config::getInstance().getThemeType() == 1) ? C2D_Color32(255, 244, 194, 255)
+			                                                        : C2D_Color32(80, 69, 45, 255);
 		}
-		
+
 		drawRoundedRect(4.0f, highlightY, 0.1f, 392.0f, highlightH, 6.0f, mentionBg);
 		C2D_DrawRectSolid(4.0f, highlightY, 0.1f, 6.0f, highlightH, mentionBg);
-		
+
 		if (prevGroupedMention) {
 			C2D_DrawRectSolid(390.0f, highlightY, 0.1f, 6.0f, 6.0f, mentionBg);
 		}
@@ -1819,7 +1778,8 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y, float max
 	if (!msg.embeds.empty()) {
 		for (size_t ei = 0; ei < msg.embeds.size(); ei++) {
 			const auto &embed = msg.embeds[ei];
-			const EmbedRenderCache *eCache = (renderCache && ei < renderCache->embeds.size()) ? &renderCache->embeds[ei] : nullptr;
+			const EmbedRenderCache *eCache =
+			    (renderCache && ei < renderCache->embeds.size()) ? &renderCache->embeds[ei] : nullptr;
 			contentY += renderEmbed(embed, textOffsetX, contentY, 400.0f - textOffsetX - 10.0f, eCache);
 			contentY += 6.0f;
 		}
@@ -1994,7 +1954,8 @@ void MessageScreen::renderTop(C3D_RenderTarget *target) {
 			}
 		}
 
-		drawMessage(this->messages[i], msgY, 400.0f, isSelected, showHeader, prevGroupedMention, nextGroupedMention, renderCache);
+		drawMessage(this->messages[i], msgY, 400.0f, isSelected, showHeader, prevGroupedMention, nextGroupedMention,
+		            renderCache);
 	}
 
 	if (showNewMessageIndicator) {
@@ -2255,7 +2216,8 @@ void MessageScreen::openKeyboard() {
 
 		client.sendMessage(
 		    channelId, res.text,
-		    [this, token = aliveToken, pendingId = optimisticMsg.id](const Discord::Message &sentMsg, bool success, int errorCode) {
+		    [this, token = aliveToken, pendingId = optimisticMsg.id](const Discord::Message &sentMsg, bool success,
+		                                                             int errorCode) {
 			    if (!*token) {
 				    return;
 			    }
@@ -2400,12 +2362,15 @@ std::string MessageScreen::getLatestRealMessageId() const {
 
 void MessageScreen::checkAndMarkChannelRead() {
 	std::string latestRealId = getLatestRealMessageId();
-	if (!latestRealId.empty()) {
-		Discord::DiscordClient::getInstance().markChannelRead(channelId, latestRealId);
+	if (latestRealId.empty() || latestRealId == lastMarkedMessageId) {
+		return;
 	}
+	lastMarkedMessageId = latestRealId;
+	Discord::DiscordClient::getInstance().markChannelReadLatest(channelId, latestRealId);
 }
 
-Discord::Message MessageScreen::createOptimisticMessage(const std::string &content, int type, const std::string &referencedAuthor) {
+Discord::Message MessageScreen::createOptimisticMessage(const std::string &content, int type,
+                                                        const std::string &referencedAuthor) {
 	Discord::Message msg;
 	msg.id = "pending_" + std::to_string(osGetTime());
 	msg.nonce = msg.id;
@@ -2419,7 +2384,8 @@ Discord::Message MessageScreen::createOptimisticMessage(const std::string &conte
 	return msg;
 }
 
-void MessageScreen::handleMessageSendResult(const std::string &pendingId, const Discord::Message &sentMsg, bool success, int errorCode) {
+void MessageScreen::handleMessageSendResult(const std::string &pendingId, const Discord::Message &sentMsg, bool success,
+                                            int errorCode) {
 	std::lock_guard<std::recursive_mutex> lock(messageMutex);
 	if (!*aliveToken) {
 		return;
@@ -2503,6 +2469,45 @@ void MessageScreen::onMessageDelete(const std::string &msgId) {
 	}
 }
 
+void MessageScreen::onReaction(const std::string &messageId, const Discord::Emoji &emoji, const std::string &userId,
+                               bool added) {
+	std::lock_guard<std::recursive_mutex> lock(messageMutex);
+	auto msg =
+	    std::find_if(messages.begin(), messages.end(), [&](const Discord::Message &m) { return m.id == messageId; });
+	if (msg == messages.end()) {
+		return;
+	}
+
+	bool isMe = userId == Discord::DiscordClient::getInstance().getCurrentUser().id;
+	auto &reactions = msg->reactions;
+	auto it = std::find_if(reactions.begin(), reactions.end(),
+	                       [&](const Discord::Reaction &r) { return r.emoji.matches(emoji); });
+	// Our own reactions arrive twice, once when requested and once from the gateway.
+	if (added) {
+		if (it != reactions.end() && isMe && it->me) {
+			return;
+		}
+		if (it == reactions.end()) {
+			it = reactions.insert(reactions.end(), Discord::Reaction{emoji, 0, false});
+		}
+		it->count++;
+		it->me = it->me || isMe;
+	} else {
+		if (it == reactions.end() || (isMe && !it->me)) {
+			return;
+		}
+		it->count--;
+		it->me = it->me && !isMe;
+		if (it->count <= 0) {
+			reactions.erase(it);
+		}
+	}
+
+	bool atBottom = isAtBottom();
+	rebuildLayoutCache();
+	syncScrollAfterRebuild(atBottom);
+}
+
 bool MessageScreen::isAtBottom() const {
 	float maxScroll = std::max(0.0f, totalContentHeight - 240.0f);
 	return targetScrollY >= maxScroll - 5.0f;
@@ -2579,7 +2584,7 @@ size_t MessageScreen::messageFingerprint(const Discord::Message &msg) {
 void MessageScreen::buildMessageCache(const Discord::Message &msg, MessageRenderCache &cache) {
 	for (const auto &react : msg.reactions) {
 		if (!react.emoji.id.empty()) {
-			EmojiManager::getInstance().prefetchEmoji(react.emoji.id);
+			EmojiManager::getInstance().prefetchEmoji(react.emoji.id, false);
 		}
 	}
 	EmojiManager::getInstance().prefetchEmojisFromText(msg.content);
@@ -2815,9 +2820,8 @@ void MessageScreen::renderMenu() {
 }
 
 float MessageScreen::calculateEmbedHeight(const Discord::Embed &embed, float maxWidth) {
-	std::string keyStr = embed.title + "|" + embed.description + "|" + embed.author_name + "|" +
-	                     embed.image_url + "|" + embed.thumbnail_url + "|" + embed.footer_text + "|" +
-	                     std::to_string((int)maxWidth);
+	std::string keyStr = embed.title + "|" + embed.description + "|" + embed.author_name + "|" + embed.image_url + "|" +
+	                     embed.thumbnail_url + "|" + embed.footer_text + "|" + std::to_string((int)maxWidth);
 	for (const auto &f : embed.fields) {
 		keyStr += "|" + f.name + "|" + f.value;
 	}
@@ -2833,7 +2837,7 @@ float MessageScreen::calculateEmbedHeight(const Discord::Embed &embed, float max
 	if (layout.hasImage || layout.hasThumbnail) {
 		std::string mediaUrl =
 		    layout.hasImage ? (embed.image_proxy_url.empty() ? embed.image_url : embed.image_proxy_url)
-		             : (embed.thumbnail_proxy_url.empty() ? embed.thumbnail_url : embed.thumbnail_proxy_url);
+		                    : (embed.thumbnail_proxy_url.empty() ? embed.thumbnail_url : embed.thumbnail_proxy_url);
 		mediaInfo = ImageManager::getInstance().getImageInfo(mediaUrl);
 	}
 
@@ -2906,7 +2910,8 @@ float MessageScreen::calculateEmbedHeight(const Discord::Embed &embed, float max
 	return h;
 }
 
-float MessageScreen::renderEmbed(const Discord::Embed &embed, float x, float y, float maxWidth, const EmbedRenderCache *embedCache) {
+float MessageScreen::renderEmbed(const Discord::Embed &embed, float x, float y, float maxWidth,
+                                 const EmbedRenderCache *embedCache) {
 	EmbedLayout layout = embedCache ? embedCache->layout : getEmbedLayout(embed, maxWidth);
 
 	u32 embedColor = embed.color != 0
@@ -3014,7 +3019,7 @@ float MessageScreen::renderEmbed(const Discord::Embed &embed, float x, float y, 
 	if (layout.hasImage || (layout.isMedia && layout.hasThumbnail)) {
 		std::string mediaUrl =
 		    layout.hasImage ? (!embed.image_proxy_url.empty() ? embed.image_proxy_url : embed.image_url)
-		             : (!embed.thumbnail_proxy_url.empty() ? embed.thumbnail_proxy_url : embed.thumbnail_url);
+		                    : (!embed.thumbnail_proxy_url.empty() ? embed.thumbnail_proxy_url : embed.thumbnail_url);
 		int imgW = layout.hasImage ? embed.image_width : embed.thumbnail_width;
 		int imgH = layout.hasImage ? embed.image_height : embed.thumbnail_height;
 		auto info = ImageManager::getInstance().getImageInfo(mediaUrl);
@@ -3057,7 +3062,8 @@ float MessageScreen::renderEmbed(const Discord::Embed &embed, float x, float y, 
 		} else {
 			ImageManager::getInstance().prefetch(mediaUrl, imgW, imgH, Network::RequestPriority::INTERACTIVE);
 			C2D_DrawRectSolid(textX, currentY, 0.49f, drawW, drawH,
-			                  layout.isSimpleMedia ? ScreenManager::colorBackgroundDark() : ScreenManager::colorEmbedMedia());
+			                  layout.isSimpleMedia ? ScreenManager::colorBackgroundDark()
+			                                       : ScreenManager::colorEmbedMedia());
 			drawText(textX + 5, currentY + (drawH / 2) - 6, 0.5f, 0.35f, 0.35f, ScreenManager::colorTextMuted(),
 			         TR("common.loading"));
 		}

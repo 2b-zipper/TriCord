@@ -8,6 +8,7 @@
     "call.in_call": "In Call",
     "call.incoming": "Incoming Call",
     "channel.mute.unmute": "Unmute Channel",
+    "channel.load_failed": "Could not load channels (not enough memory)",
     "channel.no_visible": "No visible channels",
     "channel.select": "Channel Selection",
     "common.adjust": "Adjust",

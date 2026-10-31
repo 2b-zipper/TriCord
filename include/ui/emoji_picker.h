@@ -21,6 +21,7 @@ class EmojiPicker {
 	int getCurrentCategory() const { return currentCategoryIndex; }
 	void reset();
 	bool isClosed() const { return closed; }
+	bool isAnimating() const { return touchVelocityY != 0.0f || emojiScrollY != targetEmojiScrollY; }
 	void setOnEmojiSelected(std::function<void(const std::string &)> callback) { onEmojiSelected = callback; }
 	void setOnClosed(std::function<void()> callback) { onClosed = callback; }
 

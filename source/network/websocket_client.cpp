@@ -2,6 +2,7 @@
 #include "config.h"
 #include "log.h"
 #include "utils/base64_utils.h"
+#include "utils/system_utils.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -17,9 +18,12 @@
 #include <mbedtls/sha1.h>
 #include <mbedtls/ssl.h>
 
-#include <zlib.h>
-
 namespace Network {
+
+namespace {
+constexpr size_t LARGE_FRAME = 64 * 1024;
+constexpr size_t FRAME_HEAP_MARGIN = 1024 * 1024;
+} // namespace
 
 WebSocketClient::WebSocketClient()
     : sockfd(-1), state(WebSocketState::DISCONNECTED), port(443), useTLS(true), sslContext(nullptr), sslConfig(nullptr),
@@ -72,62 +76,6 @@ bool WebSocketClient::parseUrl(const std::string &url) {
 
 	Logger::log("[WS] Parsed URL: host=%s, port=%d, path=%s, tls=%d", host.c_str(), port, path.c_str(), useTLS);
 
-	return true;
-}
-
-bool WebSocketClient::initInflate() {
-	freeInflate();
-
-	z_stream *zs = new z_stream;
-	memset(zs, 0, sizeof(*zs));
-	if (inflateInit(zs) != Z_OK) {
-		delete zs;
-		return false;
-	}
-
-	inflateStream = zs;
-	inflateInput.clear();
-	// Heap-backed: this runs on a std::thread, which only gets a 32KB stack.
-	inflateChunk.resize(8192);
-	return true;
-}
-
-void WebSocketClient::freeInflate() {
-	if (!inflateStream) {
-		return;
-	}
-	inflateEnd((z_stream *)inflateStream);
-	delete (z_stream *)inflateStream;
-	inflateStream = nullptr;
-	inflateInput.clear();
-}
-
-bool WebSocketClient::inflateBuffered(std::string &out) {
-	z_stream *zs = (z_stream *)inflateStream;
-	if (!zs) {
-		return false;
-	}
-
-	zs->next_in = inflateInput.data();
-	zs->avail_in = (uInt)inflateInput.size();
-
-	out.clear();
-	int ret = Z_OK;
-	do {
-		zs->next_out = inflateChunk.data();
-		zs->avail_out = (uInt)inflateChunk.size();
-
-		ret = inflate(zs, Z_SYNC_FLUSH);
-		if (ret != Z_OK && ret != Z_STREAM_END && ret != Z_BUF_ERROR) {
-			Logger::log("WS inflate failed: %d", ret);
-			inflateInput.clear();
-			return false;
-		}
-
-		out.append((const char *)inflateChunk.data(), inflateChunk.size() - zs->avail_out);
-	} while (zs->avail_out == 0);
-
-	inflateInput.clear();
 	return true;
 }
 
@@ -237,12 +185,6 @@ bool WebSocketClient::connect(const std::string &url) {
 	Logger::log("WS connect %s", url.c_str());
 	if (!parseUrl(url)) {
 		Logger::log("WS parseUrl failed");
-		return false;
-	}
-
-	zlibStream = url.find("compress=zlib-stream") != std::string::npos;
-	if (zlibStream && !initInflate()) {
-		Logger::log("WS inflateInit failed");
 		return false;
 	}
 
@@ -370,7 +312,6 @@ void WebSocketClient::disconnect(int code, const std::string &reason) {
 	}
 
 	cleanupTLS();
-	freeInflate();
 
 	state = WebSocketState::CLOSED;
 
@@ -519,9 +460,18 @@ bool WebSocketClient::receiveFrame(std::string &message) {
 		}
 	}
 
-	std::vector<uint8_t> payload(payloadLen);
+	if (payloadLen > LARGE_FRAME && payloadLen + FRAME_HEAP_MARGIN > Utils::System::heapFreeBytes()) {
+		Logger::log("[WS] Frame of %zu bytes does not fit in memory", payloadLen);
+		if (onError) {
+			onError("Frame too large");
+		}
+		disconnect();
+		return false;
+	}
+
+	message.resize(payloadLen);
 	if (payloadLen > 0) {
-		if (!recvExact(payload.data(), payloadLen)) {
+		if (!recvExact(&message[0], payloadLen)) {
 			if (onError) {
 				onError("Failed to read payload");
 			}
@@ -530,32 +480,30 @@ bool WebSocketClient::receiveFrame(std::string &message) {
 
 		if (masked) {
 			for (size_t i = 0; i < payloadLen; i++) {
-				payload[i] ^= mask[i % 4];
+				message[i] ^= mask[i % 4];
 			}
 		}
 	}
 
 	switch (opcode) {
 	case WebSocketOpcode::TEXT:
-		message = std::string(payload.begin(), payload.end());
 		return true;
 
 	case WebSocketOpcode::BINARY:
 		lastFrameBinary = true;
-		message = std::string(payload.begin(), payload.end());
 		return true;
 
 	case WebSocketOpcode::CLOSE: {
 		int closeCode = 1000;
-		if (payload.size() >= 2) {
-			closeCode = (payload[0] << 8) | payload[1];
+		if (message.size() >= 2) {
+			closeCode = ((uint8_t)message[0] << 8) | (uint8_t)message[1];
 		}
 		disconnect(closeCode);
 		return false;
 	}
 
 	case WebSocketOpcode::PING:
-		sendFrame(WebSocketOpcode::PONG, payload.data(), payload.size());
+		sendFrame(WebSocketOpcode::PONG, message.data(), message.size());
 		return false;
 
 	case WebSocketOpcode::PONG:
@@ -574,24 +522,6 @@ void WebSocketClient::poll() {
 	std::string message;
 	lastFrameBinary = false;
 	if (!receiveFrame(message) || message.empty()) {
-		return;
-	}
-
-	// A compressed message can span several frames, ending at Z_SYNC_FLUSH.
-	if (zlibStream && lastFrameBinary) {
-		inflateInput.insert(inflateInput.end(), message.begin(), message.end());
-
-		static const uint8_t SYNC_FLUSH[4] = {0x00, 0x00, 0xFF, 0xFF};
-		if (inflateInput.size() < sizeof(SYNC_FLUSH) ||
-		    memcmp(inflateInput.data() + inflateInput.size() - sizeof(SYNC_FLUSH), SYNC_FLUSH, sizeof(SYNC_FLUSH)) !=
-		        0) {
-			return;
-		}
-
-		std::string json;
-		if (inflateBuffered(json) && !json.empty() && onMessage) {
-			onMessage(json);
-		}
 		return;
 	}
 

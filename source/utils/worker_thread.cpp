@@ -1,5 +1,6 @@
 #include "utils/worker_thread.h"
 #include "log.h"
+#include "utils/system_utils.h"
 
 namespace Utils {
 
@@ -13,15 +14,7 @@ void trampoline(void *arg) {
 
 int extraCoreThreadCount = 0;
 
-bool hasExtraCore() {
-	static const bool available = [] {
-		bool isNew3DS = false;
-		bool ok = R_SUCCEEDED(APT_CheckNew3DS(&isNew3DS)) && isNew3DS;
-		Logger::log("[Thread] Extra core %s", ok ? "available" : "unavailable");
-		return ok;
-	}();
-	return available;
-}
+bool hasExtraCore() { return System::isNew3DS(); }
 
 s32 workerPriority(int delta) {
 	s32 prio = 0x30;
