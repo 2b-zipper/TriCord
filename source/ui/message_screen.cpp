@@ -65,22 +65,20 @@ MessageScreen::MessageScreen(const std::string &channelId, const std::string &ch
       currentScrollY(0.0f), totalContentHeight(0.0f), isMenuOpen(false), menuIndex(0),
       bottomMode(BottomScreenMode::TOPIC) {
 	emojiPicker = std::make_unique<EmojiPicker>();
-	emojiPicker->setOnEmojiSelected([this](const std::string &emoji) {
-		if (selectedIndex < (int)messages.size()) {
-			const auto &msg = messages[selectedIndex];
-			bool alreadyReacted = false;
-			for (const auto &r : msg.reactions) {
-				if (r.me && r.emoji.name == emoji) {
-					alreadyReacted = true;
-					break;
-				}
-			}
-			if (alreadyReacted) {
-				Discord::DiscordClient::getInstance().removeReaction(this->channelId, msg.id, emoji);
-			} else {
-				Discord::DiscordClient::getInstance().addReaction(this->channelId, msg.id, emoji);
+	emojiPicker->setOnEmojiSelected([this](const std::string &name) {
+		if (selectedIndex < 0 || selectedIndex >= (int)messages.size()) {
+			return;
+		}
+		const auto &msg = messages[selectedIndex];
+		Discord::Emoji emoji;
+		emoji.name = name;
+		for (const auto &r : msg.reactions) {
+			if (r.me && r.emoji.matches(emoji)) {
+				Discord::DiscordClient::getInstance().removeReaction(this->channelId, msg.id, r.emoji);
+				return;
 			}
 		}
+		Discord::DiscordClient::getInstance().addReaction(this->channelId, msg.id, emoji);
 	});
 	emojiPicker->setOnClosed([this]() { bottomMode = BottomScreenMode::TOPIC; });
 
@@ -158,65 +156,15 @@ void MessageScreen::onEnter() {
 
 	client.setMessageReactionAddCallback([this](const std::string &channelId, const std::string &messageId,
 	                                            const std::string &userId, const Discord::Emoji &emoji) {
-		if (channelId != this->channelId) {
-			return;
-		}
-		std::lock_guard<std::recursive_mutex> lock(messageMutex);
-		for (auto &msg : this->messages) {
-			if (msg.id == messageId) {
-				bool atBottom = isAtBottom();
-				bool found = false;
-				bool isMe = (userId == Discord::DiscordClient::getInstance().getCurrentUser().id);
-				for (auto &r : msg.reactions) {
-					if (r.emoji.id == emoji.id && r.emoji.name == emoji.name) {
-						r.count++;
-						if (isMe) {
-							r.me = true;
-						}
-						found = true;
-						break;
-					}
-				}
-				if (!found) {
-					Discord::Reaction newR;
-					newR.emoji = emoji;
-					newR.count = 1;
-					newR.me = isMe;
-					msg.reactions.push_back(newR);
-				}
-				rebuildLayoutCache();
-				syncScrollAfterRebuild(atBottom);
-				break;
-			}
+		if (channelId == this->channelId) {
+			onReaction(messageId, emoji, userId, true);
 		}
 	});
 
 	client.setMessageReactionRemoveCallback([this](const std::string &channelId, const std::string &messageId,
 	                                               const std::string &userId, const Discord::Emoji &emoji) {
-		if (channelId != this->channelId) {
-			return;
-		}
-		std::lock_guard<std::recursive_mutex> lock(messageMutex);
-		for (auto &msg : this->messages) {
-			if (msg.id == messageId) {
-				bool atBottom = isAtBottom();
-				bool isMe = (userId == Discord::DiscordClient::getInstance().getCurrentUser().id);
-				for (auto it = msg.reactions.begin(); it != msg.reactions.end(); ++it) {
-					if (it->emoji.id == emoji.id && it->emoji.name == emoji.name) {
-						it->count--;
-						if (isMe) {
-							it->me = false;
-						}
-						if (it->count <= 0) {
-							msg.reactions.erase(it);
-						}
-						rebuildLayoutCache();
-						syncScrollAfterRebuild(atBottom);
-						break;
-					}
-				}
-				break;
-			}
+		if (channelId == this->channelId) {
+			onReaction(messageId, emoji, userId, false);
 		}
 	});
 
@@ -497,12 +445,7 @@ void MessageScreen::update() {
 			std::string action = menuActions[menuIndex];
 			isMenuOpen = false;
 
-			if (action.find("RemoveReaction_") == 0) {
-				if (selectedIndex >= 0 && selectedIndex < (int)messages.size()) {
-					std::string emoji = action.substr(15);
-					Discord::DiscordClient::getInstance().removeReaction(channelId, messages[selectedIndex].id, emoji);
-				}
-			} else if (action == "ToggleSpoiler") {
+			if (action == "ToggleSpoiler") {
 				if (selectedIndex >= 0 && selectedIndex < (int)messages.size()) {
 					const std::string &id = messages[selectedIndex].id;
 					if (!revealedSpoilers.erase(id)) {
@@ -2524,6 +2467,45 @@ void MessageScreen::onMessageDelete(const std::string &msgId) {
 			break;
 		}
 	}
+}
+
+void MessageScreen::onReaction(const std::string &messageId, const Discord::Emoji &emoji, const std::string &userId,
+                               bool added) {
+	std::lock_guard<std::recursive_mutex> lock(messageMutex);
+	auto msg =
+	    std::find_if(messages.begin(), messages.end(), [&](const Discord::Message &m) { return m.id == messageId; });
+	if (msg == messages.end()) {
+		return;
+	}
+
+	bool isMe = userId == Discord::DiscordClient::getInstance().getCurrentUser().id;
+	auto &reactions = msg->reactions;
+	auto it = std::find_if(reactions.begin(), reactions.end(),
+	                       [&](const Discord::Reaction &r) { return r.emoji.matches(emoji); });
+	// Our own reactions arrive twice, once when requested and once from the gateway.
+	if (added) {
+		if (it != reactions.end() && isMe && it->me) {
+			return;
+		}
+		if (it == reactions.end()) {
+			it = reactions.insert(reactions.end(), Discord::Reaction{emoji, 0, false});
+		}
+		it->count++;
+		it->me = it->me || isMe;
+	} else {
+		if (it == reactions.end() || (isMe && !it->me)) {
+			return;
+		}
+		it->count--;
+		it->me = it->me && !isMe;
+		if (it->count <= 0) {
+			reactions.erase(it);
+		}
+	}
+
+	bool atBottom = isAtBottom();
+	rebuildLayoutCache();
+	syncScrollAfterRebuild(atBottom);
 }
 
 bool MessageScreen::isAtBottom() const {

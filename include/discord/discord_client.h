@@ -198,8 +198,9 @@ class DiscordClient {
 	std::string getIncomingCallChannel();
 	std::optional<int> getCallRingingCount(const std::string &channelId);
 
-	void addReaction(const std::string &channelId, const std::string &messageId, const std::string &emoji);
-	void removeReaction(const std::string &channelId, const std::string &messageId, const std::string &emoji);
+	// Shown through the reaction callbacks right away, and rolled back the same way if Discord rejects it.
+	void addReaction(const std::string &channelId, const std::string &messageId, const Emoji &emoji);
+	void removeReaction(const std::string &channelId, const std::string &messageId, const Emoji &emoji);
 
 	void performLogin(const std::string &email, const std::string &password, LoginCallback cb);
 	void submitMFA(const std::string &ticket, const std::string &code, LoginCallback cb);
@@ -312,6 +313,18 @@ class DiscordClient {
 	static Attachment parseAttachmentObject(const rapidjson::Value &aObj);
 	static Emoji parseEmojiObject(const rapidjson::Value &eObj);
 
+	struct ReactionRequest {
+		std::string channelId;
+		std::string messageId;
+		Emoji emoji;
+		bool add;
+	};
+	void queueReaction(ReactionRequest request);
+	void sendNextReactionLocked();
+	void onReactionResponse(Network::HttpResponse &resp);
+	void notifyOwnReactionLocked(const ReactionRequest &request, bool added);
+	bool hasQueuedReactionLocked(const std::string &messageId, const Emoji &emoji);
+
 	void postMessage(const std::string &channelId, const std::string &content, const std::string &nonce,
 	                 const std::string &replyId, SendMessageCallback cb);
 
@@ -410,6 +423,11 @@ class DiscordClient {
 	ReactionCallback messageReactionAddCallback;
 	ReactionCallback messageReactionRemoveCallback;
 	PollVoteCallback pollVoteCallback;
+
+	// One at a time: the network workers would otherwise let a quick add and remove land out of order.
+	std::deque<ReactionRequest> reactionQueue;
+	bool reactionInFlight = false;
+	uint64_t reactionRetryAt = 0;
 
 	std::map<std::string, std::vector<TypingUser>> typingUsers;
 	std::map<std::string, UserProfile> profileCache;

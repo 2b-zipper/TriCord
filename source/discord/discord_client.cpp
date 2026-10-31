@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iomanip>
 #include <memory>
@@ -23,6 +24,7 @@
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
 #include <sstream>
+#include <strings.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unordered_map>
@@ -117,6 +119,21 @@ std::string urlEncode(const std::string &value) {
 	}
 
 	return escaped.str();
+}
+
+// Cloudflare's 429s have no JSON body, and one without Retry-After must not be retried.
+std::optional<double> retryAfterSeconds(const Network::HttpResponse &resp) {
+	rapidjson::Document doc;
+	doc.Parse(resp.body.c_str());
+	if (!doc.HasParseError() && doc.IsObject() && doc.HasMember("retry_after") && doc["retry_after"].IsNumber()) {
+		return doc["retry_after"].GetDouble();
+	}
+	for (const auto &[name, value] : resp.headers) {
+		if (strcasecmp(name.c_str(), "Retry-After") == 0) {
+			return strtod(value.c_str(), nullptr);
+		}
+	}
+	return std::nullopt;
 }
 } // namespace
 
@@ -406,6 +423,7 @@ void DiscordClient::update() {
 			it++;
 		}
 	}
+	sendNextReactionLocked();
 }
 
 void DiscordClient::triggerTypingIndicator(const std::string &channelId) {
@@ -470,23 +488,90 @@ std::vector<TypingUser> DiscordClient::getTypingUsers(const std::string &channel
 	return {};
 }
 
-void DiscordClient::addReaction(const std::string &channelId, const std::string &messageId, const std::string &emoji) {
-	if (channelId.empty() || messageId.empty() || emoji.empty()) {
+void DiscordClient::addReaction(const std::string &channelId, const std::string &messageId, const Emoji &emoji) {
+	queueReaction({channelId, messageId, emoji, true});
+}
+
+void DiscordClient::removeReaction(const std::string &channelId, const std::string &messageId, const Emoji &emoji) {
+	queueReaction({channelId, messageId, emoji, false});
+}
+
+void DiscordClient::queueReaction(ReactionRequest request) {
+	if (request.channelId.empty() || request.messageId.empty() ||
+	    (request.emoji.id.empty() && request.emoji.name.empty())) {
 		return;
 	}
 
-	std::string encodedEmoji = urlEncode(emoji);
-	std::string url = "https://discord.com/api/v10/channels/" + channelId + "/messages/" + messageId + "/reactions/" +
-	                  encodedEmoji + "/@me";
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	notifyOwnReactionLocked(request, request.add);
 
-	Network::NetworkManager::getInstance().enqueue(url, "PUT", "", Network::RequestPriority::REALTIME,
-	                                               [](const Network::HttpResponse &resp) {
-		                                               if (!resp.success) {
-			                                               Logger::log("[Discord] Failed to add reaction: %ld %s",
-			                                                           resp.statusCode, resp.body.c_str());
-		                                               }
-	                                               },
-	                                               {{"Authorization", getInstance().token}});
+	auto unsent = std::find_if(reactionQueue.begin() + (reactionInFlight ? 1 : 0), reactionQueue.end(),
+	                           [&](const ReactionRequest &queued) {
+		                           return queued.messageId == request.messageId && queued.emoji.matches(request.emoji);
+	                           });
+	if (unsent != reactionQueue.end()) {
+		// Neither has reached Discord, so they cancel out.
+		if (unsent->add != request.add) {
+			reactionQueue.erase(unsent);
+		}
+		return;
+	}
+	reactionQueue.push_back(std::move(request));
+	sendNextReactionLocked();
+}
+
+void DiscordClient::sendNextReactionLocked() {
+	if (reactionInFlight || reactionQueue.empty() || osGetTime() < reactionRetryAt) {
+		return;
+	}
+	reactionInFlight = true;
+
+	const ReactionRequest &request = reactionQueue.front();
+	const Emoji &emoji = request.emoji;
+	// Only the delete route has the reaction type in its path; 0 is a normal reaction.
+	std::string url = "https://discord.com/api/v10/channels/" + request.channelId + "/messages/" + request.messageId +
+	                  "/reactions/" + urlEncode(emoji.id.empty() ? emoji.name : emoji.name + ":" + emoji.id) +
+	                  (request.add ? "/@me" : "/0/@me");
+	Network::NetworkManager::getInstance().enqueue(
+	    url, request.add ? "PUT" : "DELETE", "", Network::RequestPriority::REALTIME,
+	    [this](Network::HttpResponse &resp) { onReactionResponse(resp); }, {{"Authorization", token}});
+}
+
+void DiscordClient::onReactionResponse(Network::HttpResponse &resp) {
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	reactionInFlight = false;
+	if (reactionQueue.empty()) {
+		return;
+	}
+
+	std::optional<double> retryAfter = resp.statusCode == 429 ? retryAfterSeconds(resp) : std::nullopt;
+	if (retryAfter) {
+		// update() resends it once this passes.
+		reactionRetryAt = osGetTime() + (uint64_t)(*retryAfter * 1000.0);
+		return;
+	}
+
+	ReactionRequest request = std::move(reactionQueue.front());
+	reactionQueue.pop_front();
+	if (!resp.success) {
+		Logger::log("[Discord] Failed to %s reaction: %ld %s", request.add ? "add" : "remove", resp.statusCode,
+		            resp.body.c_str());
+		notifyOwnReactionLocked(request, !request.add);
+	}
+	sendNextReactionLocked();
+}
+
+void DiscordClient::notifyOwnReactionLocked(const ReactionRequest &request, bool added) {
+	const ReactionCallback &callback = added ? messageReactionAddCallback : messageReactionRemoveCallback;
+	if (callback) {
+		callback(request.channelId, request.messageId, currentUser.id, request.emoji);
+	}
+}
+
+bool DiscordClient::hasQueuedReactionLocked(const std::string &messageId, const Emoji &emoji) {
+	return std::any_of(reactionQueue.begin(), reactionQueue.end(), [&](const ReactionRequest &queued) {
+		return queued.messageId == messageId && queued.emoji.matches(emoji);
+	});
 }
 
 void DiscordClient::votePoll(const std::string &channelId, const std::string &messageId,
@@ -513,26 +598,6 @@ void DiscordClient::votePoll(const std::string &channelId, const std::string &me
 		    }
 	    },
 	    {{"Authorization", getInstance().token}, {"Content-Type", "application/json"}});
-}
-
-void DiscordClient::removeReaction(const std::string &channelId, const std::string &messageId,
-                                   const std::string &emoji) {
-	if (channelId.empty() || messageId.empty() || emoji.empty()) {
-		return;
-	}
-
-	std::string encodedEmoji = urlEncode(emoji);
-	std::string url = "https://discord.com/api/v10/channels/" + channelId + "/messages/" + messageId + "/reactions/" +
-	                  encodedEmoji + "/@me";
-
-	Network::NetworkManager::getInstance().enqueue(url, "DELETE", "", Network::RequestPriority::REALTIME,
-	                                               [](const Network::HttpResponse &resp) {
-		                                               if (!resp.success) {
-			                                               Logger::log("[Discord] Failed to remove reaction: %ld %s",
-			                                                           resp.statusCode, resp.body.c_str());
-		                                               }
-	                                               },
-	                                               {{"Authorization", getInstance().token}});
 }
 
 void DiscordClient::setState(ConnectionState newState, const std::string &message) {
@@ -1881,6 +1946,10 @@ void DiscordClient::handleReactionAdd(const rapidjson::Value &d) {
 		emoji = parseEmojiObject(d["emoji"]);
 	}
 
+	// Already shown when requested; a stale echo would undo a later toggle.
+	if (userId == currentUser.id && hasQueuedReactionLocked(messageId, emoji)) {
+		return;
+	}
 	if (messageReactionAddCallback) {
 		messageReactionAddCallback(channelId, messageId, userId, emoji);
 	}
@@ -1897,6 +1966,9 @@ void DiscordClient::handleReactionRemove(const rapidjson::Value &d) {
 		emoji = parseEmojiObject(d["emoji"]);
 	}
 
+	if (userId == currentUser.id && hasQueuedReactionLocked(messageId, emoji)) {
+		return;
+	}
 	if (messageReactionRemoveCallback) {
 		messageReactionRemoveCallback(channelId, messageId, userId, emoji);
 	}

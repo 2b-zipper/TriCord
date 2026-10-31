@@ -195,6 +195,8 @@ struct Emoji {
 	std::string name;
 	mutable std::string hex;
 	bool animated = false;
+
+	bool matches(const Emoji &other) const { return id == other.id && name == other.name; }
 };
 
 struct Reaction {

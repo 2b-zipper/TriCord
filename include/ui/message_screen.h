@@ -189,6 +189,7 @@ class MessageScreen : public Screen {
 	void onMessageCreate(const Discord::Message &msg);
 	void onMessageUpdate(const Discord::Message &msg);
 	void onMessageDelete(const std::string &msgId);
+	void onReaction(const std::string &messageId, const Discord::Emoji &emoji, const std::string &userId, bool added);
 
 	struct KeyboardResult {
 		int button;
