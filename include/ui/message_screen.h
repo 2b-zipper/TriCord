@@ -67,6 +67,7 @@ class MessageScreen : public Screen {
 	virtual ~MessageScreen();
 
 	void update() override;
+	bool isAnimating() const override;
 	void renderTop(C3D_RenderTarget *target) override;
 	void renderBottom(C3D_RenderTarget *target) override;
 	void onEnter() override;
@@ -126,6 +127,7 @@ class MessageScreen : public Screen {
 	bool pollMode = false;
 	int pollAnswerIndex = 0;
 	bool wasAtBottom = false;
+	std::string lastMarkedMessageId;
 	std::vector<std::string> menuOptions;
 	std::vector<std::string> menuActions;
 	std::set<std::string> pendingMemberFetches;
@@ -144,14 +146,17 @@ class MessageScreen : public Screen {
 
 	void fetchMessages();
 	void fetchOlderMessages();
-	float drawMessage(const Discord::Message &msg, float y, float maxWidth, bool isSelected, bool showHeader, bool prevGroupedMention = false, bool nextGroupedMention = false, const MessageRenderCache *renderCache = nullptr);
+	float drawMessage(const Discord::Message &msg, float y, float maxWidth, bool isSelected, bool showHeader,
+	                  bool prevGroupedMention = false, bool nextGroupedMention = false,
+	                  const MessageRenderCache *renderCache = nullptr);
 	float drawForumMessage(const Discord::Message &msg, float y, bool isSelected);
 	float drawSystemMessage(const Discord::Message &msg, float y, float topMargin, float height, bool isSelected);
 	float drawReplyPreview(const Discord::Message &msg, float x, float y);
 	float drawForwardHeader(const Discord::Message &msg, float x, float y);
 	float drawAuthorHeader(const Discord::Message &msg, float x, float y, bool showHeader,
 	                       const MessageRenderCache *renderCache = nullptr);
-	float drawMessageContent(const Discord::Message &msg, float x, float y, const MessageRenderCache *renderCache = nullptr);
+	float drawMessageContent(const Discord::Message &msg, float x, float y,
+	                         const MessageRenderCache *renderCache = nullptr);
 	float drawAttachments(const Discord::Message &msg, float x, float y, float maxWidth);
 	float drawStickers(const Discord::Message &msg, float x, float y, float maxWidth);
 	float drawReactions(const Discord::Message &msg, float x, float y, bool isSelected);
@@ -163,7 +168,8 @@ class MessageScreen : public Screen {
 	void submitPollVote(int answerIndex);
 	float calculateMessageHeight(const Discord::Message &msg, bool showHeader);
 	float calculateEmbedHeight(const Discord::Embed &embed, float maxWidth);
-	float renderEmbed(const Discord::Embed &embed, float x, float y, float maxWidth, const EmbedRenderCache *embedCache = nullptr);
+	float renderEmbed(const Discord::Embed &embed, float x, float y, float maxWidth,
+	                  const EmbedRenderCache *embedCache = nullptr);
 	void openKeyboard();
 	void showMessageOptions();
 
@@ -176,11 +182,14 @@ class MessageScreen : public Screen {
 	void checkAndMarkChannelRead();
 	void syncScrollAfterRebuild(bool wasAtBottom, bool updateSelection = false);
 
-	Discord::Message createOptimisticMessage(const std::string &content, int type = 0, const std::string &referencedAuthor = "");
-	void handleMessageSendResult(const std::string &pendingId, const Discord::Message &sentMsg, bool success, int errorCode);
+	Discord::Message createOptimisticMessage(const std::string &content, int type = 0,
+	                                         const std::string &referencedAuthor = "");
+	void handleMessageSendResult(const std::string &pendingId, const Discord::Message &sentMsg, bool success,
+	                             int errorCode);
 	void onMessageCreate(const Discord::Message &msg);
 	void onMessageUpdate(const Discord::Message &msg);
 	void onMessageDelete(const std::string &msgId);
+	void onReaction(const std::string &messageId, const Discord::Emoji &emoji, const std::string &userId, bool added);
 
 	struct KeyboardResult {
 		int button;

@@ -7,6 +7,7 @@
 #include <atomic>
 #include <citro2d.h>
 #include <deque>
+#include <functional>
 #include <list>
 #include <map>
 #include <mutex>
@@ -41,6 +42,8 @@ class ImageManager {
 
 	void update();
 
+	void runOnDecoder(std::function<void()> job);
+
 	void clear();
 	void clearFailed(const std::string &url);
 	void clearRemote();
@@ -48,7 +51,7 @@ class ImageManager {
 
 	size_t getCacheBytes();
 	size_t getCacheCount();
-	static constexpr size_t getCacheBudget() { return MAX_CACHE_BYTES; }
+	static size_t getCacheBudget();
 
   private:
 	ImageManager() = default;
@@ -75,6 +78,8 @@ class ImageManager {
 	std::set<std::string> fetchingUrls;
 	std::deque<PendingTexture> pendingTextures;
 	std::deque<DecodeRequest> decodeQueue;
+	// clear() must not drop these.
+	std::deque<std::function<void()>> jobQueue;
 
 	std::mutex cacheMutex;
 	std::mutex decodeMutex;
@@ -86,7 +91,6 @@ class ImageManager {
 	std::atomic<int> currentSessionId{0};
 	std::atomic<uint32_t> generation{0};
 
-	static constexpr size_t MAX_CACHE_BYTES = 12 * 1024 * 1024;
 	static constexpr size_t MIN_CACHE_ENTRIES = 8;
 	static constexpr size_t MAX_PENDING_TEXTURES = 4;
 	size_t currentCacheBytes = 0;

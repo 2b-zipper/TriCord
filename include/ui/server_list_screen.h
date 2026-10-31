@@ -17,6 +17,7 @@ class ServerListScreen : public Screen {
 	~ServerListScreen() override = default;
 
 	void update() override;
+	bool isAnimating() const override;
 	void renderTop(C3D_RenderTarget *target) override;
 	void renderBottom(C3D_RenderTarget *target) override;
 
@@ -74,6 +75,13 @@ class ServerListScreen : public Screen {
 	int subscribeTimer = 0;
 	static const int SUBSCRIBE_SETTLE_FRAMES = 20;
 	void subscribeHighlightedGuild();
+
+	std::string channelLoadFor;
+	std::string channelLoadPending;
+	int channelLoadTimer = 0;
+	bool channelLoadAttempted = false;
+	void loadHighlightedGuildChannels();
+	void selectFirstChannel();
 
 	int repeatTimer;
 	u32 lastKey;

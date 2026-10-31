@@ -14,13 +14,16 @@ namespace Network {
 
 enum class RequestPriority { REALTIME, INTERACTIVE, BACKGROUND };
 
+// Non-const so a callback can take ownership of the body.
+using ResponseCallback = std::function<void(HttpResponse &)>;
+
 struct AsyncRequest {
 	std::string url;
 	std::string method;
 	std::string body;
 	std::map<std::string, std::string> headers;
 	RequestPriority priority;
-	std::function<void(const HttpResponse &)> callback;
+	ResponseCallback callback;
 
 	bool operator<(const AsyncRequest &other) const { return priority > other.priority; }
 };
@@ -36,14 +39,12 @@ class NetworkManager {
 	void shutdown();
 
 	void enqueue(const std::string &url, const std::string &method, const std::string &body, RequestPriority priority,
-	             std::function<void(const HttpResponse &)> callback,
-	             const std::map<std::string, std::string> &extraHeaders = {});
+	             ResponseCallback callback, const std::map<std::string, std::string> &extraHeaders = {});
 
 	void getQueueDepths(size_t &realtime, size_t &interactive, size_t &background);
 
-	void get(const std::string &url, RequestPriority priority, std::function<void(const HttpResponse &)> callback);
-	void post(const std::string &url, const std::string &body, RequestPriority priority,
-	          std::function<void(const HttpResponse &)> callback);
+	void get(const std::string &url, RequestPriority priority, ResponseCallback callback);
+	void post(const std::string &url, const std::string &body, RequestPriority priority, ResponseCallback callback);
 
   private:
 	NetworkManager();

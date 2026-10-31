@@ -112,6 +112,8 @@ struct Guild {
 	std::vector<std::string> myRoles;
 	std::vector<Role> roles;
 	std::vector<Member> members;
+	bool channelsLoaded = true;
+	bool loadedOnDemand = false;
 };
 
 struct ReadState {
@@ -193,6 +195,8 @@ struct Emoji {
 	std::string name;
 	mutable std::string hex;
 	bool animated = false;
+
+	bool matches(const Emoji &other) const { return id == other.id && name == other.name; }
 };
 
 struct Reaction {

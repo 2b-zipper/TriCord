@@ -37,6 +37,8 @@ class Screen {
 	virtual void onEnter() {}
 	virtual void onExit() {}
 	virtual bool hidesMenu() const { return false; }
+	// Frames are drawn only on change, so anything that moves on its own must say so.
+	virtual bool isAnimating() const { return false; }
 
 	bool shouldExit() const { return exitRequested; }
 
@@ -56,6 +58,7 @@ class ScreenManager {
 	ScreenType getCurrentType() const { return currentType; }
 	void returnToPreviousScreen();
 	void update();
+	bool shouldRender();
 	void render();
 	void showToast(const std::string &message);
 
@@ -177,6 +180,14 @@ class ScreenManager {
 
 	std::string toastMessage;
 	int toastTimer = 0;
+
+	bool inputActive = false;
+	bool wasAnimating = false;
+	int framesSinceRender = 0;
+	// Catches any change nothing asked a redraw for.
+	static const int IDLE_REDRAW_FRAMES = 30;
+	static const int CIRCLE_DEADZONE = 15;
+	aptHookCookie aptCookie;
 };
 
 void drawText(float x, float y, float z, float scaleX, float scaleY, u32 color, const std::string &text);

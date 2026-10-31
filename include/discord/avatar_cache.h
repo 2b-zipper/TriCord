@@ -65,6 +65,7 @@ class AvatarCache {
 	static constexpr float GUILD_ICON_CORNER_RATIO = 1.0f / 3.0f;
 	void startFetchLocked(const std::string &key, const std::string &url, const std::string &hash,
 	                      float cornerRatio = 0.0f);
+	void markFailedLocked(const std::string &key);
 	void freePendingLocked();
 };
 

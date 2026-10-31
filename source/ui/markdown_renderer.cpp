@@ -250,13 +250,15 @@ u32 styleColor(uint16_t style, BlockType type, u32 base) {
 	return base;
 }
 
-void drawPiece(const Piece &p, float x, float y, float z, u32 color, BlockType type, float lineH, bool reveal, bool isEmbed) {
+void drawPiece(const Piece &p, float x, float y, float z, u32 color, BlockType type, float lineH, bool reveal,
+               bool isEmbed) {
 	u32 c = styleColor(p.style, type, color);
 	u32 codeBg = isEmbed ? ScreenManager::colorInput() : ScreenManager::colorBackgroundDark();
 
 	if (p.style & STYLE_MENTION) {
 		float mMargin = 2.0f;
-		C2D_DrawRectSolid(x - mMargin + 1.0f, y + 1.0f, z - 0.01f, p.width + (mMargin - 1.0f) * 2.0f, lineH - 2.0f, p.bgColor);
+		C2D_DrawRectSolid(x - mMargin + 1.0f, y + 1.0f, z - 0.01f, p.width + (mMargin - 1.0f) * 2.0f, lineH - 2.0f,
+		                  p.bgColor);
 		C2D_DrawRectSolid(x - mMargin, y + 2.0f, z - 0.01f, p.width + mMargin * 2.0f, lineH - 4.0f, p.bgColor);
 		c = p.color;
 	}
@@ -331,7 +333,8 @@ float heightOf(const Layout &layout, size_t maxLines) {
 	return h;
 }
 
-void draw(const Layout &layout, float x, float y, float z, u32 color, size_t maxLines, bool revealSpoilers, bool isEmbed) {
+void draw(const Layout &layout, float x, float y, float z, u32 color, size_t maxLines, bool revealSpoilers,
+          bool isEmbed) {
 	constexpr float SCREEN_HEIGHT = 240.0f;
 	constexpr float CULL_MARGIN = 32.0f;
 

@@ -2,6 +2,7 @@
 #include "stb_image.h"
 
 #include "utils/image_utils.h"
+#include "utils/system_utils.h"
 #include <malloc.h>
 #include <math.h>
 #include <string.h>
@@ -14,6 +15,11 @@ static const int mortonTable[] = {0,  1,  4,  5,  16, 17, 20, 21, 2,  3,  6,  7,
                                   8,  9,  12, 13, 24, 25, 28, 29, 10, 11, 14, 15, 26, 27, 30, 31,
                                   32, 33, 36, 37, 48, 49, 52, 53, 34, 35, 38, 39, 50, 51, 54, 55,
                                   40, 41, 44, 45, 56, 57, 60, 61, 42, 43, 46, 47, 58, 59, 62, 63};
+
+int maxRemoteDim() {
+	static const int dim = System::isNew3DS() ? 512 : 256;
+	return dim;
+}
 
 TiledData decodeToTiled(const unsigned char *data, size_t size, int maxWidth, int maxHeight, bool noResize,
                         float cornerRatio) {
@@ -185,23 +191,33 @@ TiledData decodeToTiled(const unsigned char *data, size_t size, int maxWidth, in
 	return result;
 }
 
-C3D_Tex *loadTextureFromMemory(const unsigned char *data, size_t size, int &outW, int &outH, bool noResize) {
-	TiledData tiled = decodeToTiled(data, size, MAX_REMOTE_DIM, MAX_REMOTE_DIM, noResize);
-	if (!tiled.pixels) {
+C3D_Tex *createTexture(const TiledData &tiled) {
+	C3D_Tex *tex = (C3D_Tex *)malloc(sizeof(C3D_Tex));
+	if (!tex) {
 		return nullptr;
 	}
-
-	C3D_Tex *tex = (C3D_Tex *)malloc(sizeof(C3D_Tex));
 	if (!C3D_TexInit(tex, tiled.p2w, tiled.p2h, GPU_RGBA8)) {
-		free(tiled.pixels);
 		free(tex);
 		return nullptr;
 	}
 
 	C3D_TexSetFilter(tex, GPU_LINEAR, GPU_LINEAR);
 	memcpy(tex->data, tiled.pixels, tiled.vramSize);
-	GSPGPU_FlushDataCache(tex->data, tex->size);
+	GSPGPU_FlushDataCache(tex->data, tiled.vramSize);
+	return tex;
+}
+
+C3D_Tex *loadTextureFromMemory(const unsigned char *data, size_t size, int &outW, int &outH, bool noResize) {
+	TiledData tiled = decodeToTiled(data, size, maxRemoteDim(), maxRemoteDim(), noResize);
+	if (!tiled.pixels) {
+		return nullptr;
+	}
+
+	C3D_Tex *tex = createTexture(tiled);
 	free(tiled.pixels);
+	if (!tex) {
+		return nullptr;
+	}
 
 	outW = tiled.w;
 	outH = tiled.h;

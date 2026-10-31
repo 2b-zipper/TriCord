@@ -3,6 +3,7 @@
 #include "discord/discord_client.h"
 #include "log.h"
 #include "utils/json_utils.h"
+#include "utils/redraw.h"
 #include "utils/sound_player.h"
 
 #include <3ds.h>
@@ -82,6 +83,7 @@ VoiceClient &VoiceClient::getInstance() {
 VoiceClient::~VoiceClient() { disconnect(); }
 
 void VoiceClient::setState(VoiceState s) {
+	Utils::requestRedraw();
 	if (s == VoiceState::ESTABLISHED && state != VoiceState::ESTABLISHED) {
 		Utils::SoundPlayer::getInstance().play(Utils::Sound::VOICE_JOIN);
 		rosterPrimed = true;

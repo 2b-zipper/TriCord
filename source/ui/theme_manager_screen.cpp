@@ -4,6 +4,7 @@
 #include "network/http_client.h"
 #include "utils/file_utils.h"
 #include "utils/message_utils.h"
+#include "utils/redraw.h"
 #include <citro2d.h>
 #include <rapidjson/document.h>
 
@@ -231,6 +232,7 @@ void ThemeManagerScreen::downloadTheme(const std::string &url, const std::string
 		shouldRefresh = true;
 	}
 	isUpdating = false;
+	Utils::requestRedraw();
 }
 
 void ThemeManagerScreen::renderTop(C3D_RenderTarget *target) {

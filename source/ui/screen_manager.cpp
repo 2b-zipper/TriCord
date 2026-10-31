@@ -16,6 +16,7 @@
 #include "ui/settings_screen.h"
 #include "ui/text_measure_cache.h"
 #include "ui/theme_manager_screen.h"
+#include "utils/redraw.h"
 #include "utils/utf8_utils.h"
 #include <algorithm>
 #include <cmath>
@@ -199,6 +200,16 @@ void ScreenManager::init() {
 
 	debugOverlayEnabled = false;
 
+	// The framebuffers may no longer hold our last frame after the HOME menu, sleep or an applet.
+	aptHook(
+	    &aptCookie,
+	    [](APT_HookType hook, void *) {
+		    if (hook == APTHOOK_ONRESTORE || hook == APTHOOK_ONWAKEUP) {
+			    Utils::requestRedraw();
+		    }
+	    },
+	    nullptr);
+
 	Logger::log("[UI] Screen manager initialized");
 
 	if (!Config::getInstance().isDisclaimerAccepted()) {
@@ -211,6 +222,7 @@ void ScreenManager::init() {
 }
 
 void ScreenManager::shutdown() {
+	aptUnhook(&aptCookie);
 	if (currentScreen) {
 		currentScreen->onExit();
 		currentScreen.reset();
@@ -329,6 +341,7 @@ void ScreenManager::setScreen(ScreenType type) {
 	if (currentScreen) {
 		currentScreen->onEnter();
 	}
+	Utils::requestRedraw();
 }
 
 void ScreenManager::pushScreen(ScreenType type) {
@@ -366,6 +379,11 @@ void ScreenManager::update() {
 
 	u32 kDown = hidKeysDown();
 	u32 kHeld = hidKeysHeld();
+
+	circlePosition circle;
+	hidCircleRead(&circle);
+	inputActive =
+	    kDown || kHeld || hidKeysUp() || std::abs(circle.dx) > CIRCLE_DEADZONE || std::abs(circle.dy) > CIRCLE_DEADZONE;
 
 	if (kDown & KEY_START) {
 		appExitRequested = true;
@@ -422,6 +440,22 @@ void ScreenManager::update() {
 	if (toastTimer > 0) {
 		toastTimer--;
 	}
+}
+
+bool ScreenManager::shouldRender() {
+	bool requested = Utils::consumeRedrawRequest();
+	// Speaking indicators follow the audio, not any event.
+	Discord::VoiceState voice = Discord::VoiceClient::getInstance().getState();
+	bool inCall = voice != Discord::VoiceState::DISCONNECTED && voice != Discord::VoiceState::FAILED;
+	bool animating = (currentScreen && currentScreen->isAnimating()) || hamburgerMenu.isAnimating() || toastTimer > 0 ||
+	                 debugOverlayEnabled || statsOverlayEnabled || inCall;
+	// The update that ends an animation leaves its final frame still to draw.
+	bool render = requested || inputActive || animating || wasAnimating || ++framesSinceRender >= IDLE_REDRAW_FRAMES;
+	wasAnimating = animating;
+	if (render) {
+		framesSinceRender = 0;
+	}
+	return render;
 }
 
 void ScreenManager::render() {
@@ -916,7 +950,8 @@ void drawRichText(float x, float y, float z, float scaleX, float scaleY, u32 col
 				if (info.tex) {
 					float uMax = (float)info.originalW / info.tex->width;
 					float vMax = (float)info.originalH / info.tex->height;
-					Tex3DS_SubTexture subtex = {(u16)info.originalW, (u16)info.originalH, 0.0f, 1.0f, uMax, 1.0f - vMax};
+					Tex3DS_SubTexture subtex = {(u16)info.originalW, (u16)info.originalH, 0.0f, 1.0f, uMax,
+					                            1.0f - vMax};
 					const C2D_Image img = {info.tex, &subtex};
 					C2D_DrawImageAt(img, currentX, y + 1.0f, z, nullptr, emojiSize / info.originalW,
 					                emojiSize / info.originalH);

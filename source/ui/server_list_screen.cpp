@@ -8,6 +8,7 @@
 #include "ui/image_manager.h"
 #include "ui/voice_controls.h"
 #include "utils/message_utils.h"
+#include "utils/redraw.h"
 #include "utils/utf8_utils.h"
 #include <3ds.h>
 #include <algorithm>
@@ -57,6 +58,13 @@ ServerListScreen::ServerListScreen()
 	}
 
 	Logger::log("ServerListScreen: Constructor finished");
+}
+
+bool ServerListScreen::isAnimating() const {
+	if (state == State::TRANSITION_TO_CHANNEL || state == State::TRANSITION_TO_SERVER) {
+		return true;
+	}
+	return listItems.empty() && Discord::DiscordClient::getInstance().getState() != Discord::ConnectionState::READY;
 }
 
 void ServerListScreen::resetToServerView() {
@@ -164,6 +172,58 @@ void ServerListScreen::rebuildList() {
 
 	Logger::log("ServerListScreen::rebuildList() end, items: %d", (int)listItems.size());
 	updateUnreadCache();
+}
+
+void ServerListScreen::loadHighlightedGuildChannels() {
+	using ChannelsState = Discord::DiscordClient::GuildChannelsState;
+	if (selectedIndex < 0 || selectedIndex >= (int)listItems.size()) {
+		return;
+	}
+	const auto &item = listItems[selectedIndex];
+	Discord::DiscordClient &client = Discord::DiscordClient::getInstance();
+
+	if (!channelLoadPending.empty()) {
+		if (client.getGuildChannelsState(channelLoadPending) == ChannelsState::LOADING) {
+			return;
+		}
+		bool visible = channelLoadPending == item.id;
+		channelLoadPending.clear();
+		if (visible) {
+			refreshChannels();
+			if (state != State::SELECTING_SERVER) {
+				selectFirstChannel();
+			}
+		}
+	}
+
+	if (item.isFolder || item.isDm) {
+		return;
+	}
+	if (item.id != channelLoadFor) {
+		channelLoadFor = item.id;
+		channelLoadTimer = 0;
+		channelLoadAttempted = false;
+	}
+	if (channelLoadAttempted || client.getGuildChannelsState(item.id) == ChannelsState::LOADED) {
+		return;
+	}
+	if (++channelLoadTimer < SUBSCRIBE_SETTLE_FRAMES) {
+		return;
+	}
+
+	// Another guild may still be loading; retry on a later frame until this one starts.
+	if (client.loadGuildChannels(item.id)) {
+		channelLoadAttempted = true;
+		channelLoadPending = item.id;
+	}
+}
+
+void ServerListScreen::selectFirstChannel() {
+	selectedChannelIndex = 0;
+	while (selectedChannelIndex < (int)sortedChannels.size() && sortedChannels[selectedChannelIndex].type == 4) {
+		selectedChannelIndex++;
+	}
+	channelScrollOffset = 0;
 }
 
 void ServerListScreen::subscribeHighlightedGuild() {
@@ -870,6 +930,7 @@ void ServerListScreen::update() {
 	if (ackForVisibleChannel || guildDataChanged || ++unreadCacheTimer >= UNREAD_CACHE_INTERVAL) {
 		unreadCacheTimer = 0;
 		updateUnreadCache();
+		Utils::requestRedraw();
 	}
 
 	if (privateChannelsChanged && !listItems.empty() && selectedIndex >= 0 && selectedIndex < (int)listItems.size() &&
@@ -924,6 +985,7 @@ void ServerListScreen::update() {
 		}
 	}
 
+	loadHighlightedGuildChannels();
 	subscribeHighlightedGuild();
 
 	u32 kDown = hidKeysDown();
@@ -1103,11 +1165,6 @@ void ServerListScreen::update() {
 			sm.setLastServerScroll(scrollOffset);
 			refreshChannels();
 			channelScrollOffset = 0;
-			selectedChannelIndex = 0;
-			while (selectedChannelIndex < (int)sortedChannels.size() &&
-			       sortedChannels[selectedChannelIndex].type == 4) {
-				selectedChannelIndex++;
-			}
 			selectedChannelIndex = -1;
 
 			sm.setLastChannelIndex(sm.getSelectedGuildId(), selectedChannelIndex);
@@ -1141,12 +1198,7 @@ void ServerListScreen::update() {
 					state = State::TRANSITION_TO_CHANNEL;
 					ScreenManager::getInstance().setSelectedGuildId(item.id);
 
-					selectedChannelIndex = 0;
-					while (selectedChannelIndex < (int)sortedChannels.size() &&
-					       sortedChannels[selectedChannelIndex].type == 4) {
-						selectedChannelIndex++;
-					}
-					channelScrollOffset = 0;
+					selectFirstChannel();
 
 					sm.setLastChannelIndex(item.id, selectedChannelIndex);
 					sm.setLastChannelScroll(item.id, channelScrollOffset);
@@ -1339,8 +1391,7 @@ void ServerListScreen::renderTop(C3D_RenderTarget *target) {
 				float badgeY = 3.0f;
 				drawRoundedRect(badgeX - 1.0f, badgeY - 1.0f, 0.58f, badgeW + 2.0f, badgeH + 2.0f,
 				                (badgeH + 2.0f) / 2.0f, ScreenManager::colorBackgroundDark());
-				drawRoundedRect(badgeX, badgeY, 0.59f, badgeW, badgeH, badgeH / 2.0f,
-				                C2D_Color32(237, 66, 69, 255));
+				drawRoundedRect(badgeX, badgeY, 0.59f, badgeW, badgeH, badgeH / 2.0f, C2D_Color32(237, 66, 69, 255));
 				drawText(badgeX + (badgeW - textW) / 2.0f, badgeY + 2.0f, 0.60f, 0.42f, 0.42f,
 				         C2D_Color32(255, 255, 255, 255), badgeText);
 			}
@@ -1349,8 +1400,7 @@ void ServerListScreen::renderTop(C3D_RenderTarget *target) {
 				float badgeY = 240.0f - badgeH - 3.0f;
 				drawRoundedRect(badgeX - 1.0f, badgeY - 1.0f, 0.58f, badgeW + 2.0f, badgeH + 2.0f,
 				                (badgeH + 2.0f) / 2.0f, ScreenManager::colorBackgroundDark());
-				drawRoundedRect(badgeX, badgeY, 0.59f, badgeW, badgeH, badgeH / 2.0f,
-				                C2D_Color32(237, 66, 69, 255));
+				drawRoundedRect(badgeX, badgeY, 0.59f, badgeW, badgeH, badgeH / 2.0f, C2D_Color32(237, 66, 69, 255));
 				drawText(badgeX + (badgeW - textW) / 2.0f, badgeY + 2.0f, 0.60f, 0.42f, 0.42f,
 				         C2D_Color32(255, 255, 255, 255), badgeText);
 			}
@@ -1379,13 +1429,26 @@ void ServerListScreen::drawChannelList(float x, float y, float alpha) {
 	float startY = y + headerH + 4.0f;
 
 	if (sortedChannels.empty()) {
-		if (selectedIndex >= 0 && selectedIndex < (int)listItems.size() && listItems[selectedIndex].isFolder) {
+		const ListItem *item =
+		    (selectedIndex >= 0 && selectedIndex < (int)listItems.size()) ? &listItems[selectedIndex] : nullptr;
+		if (item && item->isFolder) {
 			return;
 		}
 
-		bool isDmPane = selectedIndex >= 0 && selectedIndex < (int)listItems.size() && listItems[selectedIndex].isDm;
+		const char *emptyKey = "channel.no_visible";
+		if (item && item->isDm) {
+			emptyKey = "dm.no_messages";
+		} else if (item) {
+			using ChannelsState = Discord::DiscordClient::GuildChannelsState;
+			ChannelsState channelsState = Discord::DiscordClient::getInstance().getGuildChannelsState(item->id);
+			if (channelsState == ChannelsState::FAILED) {
+				emptyKey = "channel.load_failed";
+			} else if (channelsState != ChannelsState::LOADED) {
+				emptyKey = "common.loading";
+			}
+		}
 		drawText(startX, startY + 20, 0.5f, 0.5f, 0.5f, ScreenManager::colorTextMuted(),
-		         Core::I18n::getInstance().get(isDmPane ? "dm.no_messages" : "channel.no_visible"));
+		         Core::I18n::getInstance().get(emptyKey));
 		return;
 	}
 
@@ -1556,8 +1619,7 @@ void ServerListScreen::drawChannelList(float x, float y, float alpha) {
 				float badgeX = x + (400.0f - x) - badgeW - 6.0f;
 				float badgeY = badgeCY - badgeR;
 
-				drawRoundedRect(badgeX, badgeY, 0.52f, badgeW, badgeR * 2.0f, badgeR,
-				                C2D_Color32(237, 66, 69, 255));
+				drawRoundedRect(badgeX, badgeY, 0.52f, badgeW, badgeR * 2.0f, badgeR, C2D_Color32(237, 66, 69, 255));
 				drawText(badgeX + (badgeW - textW) / 2.0f, badgeCY - 4.5f, 0.53f, tScale, tScale,
 				         C2D_Color32(255, 255, 255, 255), cntStr);
 			}
