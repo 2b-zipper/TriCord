@@ -8,6 +8,7 @@
     "call.in_call": "通話中",
     "call.incoming": "着信中",
     "channel.mute.unmute": "チャンネルを通知オン",
+    "channel.load_failed": "Could not load channels (not enough memory)",
     "channel.no_visible": "表示できるチャンネルがありません",
     "channel.select": "チャンネル選択",
     "common.adjust": "調整",
