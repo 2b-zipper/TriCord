@@ -1904,7 +1904,7 @@ void DiscordClient::handleMessageCreate(const rapidjson::Value &d) {
 		}
 	}
 
-	if (playSound) {
+	if (playSound && Config::getInstance().isNotificationSoundEnabled()) {
 		Utils::SoundPlayer::getInstance().play(Utils::Sound::NOTIFICATION);
 	}
 

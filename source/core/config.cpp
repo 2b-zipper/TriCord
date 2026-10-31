@@ -23,9 +23,9 @@
 
 Config::Config()
     : currentAccountIndex(-1), timezoneOffset(0), language("en_US"), themeType(0), typingIndicatorEnabled(true),
-      echoCancellation(true), fileLoggingEnabled(false), disclaimerAccepted(false), sslVerificationDisabled(false),
-      showAvatars(true), showServerIcons(true), showHiddenChannels(false), customThemeEnabled(false),
-      selectedThemeName("") {
+      notificationSound(true), echoCancellation(true), fileLoggingEnabled(false), disclaimerAccepted(false),
+      sslVerificationDisabled(false), showAvatars(true), showServerIcons(true), showHiddenChannels(false),
+      customThemeEnabled(false), selectedThemeName("") {
 	customTheme = getDarkPreset();
 	customTheme.name = "Custom Theme";
 }
@@ -220,6 +220,9 @@ void Config::loadSettings() {
 			if (doc.HasMember("typing_indicator") && doc["typing_indicator"].IsBool()) {
 				typingIndicatorEnabled = doc["typing_indicator"].GetBool();
 			}
+			if (doc.HasMember("notification_sound") && doc["notification_sound"].IsBool()) {
+				notificationSound = doc["notification_sound"].GetBool();
+			}
 			if (doc.HasMember("echo_cancellation") && doc["echo_cancellation"].IsBool()) {
 				echoCancellation = doc["echo_cancellation"].GetBool();
 			}
@@ -274,6 +277,8 @@ void Config::saveSettings() {
 	writer.String(language.c_str());
 	writer.Key("typing_indicator");
 	writer.Bool(typingIndicatorEnabled);
+	writer.Key("notification_sound");
+	writer.Bool(notificationSound);
 	writer.Key("echo_cancellation");
 	writer.Bool(echoCancellation);
 	writer.Key("file_logging");
@@ -329,6 +334,11 @@ void Config::setThemeType(int type) {
 
 void Config::setTypingIndicatorEnabled(bool enabled) {
 	typingIndicatorEnabled = enabled;
+	saveSettings();
+}
+
+void Config::setNotificationSoundEnabled(bool enabled) {
+	notificationSound = enabled;
 	saveSettings();
 }
 

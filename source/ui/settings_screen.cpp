@@ -196,6 +196,19 @@ void SettingsScreen::onEnter() {
 	typing.onUpdate = [](int val) { Config::getInstance().setTypingIndicatorEnabled(val == 1); };
 	allItems.push_back(typing);
 
+	SettingItem notificationSound;
+	notificationSound.label = TR("settings.notification_sound");
+	notificationSound.description = TR("settings.desc.notification_sound");
+	notificationSound.type = SettingItemType::TOGGLE;
+	notificationSound.value = Config::getInstance().isNotificationSoundEnabled() ? 1 : 0;
+	notificationSound.min = 0;
+	notificationSound.max = 1;
+	notificationSound.valueFormatter = [](int val) {
+		return (val == 1) ? TR("common.enabled") : TR("common.disabled");
+	};
+	notificationSound.onUpdate = [](int val) { Config::getInstance().setNotificationSoundEnabled(val == 1); };
+	allItems.push_back(notificationSound);
+
 	// VOICE
 	allItems.push_back({TR("settings.section.voice"), "", SettingItemType::SECTION_HEADER});
 

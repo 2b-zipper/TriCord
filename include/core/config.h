@@ -113,6 +113,8 @@ class Config {
 	void setThemeType(int type);
 	bool isTypingIndicatorEnabled() const { return typingIndicatorEnabled; }
 	void setTypingIndicatorEnabled(bool enabled);
+	bool isNotificationSoundEnabled() const { return notificationSound; }
+	void setNotificationSoundEnabled(bool enabled);
 	bool isEchoCancellationEnabled() const { return echoCancellation; }
 	void setEchoCancellationEnabled(bool enabled);
 	bool isFileLoggingEnabled() const { return fileLoggingEnabled; }
@@ -145,6 +147,7 @@ class Config {
 	std::string language;
 	int themeType;
 	bool typingIndicatorEnabled;
+	bool notificationSound;
 	bool echoCancellation;
 	bool fileLoggingEnabled;
 	bool disclaimerAccepted;
