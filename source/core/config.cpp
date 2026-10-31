@@ -19,7 +19,6 @@
 #include "log.h"
 #include "utils/color_utils.h"
 #include "utils/file_utils.h"
-#include "utils/system_utils.h"
 
 Config::Config()
     : currentAccountIndex(-1), timezoneOffset(0), language("en_US"), themeType(0), typingIndicatorEnabled(true),
@@ -198,8 +197,6 @@ void Config::save() {
 }
 
 void Config::loadSettings() {
-	echoCancellation = Utils::System::isNew3DS();
-
 	std::string settingsPath = std::string(CONFIG_DIR_PATH) + "/settings.json";
 	std::vector<char> buffer = Utils::File::readFile(settingsPath);
 
@@ -223,8 +220,9 @@ void Config::loadSettings() {
 			if (doc.HasMember("notification_sound") && doc["notification_sound"].IsBool()) {
 				notificationSound = doc["notification_sound"].GetBool();
 			}
-			if (doc.HasMember("echo_cancellation") && doc["echo_cancellation"].IsBool()) {
-				echoCancellation = doc["echo_cancellation"].GetBool();
+			// Not "echo_cancellation": Old 3DS used to default off and saved that.
+			if (doc.HasMember("echo_cancel") && doc["echo_cancel"].IsBool()) {
+				echoCancellation = doc["echo_cancel"].GetBool();
 			}
 			if (doc.HasMember("file_logging") && doc["file_logging"].IsBool()) {
 				fileLoggingEnabled = doc["file_logging"].GetBool();
@@ -279,7 +277,7 @@ void Config::saveSettings() {
 	writer.Bool(typingIndicatorEnabled);
 	writer.Key("notification_sound");
 	writer.Bool(notificationSound);
-	writer.Key("echo_cancellation");
+	writer.Key("echo_cancel");
 	writer.Bool(echoCancellation);
 	writer.Key("file_logging");
 	writer.Bool(fileLoggingEnabled);

@@ -16,8 +16,6 @@
 
 namespace webrtc {
 
-enum { AecmFalse = 0, AecmTrue };
-
 // Errors
 #define AECM_UNSPECIFIED_ERROR 12000
 #define AECM_UNSUPPORTED_FUNCTION_ERROR 12001
@@ -29,7 +27,6 @@ enum { AecmFalse = 0, AecmTrue };
 #define AECM_BAD_PARAMETER_WARNING 12100
 
 typedef struct {
-  int16_t cngMode;   // AECM_FALSE, AECM_TRUE (default)
   int16_t echoMode;  // 0, 1, 2, 3 (default), 4
 } AecmConfig;
 

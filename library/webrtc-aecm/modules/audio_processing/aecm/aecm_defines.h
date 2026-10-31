@@ -23,14 +23,14 @@
 #define PART_LEN2 (PART_LEN << 1) /* Length of partition * 2. */
 #define PART_LEN4 (PART_LEN << 2) /* Length of partition * 4. */
 #define FAR_BUF_LEN PART_LEN4     /* Length of buffers. */
-#define MAX_DELAY 100
+#define MAX_DELAY 50
 
 /* Counter parameters */
 #define CONV_LEN 512              /* Convergence length used at startup. */
 #define CONV_LEN2 (CONV_LEN << 1) /* Used at startup. */
 
 /* Energy parameters */
-#define MAX_BUF_LEN 64            /* History length of energy signals. */
+#define MAX_BUF_LEN 20            /* History length of energy signals. */
 #define FAR_ENERGY_MIN 1025       /* Lowest Far energy level: At least 2 */
                                   /* in energy. */
 #define FAR_ENERGY_DIFF 929       /* Allowed difference between max */
@@ -67,16 +67,6 @@
 #define SUPGAIN_ERROR_PARAM_D SUPGAIN_DEFAULT /* Estimation error parameter */
 /* (Should be the same as Default) (1 in Q8). */
 #define SUPGAIN_EPC_DT 200 /* SUPGAIN_ERROR_PARAM_C * ENERGY_DEV_TOL */
-
-/* Defines for "check delay estimation" */
-#define CORR_WIDTH 31 /* Number of samples to correlate over. */
-#define CORR_MAX 16   /* Maximum correlation offset. */
-#define CORR_MAX_BUF 63
-#define CORR_DEV 4
-#define CORR_MAX_LEVEL 20
-#define CORR_MAX_LOW 4
-#define CORR_BUF_LEN (CORR_MAX << 1) + 1
-/* Note that CORR_WIDTH + 2*CORR_MAX <= MAX_BUF_LEN. */
 
 #define ONE_Q14 (1 << 14)
 

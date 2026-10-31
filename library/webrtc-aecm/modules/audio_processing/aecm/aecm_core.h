@@ -52,7 +52,6 @@ typedef struct {
   int16_t farBuf[FAR_BUF_LEN];
 
   int16_t mult;
-  uint32_t seed;
 
   // Delay estimation variables
   void* delay_estimator_farend;
@@ -102,11 +101,6 @@ typedef struct {
 
   int32_t echoFilt[PART_LEN1];
   int16_t nearFilt[PART_LEN1];
-  int32_t noiseEst[PART_LEN1];
-  int noiseEstTooLowCtr[PART_LEN1];
-  int noiseEstTooHighCtr[PART_LEN1];
-  int16_t noiseEstCtr;
-  int16_t cngMode;
 
   int32_t mseAdaptOld;
   int32_t mseStoredOld;
@@ -129,6 +123,10 @@ typedef struct {
   int16_t supGainErrParamD;
   int16_t supGainErrParamDiffAB;
   int16_t supGainErrParamDiffBD;
+
+  int farSilentBlocks;
+  int delayTurn;
+  int idle;
 
   struct RealFFT* real_fft;
 
@@ -380,8 +378,6 @@ void WebRtcAecm_UpdateChannel(AecmCore* aecm,
                               int16_t mu,
                               int32_t* echoEst);
 
-extern const int16_t WebRtcAecm_kCosTable[];
-extern const int16_t WebRtcAecm_kSinTable[];
 
 ///////////////////////////////////////////////////////////////////////////////
 // Some function pointers, for internal functions shared by ARM NEON and

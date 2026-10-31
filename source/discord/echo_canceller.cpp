@@ -31,7 +31,6 @@ bool EchoCanceller::start() {
 	}
 
 	webrtc::AecmConfig config;
-	config.cngMode = webrtc::AecmTrue;
 	config.echoMode = ECHO_MODE;
 	if (webrtc::WebRtcAecm_set_config(handle, config) != 0) {
 		Logger::log("[AEC] set_config failed");

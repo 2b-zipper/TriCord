@@ -23,7 +23,9 @@ namespace {
 
 // Number of right shifts for scaling is linearly depending on number of bits in
 // the far-end binary spectrum.
-const int kShiftsAtZero = 13;  // Right shifts at zero binary spectrum.
+// AECM compares every other block, so the mean is updated at half the usual
+// rate.
+const int kShiftsAtZero = 12;  // Right shifts at zero binary spectrum.
 const int kShiftsLinearSlope = 3;
 
 const int32_t kProbabilityOffset = 1024;      // 2 in Q9.
@@ -630,14 +632,13 @@ int WebRtc_ProcessBinarySpectrum(BinaryDelayEstimator* self,
                   self->farend->far_bit_counts + self->history_size,
                   [](int a) { return a > 0; });
 
-  if (non_stationary_farend) {
+  if (self->robust_validation_enabled) {
     // Only update the validation statistics when the farend is nonstationary
     // as the underlying estimates are otherwise frozen.
-    UpdateRobustValidationStatistics(self, candidate_delay, valley_depth,
-                                     value_best_candidate);
-  }
-
-  if (self->robust_validation_enabled) {
+    if (non_stationary_farend) {
+      UpdateRobustValidationStatistics(self, candidate_delay, valley_depth,
+                                       value_best_candidate);
+    }
     int is_histogram_valid = HistogramBasedValidation(self, candidate_delay);
     valid_candidate = RobustValidation(self, candidate_delay, valid_candidate,
                                        is_histogram_valid);
