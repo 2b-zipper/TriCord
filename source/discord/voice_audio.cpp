@@ -3,12 +3,17 @@
 
 #include <cstring>
 #include <malloc.h>
+#include <new>
 #include <opus/opus.h>
 
 namespace Discord {
 
 namespace {
 constexpr int NDSP_CHANNEL = 0;
+
+bool isOpusSilence(const uint8_t *d, size_t n) { return n == 3 && d[0] == 0xF8 && d[1] == 0xFF && d[2] == 0xFE; }
+
+bool slotBusy(const ndspWaveBuf &b) { return b.status != NDSP_WBUF_FREE && b.status != NDSP_WBUF_DONE; }
 } // namespace
 
 bool VoiceAudio::start() {
@@ -17,21 +22,14 @@ bool VoiceAudio::start() {
 		return true;
 	}
 
-	ring = (int16_t *)calloc((size_t)RING_FRAMES * FRAME_SAMPLES, sizeof(int16_t));
-	waveData = (int16_t *)linearAlloc(sizeof(waveBufs) / sizeof(waveBufs[0]) * FRAME_SAMPLES * sizeof(int16_t));
-	if (!ring || !waveData) {
+	waveData = (int16_t *)linearAlloc(OUT_BUFFERS * FRAME_SAMPLES * sizeof(int16_t));
+	if (!waveData) {
 		Logger::log("[VoiceAudio] allocation failed");
-		free(ring);
-		ring = nullptr;
-		if (waveData) {
-			linearFree(waveData);
-			waveData = nullptr;
-		}
 		return false;
 	}
 
 	ndspChnReset(NDSP_CHANNEL);
-	ndspChnSetInterp(NDSP_CHANNEL, NDSP_INTERP_NONE);
+	ndspChnSetInterp(NDSP_CHANNEL, NDSP_INTERP_LINEAR);
 	ndspChnSetRate(NDSP_CHANNEL, (float)SAMPLE_RATE);
 	ndspChnSetFormat(NDSP_CHANNEL, NDSP_FORMAT_MONO_PCM16);
 
@@ -42,17 +40,18 @@ bool VoiceAudio::start() {
 	ndspChnSetMix(NDSP_CHANNEL, mix);
 
 	memset(waveBufs, 0, sizeof(waveBufs));
-	for (int i = 0; i < 4; i++) {
+	for (int i = 0; i < OUT_BUFFERS; i++) {
 		waveBufs[i].data_vaddr = waveData + (size_t)i * FRAME_SAMPLES;
 		waveBufs[i].nsamples = FRAME_SAMPLES;
 		waveBufs[i].status = NDSP_WBUF_DONE;
 	}
 
-	playFrame = 0;
-	writtenFrames = 0;
 	nextWaveBuf = 0;
+	ticks = 0;
+	level = 0;
+	stats = Stats();
 	running = true;
-	Logger::log("[VoiceAudio] started");
+	Logger::log("[VoiceAudio] started (%d Hz, queue %d x %d ms)", SAMPLE_RATE, OUT_QUEUE, FRAME_MS);
 	return true;
 }
 
@@ -65,75 +64,99 @@ void VoiceAudio::stop() {
 	ndspChnWaveBufClear(NDSP_CHANNEL);
 
 	for (auto &pair : speakers) {
-		if (pair.second.decoder) {
-			opus_decoder_destroy(pair.second.decoder);
-		}
+		destroy(*pair.second);
 	}
 	speakers.clear();
 
-	free(ring);
-	ring = nullptr;
 	linearFree(waveData);
 	waveData = nullptr;
 	running = false;
 	Logger::log("[VoiceAudio] stopped");
 }
 
-void VoiceAudio::mixFrame(size_t frameIndex, const int16_t *samples) {
-	int16_t *dst = ring + (frameIndex % RING_FRAMES) * FRAME_SAMPLES;
-	for (int i = 0; i < FRAME_SAMPLES; i++) {
-		int32_t sum = (int32_t)dst[i] + samples[i];
-		if (sum > 32767) {
-			sum = 32767;
-		} else if (sum < -32768) {
-			sum = -32768;
-		}
-		dst[i] = (int16_t)sum;
+void VoiceAudio::destroy(Speaker &s) {
+	if (s.decoder) {
+		opus_decoder_destroy(s.decoder);
+		s.decoder = nullptr;
 	}
 }
 
-void VoiceAudio::pushOpus(uint32_t ssrc, const uint8_t *data, size_t len) {
+void VoiceAudio::enqueue(Speaker &s, const uint8_t *data, size_t len, Stats &stats) {
+	if (s.count == QUEUE_SLOTS) {
+		s.head = (uint8_t)((s.head + 1) % QUEUE_SLOTS);
+		s.count--;
+		stats.skipped++;
+	}
+	const int slot = (s.head + s.count) % QUEUE_SLOTS;
+	s.len[slot] = (uint16_t)len;
+	if (len) {
+		memcpy(s.data[slot], data, len);
+	}
+	s.count++;
+}
+
+void VoiceAudio::pushOpus(uint32_t ssrc, uint16_t seq, const uint8_t *data, size_t len) {
+	if (len == 0 || len > MAX_PACKET) {
+		return;
+	}
+
 	std::lock_guard<std::mutex> lock(mutex);
 	if (!running || deafened) {
 		return;
 	}
 
-	Speaker &speaker = speakers[ssrc];
-	if (!speaker.decoder) {
-		int err = 0;
-		speaker.decoder = opus_decoder_create(SAMPLE_RATE, 1, &err);
-		if (err != OPUS_OK || !speaker.decoder) {
-			Logger::log("[VoiceAudio] opus_decoder_create failed for ssrc %lu: %d", (unsigned long)ssrc, err);
-			speaker.decoder = nullptr;
+	auto &slot = speakers[ssrc];
+	if (!slot) {
+		slot.reset(new (std::nothrow) Speaker());
+		if (!slot) {
+			speakers.erase(ssrc);
+			Logger::log("[VoiceAudio] out of memory for ssrc %lu", (unsigned long)ssrc);
 			return;
 		}
-		speaker.primed = false;
+	}
+	Speaker &s = *slot;
+
+	if (!s.decoder) {
+		int err = 0;
+		s.decoder = opus_decoder_create(SAMPLE_RATE, 1, &err);
+		if (err != OPUS_OK || !s.decoder) {
+			Logger::log("[VoiceAudio] opus_decoder_create failed for ssrc %lu: %d", (unsigned long)ssrc, err);
+			s.decoder = nullptr;
+			speakers.erase(ssrc);
+			return;
+		}
 		Logger::log("[VoiceAudio] new speaker ssrc=%lu", (unsigned long)ssrc);
 	}
 
-	int16_t pcm[FRAME_SAMPLES];
-	int decoded = opus_decode(speaker.decoder, data, (opus_int32)len, pcm, FRAME_SAMPLES, 0);
-	if (decoded <= 0) {
-		return;
-	}
-	if (decoded < FRAME_SAMPLES) {
-		memset(pcm + decoded, 0, (FRAME_SAMPLES - decoded) * sizeof(int16_t));
-	}
+	s.idleSeconds = 0;
 
-	if (!speaker.primed) {
-		speaker.writeFrame = playFrame + PREBUFFER_FRAMES;
-		speaker.primed = true;
+	if (s.haveSeq) {
+		const int delta = (int16_t)(uint16_t)(seq - s.lastSeq);
+		// A big jump backwards is the sender restarting its counter, not a late packet.
+		if (delta <= 0 && delta > -64) {
+			stats.late++;
+			return;
+		}
+		// After a silence frame the gap is only the sender having stopped, not a loss.
+		if (delta > 1 && delta <= 1 + MAX_GAP_CONCEAL && s.playing && !s.arrivedSilence) {
+			for (int i = 1; i < delta; i++) {
+				enqueue(s, nullptr, 0, stats);
+			}
+		}
 	}
+	s.lastSeq = seq;
+	s.haveSeq = true;
+	s.arrivedSilence = isOpusSilence(data, len);
 
-	if (speaker.writeFrame < playFrame || speaker.writeFrame >= playFrame + RING_FRAMES) {
-		speaker.writeFrame = playFrame + PREBUFFER_FRAMES;
-	}
+	enqueue(s, data, len, stats);
 
-	mixFrame(speaker.writeFrame, pcm);
-	if (speaker.writeFrame + 1 > writtenFrames) {
-		writtenFrames = speaker.writeFrame + 1;
+	// Playback consumes only as fast as the sender produces, so a burst would never drain.
+	if (s.count > JITTER_HIGH) {
+		const int drop = s.count - JITTER_KEEP;
+		s.head = (uint8_t)((s.head + drop) % QUEUE_SLOTS);
+		s.count = JITTER_KEEP;
+		stats.skipped += (uint32_t)drop;
 	}
-	speaker.writeFrame++;
 }
 
 void VoiceAudio::setDeafened(bool d) {
@@ -146,12 +169,12 @@ void VoiceAudio::setDeafened(bool d) {
 		return;
 	}
 
-	if (ring) {
-		memset(ring, 0, RING_FRAMES * FRAME_SAMPLES * sizeof(int16_t));
-	}
-	writtenFrames = playFrame;
 	for (auto &pair : speakers) {
-		pair.second.primed = false;
+		Speaker &s = *pair.second;
+		s.head = 0;
+		s.count = 0;
+		s.playing = false;
+		s.concealed = 0;
 	}
 }
 
@@ -161,34 +184,122 @@ void VoiceAudio::dropSpeaker(uint32_t ssrc) {
 	if (it == speakers.end()) {
 		return;
 	}
-	if (it->second.decoder) {
-		opus_decoder_destroy(it->second.decoder);
-	}
+	destroy(*it->second);
 	speakers.erase(it);
 }
 
-void VoiceAudio::submitFrame(ndspWaveBuf &buf, const int16_t *src) {
-	int16_t *dst = (int16_t *)buf.data_vaddr;
-	memcpy(dst, src, FRAME_SAMPLES * sizeof(int16_t));
+void VoiceAudio::renderFrame() {
+	int32_t acc[FRAME_SAMPLES];
+	bool any = false;
 
-	// Averaged rather than decimated: aliasing would corrupt the envelope the
-	// delay estimator works from.
-	if (echo) {
-		for (int i = 0; i < ECHO_FRAME_SAMPLES; i++) {
-			int32_t sum = 0;
-			for (int j = 0; j < ECHO_DECIMATION; j++) {
-				sum += src[i * ECHO_DECIMATION + j];
-			}
-			echoFrame[i] = (int16_t)(sum / ECHO_DECIMATION);
+	for (auto &pair : speakers) {
+		Speaker &s = *pair.second;
+		if (!s.decoder) {
+			continue;
 		}
-		echo->bufferFarEnd(echoFrame, ECHO_FRAME_SAMPLES);
+
+		if (!s.playing) {
+			if (s.count < JITTER_START) {
+				continue;
+			}
+			s.playing = true;
+			s.concealed = 0;
+		}
+
+		const uint8_t *packet = nullptr;
+		size_t packetLen = 0;
+		if (s.count > 0) {
+			packetLen = s.len[s.head];
+			packet = packetLen ? s.data[s.head] : nullptr;
+		} else if (s.playedSilence || s.concealed >= MAX_CONCEAL) {
+			s.playing = false;
+			continue;
+		} else {
+			stats.underruns++;
+		}
+
+		int16_t pcm[FRAME_SAMPLES];
+		const int decoded = opus_decode(s.decoder, packet, (opus_int32)packetLen, pcm, FRAME_SAMPLES, 0);
+
+		if (s.count > 0) {
+			s.head = (uint8_t)((s.head + 1) % QUEUE_SLOTS);
+			s.count--;
+		}
+		if (packetLen == 0) {
+			s.concealed++;
+			stats.concealed++;
+		} else {
+			s.concealed = 0;
+			s.playedSilence = isOpusSilence(packet, packetLen);
+			stats.played++;
+		}
+
+		if (decoded <= 0) {
+			continue;
+		}
+		if (decoded < FRAME_SAMPLES) {
+			memset(pcm + decoded, 0, (FRAME_SAMPLES - decoded) * sizeof(int16_t));
+		}
+
+		if (!any) {
+			for (int i = 0; i < FRAME_SAMPLES; i++) {
+				acc[i] = pcm[i];
+			}
+			any = true;
+		} else {
+			for (int i = 0; i < FRAME_SAMPLES; i++) {
+				acc[i] += pcm[i];
+			}
+		}
 	}
 
-	DSP_FlushDataCache(dst, FRAME_SAMPLES * sizeof(int16_t));
+	int peak = 0;
+	if (any) {
+		for (int i = 0; i < FRAME_SAMPLES; i++) {
+			int32_t v = acc[i];
+			if (v > 32767) {
+				v = 32767;
+			} else if (v < -32768) {
+				v = -32768;
+			}
+			frame[i] = (int16_t)v;
+			const int m = v < 0 ? -v : v;
+			if (m > peak) {
+				peak = m;
+			}
+		}
+	} else {
+		memset(frame, 0, sizeof(frame));
+	}
+
+	int lvl = level - (level >> 3);
+	level = peak > lvl ? peak : lvl;
+}
+
+void VoiceAudio::submitFrame(ndspWaveBuf &buf) {
+	int16_t *dst = (int16_t *)buf.data_vaddr;
+	memcpy(dst, frame, sizeof(frame));
+	DSP_FlushDataCache(dst, sizeof(frame));
 	ndspChnWaveBufAdd(NDSP_CHANNEL, &buf);
 
-	playFrame++;
-	nextWaveBuf = (nextWaveBuf + 1) % 4;
+	// Silence included: a far-end timeline that jumps breaks the delay estimate.
+	if (echo) {
+		echo->bufferFarEnd(frame, FRAME_SAMPLES);
+	}
+
+	nextWaveBuf = (nextWaveBuf + 1) % OUT_BUFFERS;
+}
+
+void VoiceAudio::housekeeping() {
+	for (auto it = speakers.begin(); it != speakers.end();) {
+		Speaker &s = *it->second;
+		if (!s.playing && s.count == 0 && ++s.idleSeconds >= IDLE_EVICT_SECONDS) {
+			destroy(s);
+			it = speakers.erase(it);
+		} else {
+			++it;
+		}
+	}
 }
 
 void VoiceAudio::pump() {
@@ -198,36 +309,41 @@ void VoiceAudio::pump() {
 	}
 
 	int queued = 0;
-	for (int i = 0; i < 4; i++) {
-		if (waveBufs[i].status != NDSP_WBUF_FREE && waveBufs[i].status != NDSP_WBUF_DONE) {
+	for (const ndspWaveBuf &b : waveBufs) {
+		if (slotBusy(b)) {
 			queued++;
 		}
 	}
 
-	// Silence is submitted rather than nothing: the far-end reference has to sit
-	// on a timeline that never jumps, or the delay estimate breaks every time
-	// the channel goes quiet.
-	for (int i = 0; i < 4; i++) {
+	while (queued < OUT_QUEUE) {
 		ndspWaveBuf &buf = waveBufs[nextWaveBuf];
-		if (buf.status != NDSP_WBUF_FREE && buf.status != NDSP_WBUF_DONE) {
+		if (slotBusy(buf)) {
 			break;
 		}
-
-		if (playFrame < writtenFrames) {
-			int16_t *src = ring + (playFrame % RING_FRAMES) * FRAME_SAMPLES;
-			submitFrame(buf, src);
-			memset(src, 0, FRAME_SAMPLES * sizeof(int16_t));
-		} else {
-			submitFrame(buf, silentFrame);
-		}
+		renderFrame();
+		submitFrame(buf);
 		queued++;
+
+		if (++ticks % (1000 / FRAME_MS) == 0) {
+			housekeeping();
+		}
 	}
 
-	// Ignoring the DSP pipeline and acoustic path is deliberate: AECM recovers
-	// from an underestimated delay but not an overestimated one.
+	// Left low on purpose: AECM recovers from an underestimate but not an overestimate.
 	if (echo) {
-		echo->setDelayMs(queued * 1000 * FRAME_SAMPLES / SAMPLE_RATE);
+		echo->setDelayMs(queued * FRAME_MS);
 	}
+}
+
+void VoiceAudio::logStats() {
+	std::lock_guard<std::mutex> lock(mutex);
+	if (!running) {
+		return;
+	}
+	Logger::log("[VoiceAudio] speakers=%u played=%lu concealed=%lu underrun=%lu skipped=%lu late=%lu",
+	            (unsigned)speakers.size(), (unsigned long)stats.played, (unsigned long)stats.concealed,
+	            (unsigned long)stats.underruns, (unsigned long)stats.skipped, (unsigned long)stats.late);
+	stats = Stats();
 }
 
 } // namespace Discord

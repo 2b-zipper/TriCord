@@ -82,6 +82,7 @@ class VoiceClient {
 	std::thread worker;
 	static constexpr size_t MEDIA_STACK_SIZE = 64 * 1024;
 	Thread media = nullptr;
+	s32 callerPriority = 0x30;
 	std::atomic<bool> stopWorker{false};
 	std::atomic<bool> stopMedia{false};
 	VoiceAudio audio;
@@ -127,8 +128,12 @@ class VoiceClient {
 	static constexpr uint64_t SPEAKING_HOLD_MS = 200;
 	static constexpr uint64_t TRANSMIT_HOLD_MS = 200;
 	static constexpr int SPEAKING_PEAK_THRESHOLD = 1200;
+	static constexpr int ECHO_GATE_PERCENT = 25;
+	static constexpr int ECHO_GATE_MAX = 6000;
+	static constexpr int MAX_MIC_FRAMES_PER_PASS = 3;
 	void markSpeaking(const std::string &userId);
 	void clearSpeaking(const std::string &userId);
+	void expireSpeaking();
 	std::vector<uint8_t> externalSenderPackage;
 	uint32_t packetsDecoded = 0;
 	uint32_t decryptFailures = 0;

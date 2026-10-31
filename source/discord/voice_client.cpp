@@ -104,6 +104,8 @@ void VoiceClient::setState(VoiceState s) {
 void VoiceClient::connect(const std::string &guild, const std::string &channel, bool ringRecipients) {
 	disconnect();
 
+	svcGetThreadPriority(&callerPriority, CUR_THREAD_HANDLE);
+
 	ringChannelId = ringRecipients ? channel : std::string();
 	outgoingRing = false;
 	ringPlaying = false;
@@ -139,13 +141,33 @@ void VoiceClient::connect(const std::string &guild, const std::string &channel, 
 }
 
 void VoiceClient::markSpeaking(const std::string &userId) {
+	uint64_t now = osGetTime();
 	std::unique_lock<std::shared_mutex> lock(speakingMutex);
-	speakingUntil[userId] = osGetTime() + SPEAKING_HOLD_MS;
+	auto it = speakingUntil.try_emplace(userId, 0).first;
+	if (now >= it->second) {
+		Utils::requestRedraw();
+	}
+	it->second = now + SPEAKING_HOLD_MS;
 }
 
 void VoiceClient::clearSpeaking(const std::string &userId) {
 	std::unique_lock<std::shared_mutex> lock(speakingMutex);
-	speakingUntil.erase(userId);
+	if (speakingUntil.erase(userId) > 0) {
+		Utils::requestRedraw();
+	}
+}
+
+void VoiceClient::expireSpeaking() {
+	uint64_t now = osGetTime();
+	std::unique_lock<std::shared_mutex> lock(speakingMutex);
+	for (auto it = speakingUntil.begin(); it != speakingUntil.end();) {
+		if (now >= it->second) {
+			it = speakingUntil.erase(it);
+			Utils::requestRedraw();
+		} else {
+			++it;
+		}
+	}
 }
 
 bool VoiceClient::isSpeaking(const std::string &userId) const {
@@ -190,6 +212,8 @@ void VoiceClient::stopOutgoingRing() {
 }
 
 void VoiceClient::update() {
+	expireSpeaking();
+
 	if (!outgoingRing) {
 		return;
 	}
@@ -571,6 +595,7 @@ void VoiceClient::handleRtpPacket(uint8_t *packet, size_t len) {
 
 	uint32_t ssrc =
 	    ((uint32_t)packet[8] << 24) | ((uint32_t)packet[9] << 16) | ((uint32_t)packet[10] << 8) | (uint32_t)packet[11];
+	const uint16_t seq = (uint16_t)(((uint16_t)packet[2] << 8) | packet[3]);
 
 	const uint8_t *suffix = packet + len - NONCE_SUFFIX_SIZE;
 	uint8_t iv[12];
@@ -650,7 +675,7 @@ void VoiceClient::handleRtpPacket(uint8_t *packet, size_t len) {
 		} else {
 			markSpeaking(userId);
 		}
-		audio.pushOpus(ssrc, daveFrameBuffer, written);
+		audio.pushOpus(ssrc, seq, daveFrameBuffer, written);
 		return;
 	}
 
@@ -669,7 +694,7 @@ void VoiceClient::handleRtpPacket(uint8_t *packet, size_t len) {
 			markSpeaking(userId);
 		}
 	}
-	audio.pushOpus(ssrc, opusData, opusLen);
+	audio.pushOpus(ssrc, seq, opusData, opusLen);
 }
 
 void VoiceClient::sendSpeaking(bool speaking) {
@@ -766,6 +791,15 @@ void VoiceClient::mediaThread() {
 
 	const std::string selfId = DiscordClient::getInstance().getCurrentUser().id;
 
+	constexpr uint64_t TICKS_PER_US = SYSCLOCK_ARM11 / 1000000ULL;
+	constexpr uint64_t STATS_INTERVAL_MS = 10000;
+	constexpr uint64_t ECHO_CHECK_INTERVAL_MS = 250;
+	uint64_t statsAt = osGetTime() + STATS_INTERVAL_MS;
+	uint64_t echoCheckAt = 0;
+	uint64_t lastLoop = svcGetSystemTick();
+	uint64_t maxGap = 0, pumpSum = 0, pumpMax = 0, micSum = 0, micMax = 0;
+	uint32_t loops = 0;
+
 	while (!stopMedia) {
 		// The worker closes the socket on exit; FD_SET(-1) corrupts the fd_set.
 		int sock = udpSocket;
@@ -780,6 +814,13 @@ void VoiceClient::mediaThread() {
 		timeout.tv_usec = 10000;
 
 		int ready = select(sock + 1, &readSet, nullptr, nullptr, &timeout);
+
+		const uint64_t woke = svcGetSystemTick();
+		if (woke - lastLoop > maxGap) {
+			maxGap = woke - lastLoop;
+		}
+		lastLoop = woke;
+
 		if (ready > 0) {
 			int received;
 			while ((received = recv(sock, recvBuffer, sizeof(recvBuffer), MSG_DONTWAIT)) > 0) {
@@ -788,10 +829,39 @@ void VoiceClient::mediaThread() {
 		}
 
 		audio.pump();
+		const uint64_t afterPump = svcGetSystemTick();
 
-		echo.setEnabled(Config::getInstance().isEchoCancellationEnabled() && !osIsHeadsetConnected());
+		const uint64_t now = osGetTime();
+		if (now >= echoCheckAt) {
+			echo.setEnabled(Config::getInstance().isEchoCancellationEnabled() && !osIsHeadsetConnected());
+			echoCheckAt = now + ECHO_CHECK_INTERVAL_MS;
+		}
 
 		pumpMicrophone(selfId);
+		const uint64_t afterMic = svcGetSystemTick();
+
+		const uint64_t pumpTicks = afterPump - woke;
+		const uint64_t micTicks = afterMic - afterPump;
+		pumpSum += pumpTicks;
+		micSum += micTicks;
+		if (pumpTicks > pumpMax) {
+			pumpMax = pumpTicks;
+		}
+		if (micTicks > micMax) {
+			micMax = micTicks;
+		}
+		loops++;
+
+		if (now >= statsAt) {
+			Logger::log("[VoiceStats] loops=%lu gapMax=%lums recv+pump avg/max=%lu/%luus mic avg/max=%lu/%luus",
+			            (unsigned long)loops, (unsigned long)(maxGap / TICKS_PER_US / 1000),
+			            (unsigned long)(pumpSum / loops / TICKS_PER_US), (unsigned long)(pumpMax / TICKS_PER_US),
+			            (unsigned long)(micSum / loops / TICKS_PER_US), (unsigned long)(micMax / TICKS_PER_US));
+			audio.logStats();
+			loops = 0;
+			maxGap = pumpSum = pumpMax = micSum = micMax = 0;
+			statsAt = now + STATS_INTERVAL_MS;
+		}
 	}
 
 	Logger::log("[Voice] Media thread stopped (decoded=%lu failures=%lu sent=%lu)", (unsigned long)packetsDecoded,
@@ -819,25 +889,53 @@ void VoiceClient::pumpMicrophone(const std::string &selfId) {
 		speakingSent = active;
 	};
 
+	int16_t pcm[VoiceCapture::FRAME_SAMPLES];
 	uint8_t frame[512];
-	int encoded;
-	while ((encoded = capture.poll(frame, sizeof(frame))) > 0) {
+
+	for (int handled = 0; handled < MAX_MIC_FRAMES_PER_PASS && capture.readFrame(pcm); handled++) {
 		if (!daveReady && !daveWaitLogged) {
 			Logger::log("[Voice] Holding audio until the DAVE group is established");
 			daveWaitLogged = true;
 		}
 
-		if (!capture.isMuted() && capture.lastPeak() >= SPEAKING_PEAK_THRESHOLD) {
-			transmitUntil = osGetTime() + TRANSMIT_HOLD_MS;
+		// The echo canceller has seen this frame; sending it late would only add delay.
+		if (capture.backlogFrames() >= 2) {
+			sendTimestamp += OPUS_FRAME_TICKS;
+			continue;
 		}
-		const bool active = daveReady && !capture.isMuted() && osGetTime() < transmitUntil;
+
+		// The echo canceller's residue must not count as the user speaking.
+		int gate = SPEAKING_PEAK_THRESHOLD;
+		if (echo.isRunning() && echo.isEnabled()) {
+			int farGate = audio.farLevel() * ECHO_GATE_PERCENT / 100;
+			if (farGate > ECHO_GATE_MAX) {
+				farGate = ECHO_GATE_MAX;
+			}
+			if (farGate > gate) {
+				gate = farGate;
+			}
+		}
+
+		const bool muted = capture.isMuted();
+		const uint64_t now = osGetTime();
+		if (!muted && capture.lastPeak() >= gate) {
+			transmitUntil = now + TRANSMIT_HOLD_MS;
+		}
+		const bool active = daveReady && !muted && now < transmitUntil;
 
 		setTransmitting(active);
+
+		int encoded = 0;
 		if (active) {
+			encoded = capture.encode(pcm, frame, sizeof(frame));
+		}
+		if (encoded > 0) {
 			sendAudioFrame(frame, (size_t)encoded);
 		} else {
 			sendTimestamp += OPUS_FRAME_TICKS;
 		}
+
+		audio.pump();
 	}
 
 	if (speakingSent && (capture.isMuted() || osGetTime() >= transmitUntil)) {
@@ -1109,7 +1207,18 @@ void VoiceClient::handlePayload(const std::string &message) {
 
 		stopMedia = false;
 		if (!media && !stopWorker) {
-			media = threadCreate(mediaThreadEntry, this, MEDIA_STACK_SIZE, 0x3F, 0, false);
+			int wanted = (int)callerPriority - 0x10;
+			if (wanted < 0x18) {
+				wanted = 0x18;
+			}
+			const int candidates[] = {wanted, (int)callerPriority, 0x3F};
+			for (int prio : candidates) {
+				media = threadCreate(mediaThreadEntry, this, MEDIA_STACK_SIZE, prio, 0, false);
+				if (media) {
+					Logger::log("[Voice] Media thread priority 0x%X (UI 0x%X)", prio, (unsigned)callerPriority);
+					break;
+				}
+			}
 			if (!media) {
 				Logger::log("[Voice] Media thread creation failed");
 				setState(VoiceState::FAILED);
