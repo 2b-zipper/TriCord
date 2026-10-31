@@ -19,6 +19,7 @@ class EchoCanceller {
 
 	void setEnabled(bool on);
 	bool isEnabled() const { return enabled; }
+	void setPaused(bool p) { paused = p; }
 
 	void bufferFarEnd(const int16_t *far, int count);
 	void setDelayMs(int ms) { delayMs = ms < MAX_DELAY_HINT_MS ? ms : MAX_DELAY_HINT_MS; }
@@ -27,6 +28,7 @@ class EchoCanceller {
   private:
 	void *handle = nullptr;
 	bool enabled = true;
+	bool paused = false;
 	int delayMs = 0;
 	int failures = 0;
 };

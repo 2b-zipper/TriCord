@@ -188,8 +188,7 @@ void VoiceAudio::dropSpeaker(uint32_t ssrc) {
 	speakers.erase(it);
 }
 
-void VoiceAudio::renderFrame() {
-	int32_t acc[FRAME_SAMPLES];
+void VoiceAudio::renderFrame(int16_t *out) {
 	bool any = false;
 
 	for (auto &pair : speakers) {
@@ -218,7 +217,8 @@ void VoiceAudio::renderFrame() {
 			stats.underruns++;
 		}
 
-		int16_t pcm[FRAME_SAMPLES];
+		int16_t mix[FRAME_SAMPLES];
+		int16_t *pcm = any ? mix : out;
 		const int decoded = opus_decode(s.decoder, packet, (opus_int32)packetLen, pcm, FRAME_SAMPLES, 0);
 
 		if (s.count > 0) {
@@ -241,35 +241,30 @@ void VoiceAudio::renderFrame() {
 			memset(pcm + decoded, 0, (FRAME_SAMPLES - decoded) * sizeof(int16_t));
 		}
 
-		if (!any) {
+		if (any) {
 			for (int i = 0; i < FRAME_SAMPLES; i++) {
-				acc[i] = pcm[i];
-			}
-			any = true;
-		} else {
-			for (int i = 0; i < FRAME_SAMPLES; i++) {
-				acc[i] += pcm[i];
+				int32_t v = out[i] + mix[i];
+				if (v > 32767) {
+					v = 32767;
+				} else if (v < -32768) {
+					v = -32768;
+				}
+				out[i] = (int16_t)v;
 			}
 		}
+		any = true;
 	}
 
 	int peak = 0;
 	if (any) {
 		for (int i = 0; i < FRAME_SAMPLES; i++) {
-			int32_t v = acc[i];
-			if (v > 32767) {
-				v = 32767;
-			} else if (v < -32768) {
-				v = -32768;
-			}
-			frame[i] = (int16_t)v;
-			const int m = v < 0 ? -v : v;
+			const int m = out[i] < 0 ? -out[i] : out[i];
 			if (m > peak) {
 				peak = m;
 			}
 		}
 	} else {
-		memset(frame, 0, sizeof(frame));
+		memset(out, 0, FRAME_SAMPLES * sizeof(int16_t));
 	}
 
 	int lvl = level - (level >> 3);
@@ -277,14 +272,14 @@ void VoiceAudio::renderFrame() {
 }
 
 void VoiceAudio::submitFrame(ndspWaveBuf &buf) {
-	int16_t *dst = (int16_t *)buf.data_vaddr;
-	memcpy(dst, frame, sizeof(frame));
-	DSP_FlushDataCache(dst, sizeof(frame));
+	int16_t *pcm = (int16_t *)buf.data_vaddr;
+	renderFrame(pcm);
+	DSP_FlushDataCache(pcm, FRAME_SAMPLES * sizeof(int16_t));
 	ndspChnWaveBufAdd(NDSP_CHANNEL, &buf);
 
 	// Silence included: a far-end timeline that jumps breaks the delay estimate.
 	if (echo) {
-		echo->bufferFarEnd(frame, FRAME_SAMPLES);
+		echo->bufferFarEnd(pcm, FRAME_SAMPLES);
 	}
 
 	nextWaveBuf = (nextWaveBuf + 1) % OUT_BUFFERS;
@@ -320,7 +315,6 @@ void VoiceAudio::pump() {
 		if (slotBusy(buf)) {
 			break;
 		}
-		renderFrame();
 		submitFrame(buf);
 		queued++;
 

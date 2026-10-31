@@ -9,6 +9,7 @@
 #include "encryptor.h"
 #include "mls/session.h"
 
+#include <atomic>
 #include <map>
 #include <mutex>
 
@@ -35,10 +36,13 @@ struct DaveSession::Impl {
 	std::shared_ptr<::mlspp::SignaturePrivateKey> transientKey;
 
 	uint16_t version = 0;
-	bool grouped = false;
+	std::atomic<bool> grouped{false};
 	std::string selfUserId;
 	std::string error;
 	std::mutex mutex;
+	// MLS work holds mutex for far longer than a frame, so the media thread
+	// only ever waits on this one. Taken after mutex when both are needed.
+	std::mutex frameMutex;
 };
 
 DaveSession::DaveSession() : impl(std::make_unique<Impl>()) { discord::dave::SetLogSink(daveLogSink); }
@@ -61,8 +65,11 @@ bool DaveSession::init(uint16_t protocolVersion, uint64_t groupId, const std::st
 	    });
 
 	impl->session->Init(protocolVersion, groupId, selfUserId, impl->transientKey);
-	impl->encryptor = std::make_unique<discord::dave::Encryptor>();
-	impl->decryptors.clear();
+	{
+		std::lock_guard<std::mutex> frameLock(impl->frameMutex);
+		impl->encryptor = std::make_unique<discord::dave::Encryptor>();
+		impl->decryptors.clear();
+	}
 	impl->selfUserId = selfUserId;
 	impl->version = protocolVersion;
 	impl->grouped = false;
@@ -77,6 +84,7 @@ void DaveSession::reset() {
 	if (impl->session) {
 		impl->session->Reset();
 	}
+	std::lock_guard<std::mutex> frameLock(impl->frameMutex);
 	impl->decryptors.clear();
 	impl->grouped = false;
 }
@@ -164,33 +172,43 @@ void DaveSession::refreshKeyRatchets(const std::set<std::string> &userIds) {
 	}
 
 	auto selfRatchet = impl->session->GetKeyRatchet(impl->selfUserId);
-	if (selfRatchet) {
-		impl->encryptor->SetKeyRatchet(std::move(selfRatchet));
-		Logger::log("[DAVE] Encryptor key ratchet set");
-	} else {
-		Logger::log("[DAVE] No key ratchet available for self (%s)", impl->selfUserId.c_str());
-	}
+	const bool haveSelfRatchet = selfRatchet != nullptr;
 
+	std::map<std::string, std::unique_ptr<discord::dave::IKeyRatchet>> ratchets;
 	for (const auto &userId : userIds) {
 		if (userId == impl->selfUserId) {
 			continue;
 		}
 
 		auto ratchet = impl->session->GetKeyRatchet(userId);
-		if (!ratchet) {
-			continue;
+		if (ratchet) {
+			ratchets[userId] = std::move(ratchet);
 		}
+	}
 
-		auto &decryptor = impl->decryptors[userId];
-		if (!decryptor) {
-			decryptor = std::make_unique<discord::dave::Decryptor>();
+	{
+		std::lock_guard<std::mutex> frameLock(impl->frameMutex);
+		if (selfRatchet) {
+			impl->encryptor->SetKeyRatchet(std::move(selfRatchet));
 		}
-		decryptor->TransitionToKeyRatchet(std::move(ratchet));
+		for (auto &pair : ratchets) {
+			auto &decryptor = impl->decryptors[pair.first];
+			if (!decryptor) {
+				decryptor = std::make_unique<discord::dave::Decryptor>();
+			}
+			decryptor->TransitionToKeyRatchet(std::move(pair.second));
+		}
+	}
+
+	if (haveSelfRatchet) {
+		Logger::log("[DAVE] Encryptor key ratchet set");
+	} else {
+		Logger::log("[DAVE] No key ratchet available for self (%s)", impl->selfUserId.c_str());
 	}
 }
 
 void DaveSession::setPassthrough(bool enabled) {
-	std::lock_guard<std::mutex> lock(impl->mutex);
+	std::lock_guard<std::mutex> lock(impl->frameMutex);
 	if (impl->encryptor) {
 		impl->encryptor->SetPassthroughMode(enabled);
 	}
@@ -208,7 +226,7 @@ size_t DaveSession::maxCiphertextSize(size_t frameSize) const {
 
 bool DaveSession::encryptOpus(uint32_t ssrc, const uint8_t *frame, size_t frameLen, uint8_t *out, size_t outCapacity,
                               size_t *written) {
-	std::lock_guard<std::mutex> lock(impl->mutex);
+	std::lock_guard<std::mutex> lock(impl->frameMutex);
 	if (!impl->encryptor) {
 		return false;
 	}
@@ -231,7 +249,7 @@ bool DaveSession::encryptOpus(uint32_t ssrc, const uint8_t *frame, size_t frameL
 
 bool DaveSession::decryptOpus(const std::string &userId, const uint8_t *frame, size_t frameLen, uint8_t *out,
                               size_t outCapacity, size_t *written) {
-	std::lock_guard<std::mutex> lock(impl->mutex);
+	std::lock_guard<std::mutex> lock(impl->frameMutex);
 
 	auto it = impl->decryptors.find(userId);
 	if (it == impl->decryptors.end() || !it->second) {

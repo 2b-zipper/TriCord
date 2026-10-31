@@ -72,6 +72,9 @@ CFLAGS	:=	-g -Wall -O3 -mword-relocations \
 
 CFLAGS	+=	$(INCLUDE) -D__3DS__
 
+# Everything WebRTC gates on ARMv7 only needs ARMv6 instructions.
+CFLAGS	+=	-DWEBRTC_ARCH_ARM_V7 -DAECM_WITH_ABS_APPROX
+
 CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17 -Wno-psabi
 
 ASFLAGS	:=	-g $(ARCH)

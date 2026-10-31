@@ -1,10 +1,10 @@
 #ifndef RTC_BASE_SYSTEM_ARCH_H_
 #define RTC_BASE_SYSTEM_ARCH_H_
 
-// Trimmed arch detection. The 3DS is an ARM11 (ARMv6k): no NEON and not ARMv7,
-// so WEBRTC_ARCH_ARM_V7 and WEBRTC_HAS_NEON are deliberately never defined and
-// the portable C paths are taken. The host build used for testing lands in the
-// x86 branch and takes the same C paths.
+// Trimmed arch detection. The 3DS is an ARM11 (ARMv6k), so WEBRTC_HAS_NEON is
+// never defined. WEBRTC_ARCH_ARM_V7 comes from the Makefile: the DSP instructions
+// it gates all exist on ARMv6. The host build used for testing lands in the x86
+// branch and takes the portable C paths.
 
 #if defined(__x86_64__) || defined(_M_X64)
 #define WEBRTC_ARCH_X86_FAMILY

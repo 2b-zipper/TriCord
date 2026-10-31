@@ -78,7 +78,7 @@ class VoiceAudio {
 
 	static void enqueue(Speaker &s, const uint8_t *data, size_t len, Stats &stats);
 	static void destroy(Speaker &s);
-	void renderFrame();
+	void renderFrame(int16_t *out);
 	void submitFrame(ndspWaveBuf &buf);
 	void housekeeping();
 
@@ -90,7 +90,6 @@ class VoiceAudio {
 	ndspWaveBuf waveBufs[OUT_BUFFERS];
 	int16_t *waveData = nullptr;
 	int nextWaveBuf = 0;
-	int16_t frame[FRAME_SAMPLES] = {};
 	unsigned ticks = 0;
 
 	Stats stats;

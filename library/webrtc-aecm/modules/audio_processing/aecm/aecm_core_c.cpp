@@ -270,15 +270,17 @@ int TimeToFrequencyDomain(AecmCore* aecm,
   int i = 0;
   int time_signal_scaling = 0;
 
+#ifndef AECM_WITH_ABS_APPROX
   int32_t tmp32no1 = 0;
   int32_t tmp32no2 = 0;
+#endif
 
   // In fft_buf, +16 for 32-byte alignment.
   int16_t fft_buf[PART_LEN4 + 16];
   int16_t* fft = (int16_t*)(((uintptr_t)fft_buf + 31) & ~31);
 
   int16_t tmp16no1;
-#ifndef WEBRTC_ARCH_ARM_V7
+#if !defined(WEBRTC_ARCH_ARM_V7) || defined(AECM_WITH_ABS_APPROX)
   int16_t tmp16no2;
 #endif
 #ifdef AECM_WITH_ABS_APPROX

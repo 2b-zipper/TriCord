@@ -70,7 +70,7 @@ void EchoCanceller::setEnabled(bool on) {
 }
 
 void EchoCanceller::bufferFarEnd(const int16_t *far, int count) {
-	if (!handle || !enabled || count <= 0 || count % CHUNK != 0) {
+	if (!handle || !enabled || paused || count <= 0 || count % CHUNK != 0) {
 		return;
 	}
 
@@ -82,7 +82,7 @@ void EchoCanceller::bufferFarEnd(const int16_t *far, int count) {
 }
 
 void EchoCanceller::process(int16_t *mic, int count) {
-	if (!handle || !enabled || count <= 0 || count % CHUNK != 0) {
+	if (!handle || !enabled || paused || count <= 0 || count % CHUNK != 0) {
 		return;
 	}
 
