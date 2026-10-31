@@ -141,13 +141,33 @@ void VoiceClient::connect(const std::string &guild, const std::string &channel, 
 }
 
 void VoiceClient::markSpeaking(const std::string &userId) {
+	uint64_t now = osGetTime();
 	std::unique_lock<std::shared_mutex> lock(speakingMutex);
-	speakingUntil[userId] = osGetTime() + SPEAKING_HOLD_MS;
+	auto it = speakingUntil.try_emplace(userId, 0).first;
+	if (now >= it->second) {
+		Utils::requestRedraw();
+	}
+	it->second = now + SPEAKING_HOLD_MS;
 }
 
 void VoiceClient::clearSpeaking(const std::string &userId) {
 	std::unique_lock<std::shared_mutex> lock(speakingMutex);
-	speakingUntil.erase(userId);
+	if (speakingUntil.erase(userId) > 0) {
+		Utils::requestRedraw();
+	}
+}
+
+void VoiceClient::expireSpeaking() {
+	uint64_t now = osGetTime();
+	std::unique_lock<std::shared_mutex> lock(speakingMutex);
+	for (auto it = speakingUntil.begin(); it != speakingUntil.end();) {
+		if (now >= it->second) {
+			it = speakingUntil.erase(it);
+			Utils::requestRedraw();
+		} else {
+			++it;
+		}
+	}
 }
 
 bool VoiceClient::isSpeaking(const std::string &userId) const {
@@ -192,6 +212,8 @@ void VoiceClient::stopOutgoingRing() {
 }
 
 void VoiceClient::update() {
+	expireSpeaking();
+
 	if (!outgoingRing) {
 		return;
 	}

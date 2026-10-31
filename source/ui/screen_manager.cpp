@@ -444,11 +444,8 @@ void ScreenManager::update() {
 
 bool ScreenManager::shouldRender() {
 	bool requested = Utils::consumeRedrawRequest();
-	// Speaking indicators follow the audio, not any event.
-	Discord::VoiceState voice = Discord::VoiceClient::getInstance().getState();
-	bool inCall = voice != Discord::VoiceState::DISCONNECTED && voice != Discord::VoiceState::FAILED;
 	bool animating = (currentScreen && currentScreen->isAnimating()) || hamburgerMenu.isAnimating() || toastTimer > 0 ||
-	                 debugOverlayEnabled || statsOverlayEnabled || inCall;
+	                 debugOverlayEnabled || statsOverlayEnabled;
 	// The update that ends an animation leaves its final frame still to draw.
 	bool render = requested || inputActive || animating || wasAnimating || ++framesSinceRender >= IDLE_REDRAW_FRAMES;
 	wasAnimating = animating;

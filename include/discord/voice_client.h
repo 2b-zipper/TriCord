@@ -133,6 +133,7 @@ class VoiceClient {
 	static constexpr int MAX_MIC_FRAMES_PER_PASS = 3;
 	void markSpeaking(const std::string &userId);
 	void clearSpeaking(const std::string &userId);
+	void expireSpeaking();
 	std::vector<uint8_t> externalSenderPackage;
 	uint32_t packetsDecoded = 0;
 	uint32_t decryptFailures = 0;
