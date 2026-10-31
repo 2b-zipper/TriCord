@@ -8,6 +8,7 @@
     "call.in_call": "通话中",
     "call.incoming": "来电",
     "channel.mute.unmute": "取消频道静音",
+    "channel.load_failed": "Could not load channels (not enough memory)",
     "channel.no_visible": "无可见频道",
     "channel.select": "选择频道",
     "common.adjust": "调整",
