@@ -38,12 +38,13 @@ SOURCES		:=	source source/core source/network source/discord source/ui source/ui
 			library/webrtc-aecm/common_audio/signal_processing \
 			library/webrtc-aecm/common_audio/third_party/spl_sqrt_floor \
 			library/webrtc-aecm/modules/audio_processing/aecm \
-			library/webrtc-aecm/modules/audio_processing/utility
+			library/webrtc-aecm/modules/audio_processing/utility \
+			library/opus/celt library/opus/celt/arm library/opus/silk library/opus/silk/fixed library/opus/src
 DATA		:=	data
 INCLUDES	:=	include include/core include/ui library library/stb_image library/qrcodegen \
 			library/libdave/includes library/libdave/src \
 			library/mlspp/include library/mlspp/gen library/mlspp/hpke_src \
-			library/webrtc-aecm
+			library/webrtc-aecm library/opus/include
 GRAPHICS	:=	gfx
 GFXBUILD	:=	$(BUILD)
 ROMFS		:=	romfs
@@ -80,7 +81,7 @@ CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17 -Wno-psabi
 ASFLAGS	:=	-g $(ARCH)
 LDFLAGS	=	-specs=3dsx.specs -g $(ARCH) -Wl,--gc-sections -Wl,-Map,$(notdir $*.map)
 
-LIBS	:= -lcurl -lopus -lmbedtls -lmbedx509 -lmbedcrypto -lz -lcitro2d -lcitro3d -lctru -lm
+LIBS	:= -lcurl -lmbedtls -lmbedx509 -lmbedcrypto -lz -lcitro2d -lcitro3d -lctru -lm
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing
@@ -245,6 +246,10 @@ MLSPP_OBJS := $(notdir $(patsubst %.cpp,%.o,$(wildcard $(TOPDIR)/library/mlspp/s
 	$(wildcard $(TOPDIR)/library/libdave/src/utils/*.cpp)) \
 	dave_session.o)
 $(MLSPP_OBJS): CXXFLAGS := $(subst -O3,-Os,$(filter-out -fno-rtti -fno-exceptions,$(CXXFLAGS))) -frtti -fexceptions -DWITH_MBEDTLS
+
+OPUS_DIRS := $(addprefix $(TOPDIR)/library/opus/,celt silk silk/fixed src)
+OPUS_OBJS := $(notdir $(patsubst %.c,%.o,$(foreach dir,$(OPUS_DIRS),$(wildcard $(dir)/*.c))))
+$(OPUS_OBJS): CFLAGS := $(addprefix -I,$(TOPDIR)/library/opus $(OPUS_DIRS)) $(CFLAGS) -DHAVE_CONFIG_H -Wno-stringop-overflow -Wno-stringop-overread
 
 ifneq ("$(wildcard $(TOPDIR)/$(BANNER_IMAGE).cgfx)","")
 	BANNER_IMAGE_FILE := $(TOPDIR)/$(BANNER_IMAGE).cgfx

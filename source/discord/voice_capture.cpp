@@ -3,7 +3,7 @@
 
 #include <cstring>
 #include <malloc.h>
-#include <opus/opus.h>
+#include <opus.h>
 
 namespace Discord {
 

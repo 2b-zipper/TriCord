@@ -76,7 +76,6 @@ Output: `TriCord.3dsx`, `TriCord.cia`, `TriCord.elf`
 - [citro2d](https://github.com/devkitPro/citro2d) (zlib License)
 - [libcurl](https://curl.se/libcurl/) (curl License)
 - [mbedtls](https://github.com/Mbed-TLS/mbedtls) (Apache-2.0 OR GPL-2.0-or-later)
-- [libopus](https://opus-codec.org/) (BSD 3-Clause License)
 - [zlib](https://zlib.net/) (zlib License)
 
 ### Bundled Libraries (included in `library/`)
@@ -86,6 +85,7 @@ Output: `TriCord.3dsx`, `TriCord.cia`, `TriCord.elf`
 - [mlspp](https://github.com/cisco/mlspp) (BSD 2-Clause License)
 - [libdave](https://github.com/discord/libdave) (MIT License)
 - [WebRTC AECM](https://github.com/webrtc-mirror/webrtc) (BSD 3-Clause License)
+- [libopus](https://opus-codec.org/) (BSD 3-Clause License)
 
 ### Additional Resources
 - CA bundle: [cacert-2025-12-02.pem](https://curl.se/docs/caextract.html) (Mozilla's CA certificate bundle)
@@ -130,6 +130,8 @@ Please help us translate TriCord into your language on our [Crowdin project](htt
 
 ## License
 This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
+
+The license texts of TriCord and everything it ships with are in [romfs/licenses](romfs/licenses), which is embedded in the `.3dsx` and `.cia`.
 
 ## Credits
 - [2b-zipper](https://github.com/2b-zipper) for the main development
