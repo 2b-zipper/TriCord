@@ -208,7 +208,7 @@
     "settings.section.chat": "聊天",
     "settings.section.voice": "语音",
     "settings.echo_cancellation": "Echo Cancellation",
-    "settings.desc.echo_cancellation": "Suppresses speaker audio picked up by the microphone. Because the processing load is high on Old 3DS and audio drops out frequently, using headphones or disabling this option is recommended.",
+    "settings.desc.echo_cancellation": "Suppresses speaker audio picked up by the microphone.",
     "settings.section.general": "通用",
     "settings.show_avatars": "显示头像",
     "settings.show_hidden_channels": "显示隐藏服务器",
