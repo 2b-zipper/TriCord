@@ -208,7 +208,7 @@
     "settings.section.chat": "Chat",
     "settings.section.voice": "Sprache",
     "settings.echo_cancellation": "Echounterdrückung",
-    "settings.desc.echo_cancellation": "Unterdrückt den vom Mikrofon aufgenommenen Lautsprecherton. Da die Verarbeitung auf dem Old 3DS sehr rechenintensiv ist und der Ton häufig aussetzt, wird empfohlen, Kopfhörer zu verwenden oder diese Option zu deaktivieren.",
+    "settings.desc.echo_cancellation": "Suppresses speaker audio picked up by the microphone.",
     "settings.section.general": "Allgemein",
     "settings.show_avatars": "Avatare anzeigen",
     "settings.show_hidden_channels": "Versteckte Kanäle anzeigen",
