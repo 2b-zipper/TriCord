@@ -29,8 +29,6 @@ bool VoiceAudio::start() {
 	}
 
 	ndspChnReset(NDSP_CHANNEL);
-	// The DSP resamples 16 kHz up to its native rate; linear keeps the hold
-	// artefacts of "none" out of the voice.
 	ndspChnSetInterp(NDSP_CHANNEL, NDSP_INTERP_LINEAR);
 	ndspChnSetRate(NDSP_CHANNEL, (float)SAMPLE_RATE);
 	ndspChnSetFormat(NDSP_CHANNEL, NDSP_FORMAT_MONO_PCM16);
@@ -134,16 +132,12 @@ void VoiceAudio::pushOpus(uint32_t ssrc, uint16_t seq, const uint8_t *data, size
 
 	if (s.haveSeq) {
 		const int delta = (int16_t)(uint16_t)(seq - s.lastSeq);
-		// A packet at or behind the last one is a duplicate, or it arrived after
-		// its slot was already played or concealed. A big jump backwards means the
-		// sender restarted its counter, which is treated as a fresh stream.
+		// A big jump backwards is the sender restarting its counter, not a late packet.
 		if (delta <= 0 && delta > -64) {
 			stats.late++;
 			return;
 		}
-		// Packets known to be missing get a placeholder so the decoder conceals
-		// them in order. After a silence frame the gap is only the sender having
-		// stopped, not a loss.
+		// After a silence frame the gap is only the sender having stopped, not a loss.
 		if (delta > 1 && delta <= 1 + MAX_GAP_CONCEAL && s.playing && !s.arrivedSilence) {
 			for (int i = 1; i < delta; i++) {
 				enqueue(s, nullptr, 0, stats);
@@ -156,8 +150,7 @@ void VoiceAudio::pushOpus(uint32_t ssrc, uint16_t seq, const uint8_t *data, size
 
 	enqueue(s, data, len, stats);
 
-	// A burst after a stall would otherwise sit in the queue as permanent delay:
-	// playback consumes exactly as fast as the sender produces.
+	// Playback consumes only as fast as the sender produces, so a burst would never drain.
 	if (s.count > JITTER_HIGH) {
 		const int drop = s.count - JITTER_KEEP;
 		s.head = (uint8_t)((s.head + drop) % QUEUE_SLOTS);
@@ -195,7 +188,6 @@ void VoiceAudio::dropSpeaker(uint32_t ssrc) {
 	speakers.erase(it);
 }
 
-// Builds the next 20 ms by pulling one packet from every speaker that is due.
 void VoiceAudio::renderFrame() {
 	int32_t acc[FRAME_SAMPLES];
 	bool any = false;
@@ -220,8 +212,6 @@ void VoiceAudio::renderFrame() {
 			packetLen = s.len[s.head];
 			packet = packetLen ? s.data[s.head] : nullptr;
 		} else if (s.playedSilence || s.concealed >= MAX_CONCEAL) {
-			// The talk spurt ended (or the sender is gone): rebuffer instead of
-			// inventing audio.
 			s.playing = false;
 			continue;
 		} else {
@@ -292,8 +282,7 @@ void VoiceAudio::submitFrame(ndspWaveBuf &buf) {
 	DSP_FlushDataCache(dst, sizeof(frame));
 	ndspChnWaveBufAdd(NDSP_CHANNEL, &buf);
 
-	// The reference has to advance in step with what the DSP is given, silence
-	// included, or the delay estimate breaks every time the channel goes quiet.
+	// Silence included: a far-end timeline that jumps breaks the delay estimate.
 	if (echo) {
 		echo->bufferFarEnd(frame, FRAME_SAMPLES);
 	}
@@ -302,8 +291,6 @@ void VoiceAudio::submitFrame(ndspWaveBuf &buf) {
 }
 
 void VoiceAudio::housekeeping() {
-	// Once a second: a speaker that has been silent for a while gives its decoder
-	// (about 20 KB) back.
 	for (auto it = speakers.begin(); it != speakers.end();) {
 		Speaker &s = *it->second;
 		if (!s.playing && s.count == 0 && ++s.idleSeconds >= IDLE_EVICT_SECONDS) {
@@ -328,9 +315,6 @@ void VoiceAudio::pump() {
 		}
 	}
 
-	// Refilled only up to OUT_QUEUE frames, never in a burst: a deeper queue is
-	// pure latency, and a burst of catch-up frames would knock the echo
-	// canceller's far-end timeline out of step with the microphone.
 	while (queued < OUT_QUEUE) {
 		ndspWaveBuf &buf = waveBufs[nextWaveBuf];
 		if (slotBusy(buf)) {
@@ -345,9 +329,7 @@ void VoiceAudio::pump() {
 		}
 	}
 
-	// Only the queue is reported. The DSP pipeline and acoustic path are left out
-	// on purpose: AECM recovers from an underestimated delay but not from an
-	// overestimated one.
+	// Left low on purpose: AECM recovers from an underestimate but not an overestimate.
 	if (echo) {
 		echo->setDelayMs(queued * FRAME_MS);
 	}

@@ -61,8 +61,6 @@ bool VoiceCapture::start() {
 	opus_encoder_ctl(encoder, OPUS_SET_BITRATE(OPUS_BITRATE));
 	opus_encoder_ctl(encoder, OPUS_SET_SIGNAL(OPUS_SIGNAL_VOICE));
 	opus_encoder_ctl(encoder, OPUS_SET_VBR(1));
-	// Constrained, so a loud frame cannot spike far above the average and arrive
-	// late behind the others.
 	opus_encoder_ctl(encoder, OPUS_SET_VBR_CONSTRAINT(1));
 	opus_encoder_ctl(encoder, OPUS_SET_INBAND_FEC(0));
 	opus_encoder_ctl(encoder, OPUS_SET_DTX(0));
@@ -136,7 +134,7 @@ bool VoiceCapture::readFrame(int16_t *pcm) {
 
 		const int32_t sa = samples[a];
 		const int32_t sb = samples[b];
-		const int32_t frac = (int32_t)((pos >> 6) & 0x3FFF); // 14 bits
+		const int32_t frac = (int32_t)((pos >> 6) & 0x3FFF);
 		pcm[i] = (int16_t)(sa + (((sb - sa) * frac) >> 14));
 		pos += STEP_Q20;
 	}

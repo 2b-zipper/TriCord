@@ -769,8 +769,6 @@ void VoiceClient::mediaThread() {
 
 	const std::string selfId = DiscordClient::getInstance().getCurrentUser().id;
 
-	// Per-stage timing, logged every few seconds so lag can be traced to its
-	// source from the log instead of guessed at.
 	constexpr uint64_t TICKS_PER_US = SYSCLOCK_ARM11 / 1000000ULL;
 	constexpr uint64_t STATS_INTERVAL_MS = 10000;
 	constexpr uint64_t ECHO_CHECK_INTERVAL_MS = 250;
@@ -802,7 +800,6 @@ void VoiceClient::mediaThread() {
 		lastLoop = woke;
 
 		if (ready > 0) {
-			// Only decrypts and queues; decoding happens when the DSP asks for it.
 			int received;
 			while ((received = recv(sock, recvBuffer, sizeof(recvBuffer), MSG_DONTWAIT)) > 0) {
 				handleRtpPacket(recvBuffer, (size_t)received);
@@ -879,17 +876,13 @@ void VoiceClient::pumpMicrophone(const std::string &selfId) {
 			daveWaitLogged = true;
 		}
 
-		// More than one further frame waiting means this thread fell behind. The
-		// echo canceller has already seen this frame, which is all it needs;
-		// sending it would only deliver old audio on top of a delay that is
-		// already there, and the far side's jitter buffer would keep that delay.
+		// The echo canceller has seen this frame; sending it late would only add delay.
 		if (capture.backlogFrames() >= 2) {
 			sendTimestamp += OPUS_FRAME_TICKS;
 			continue;
 		}
 
-		// The echo canceller leaves a residue while the far side is talking, so the
-		// bar for "the user is speaking" rises with the playback level.
+		// The echo canceller's residue must not count as the user speaking.
 		int gate = SPEAKING_PEAK_THRESHOLD;
 		if (echo.isRunning() && echo.isEnabled()) {
 			int farGate = audio.farLevel() * ECHO_GATE_PERCENT / 100;
@@ -910,7 +903,6 @@ void VoiceClient::pumpMicrophone(const std::string &selfId) {
 
 		setTransmitting(active);
 
-		// Encoding only what will be sent: a frame nobody will hear costs nothing.
 		int encoded = 0;
 		if (active) {
 			encoded = capture.encode(pcm, frame, sizeof(frame));
@@ -921,7 +913,6 @@ void VoiceClient::pumpMicrophone(const std::string &selfId) {
 			sendTimestamp += OPUS_FRAME_TICKS;
 		}
 
-		// Between microphone frames the speaker may have come due.
 		audio.pump();
 	}
 
@@ -1194,8 +1185,6 @@ void VoiceClient::handlePayload(const std::string &message) {
 
 		stopMedia = false;
 		if (!media && !stopWorker) {
-			// Above the UI thread, so rendering and the network workers cannot starve
-			// audio. Falls back to lower priorities if the kernel refuses.
 			int wanted = (int)callerPriority - 0x10;
 			if (wanted < 0x18) {
 				wanted = 0x18;
