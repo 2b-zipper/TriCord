@@ -8,6 +8,7 @@
     "call.in_call": "Im Anruf",
     "call.incoming": "Eingehender Anruf",
     "channel.mute.unmute": "Kanal-Stummschaltung aufheben",
+    "channel.load_failed": "Could not load channels (not enough memory)",
     "channel.no_visible": "Keine sichtbaren Kanäle",
     "channel.select": "Kanalauswahl",
     "common.adjust": "Anpassen",

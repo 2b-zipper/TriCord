@@ -8,6 +8,7 @@
     "call.in_call": "En appel",
     "call.incoming": "Appel entrant",
     "channel.mute.unmute": "Réactiver le canal",
+    "channel.load_failed": "Could not load channels (not enough memory)",
     "channel.no_visible": "Aucun salon visible",
     "channel.select": "Sélectionner un salon",
     "common.adjust": "Ajuster",
