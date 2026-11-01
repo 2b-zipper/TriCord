@@ -173,6 +173,11 @@ class VoiceClient {
 	bool isServerMuted() const { return serverMuted; }
 	bool isServerDeafened() const { return serverDeafened; }
 
+	void setUserVolume(const std::string &userId, int volumePercent);
+	int getUserVolume(const std::string &userId) const;
+	int getMicLevel() const;
+	int getMicGateThreshold() const;
+
 	std::function<void(VoiceState)> stateCallback;
 };
 

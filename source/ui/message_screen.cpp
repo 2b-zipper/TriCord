@@ -8,6 +8,7 @@
 #include "ui/emoji_manager.h"
 #include "ui/image_manager.h"
 #include "ui/voice_controls.h"
+#include "ui/voice_popup.h"
 #include "ui/markdown_renderer.h"
 #include "ui/screen_manager.h"
 #include "utils/message_utils.h"
@@ -507,6 +508,9 @@ bool MessageScreen::isAnimating() const {
 	if (bottomMode == BottomScreenMode::EMOJI_PICKER && emojiPicker && emojiPicker->isAnimating()) {
 		return true;
 	}
+	if (VoiceControls::visible()) {
+		return true;
+	}
 	return currentScrollY != targetScrollY;
 }
 
@@ -564,6 +568,18 @@ void MessageScreen::update() {
 	u32 kHeld = hidKeysHeld();
 	u32 kUp = hidKeysUp();
 
+	if (VoicePopup::getInstance().isOpen()) {
+		if (VoicePopup::getInstance().handleKeys(kDown)) {
+			return;
+		}
+		if ((kDown | kHeld) & KEY_TOUCH) {
+			touchPosition touch;
+			hidTouchRead(&touch);
+			VoicePopup::getInstance().handleTouch(touch, (kDown & KEY_TOUCH) != 0, (kHeld & KEY_TOUCH) != 0);
+			return;
+		}
+	}
+
 	if (((kDown | kHeld) & KEY_TOUCH) && bottomMode != BottomScreenMode::EMOJI_PICKER) {
 		touchPosition touch;
 		hidTouchRead(&touch);
@@ -603,6 +619,15 @@ void MessageScreen::update() {
 				} else if (isCallableChannel() && !isCallActive() && isTouched(callBtnX, btnY, btnW, btnH)) {
 					startCall();
 					handled = true;
+				}
+			}
+
+			if (!handled) {
+				std::vector<Discord::VoiceParticipant> participants = callParticipants();
+				if (isCallActive() || !participants.empty()) {
+					if (VoiceControls::handleParticipantTouch(touch, 57.0f, participants)) {
+						handled = true;
+					}
 				}
 			}
 
@@ -2235,8 +2260,8 @@ void MessageScreen::openSelectPicker(const Discord::MessageControl &control) {
 	picker.minValues = control.minValues;
 	picker.maxValues = control.maxValues;
 	// One required choice sends straight away; anything else needs a way to say it is finished.
-	picker.multi = control.maxValues > 1 || control.minValues == 0 ||
-	               control.type == Discord::ComponentType::CHECKBOX_GROUP;
+	picker.multi =
+	    control.maxValues > 1 || control.minValues == 0 || control.type == Discord::ComponentType::CHECKBOX_GROUP;
 	picker.cursor = 0;
 	picker.first = 0;
 	picker.open = true;
@@ -2639,8 +2664,9 @@ void MessageScreen::renderModal() {
 			std::replace(displayValue.begin(), displayValue.end(), '\n', ' ');
 			std::replace(displayValue.begin(), displayValue.end(), '\r', ' ');
 		} else {
-			displayValue = hasValue ? field.control.chosenLabel
-			                        : (!field.placeholder.empty() ? field.placeholder : TR("message.select_placeholder"));
+			displayValue = hasValue
+			                   ? field.control.chosenLabel
+			                   : (!field.placeholder.empty() ? field.placeholder : TR("message.select_placeholder"));
 		}
 
 		const u32 valColor = isSelected ? (hasValue ? ScreenManager::colorWhite() : dimmed(ScreenManager::colorWhite()))
@@ -2698,8 +2724,9 @@ void MessageScreen::renderSelectPicker() {
 			const bool chosen =
 			    std::find(picker.chosen.begin(), picker.chosen.end(), option.value) != picker.chosen.end();
 			const float boxY = itemY + 5.0f;
-			const u32 borderColor = isSelected ? ScreenManager::colorWhite()
-			                                   : (chosen ? ScreenManager::colorAccent() : ScreenManager::colorTextMuted());
+			const u32 borderColor = isSelected
+			                            ? ScreenManager::colorWhite()
+			                            : (chosen ? ScreenManager::colorAccent() : ScreenManager::colorTextMuted());
 			const u32 fillColor = chosen ? ScreenManager::colorAccent() : ScreenManager::colorBackgroundDark();
 			C2D_DrawRectSolid(textX, boxY, 0.996f, 12.0f, 12.0f, borderColor);
 			C2D_DrawRectSolid(textX + 1.0f, boxY + 1.0f, 0.997f, 10.0f, 10.0f, fillColor);
@@ -3282,6 +3309,10 @@ void MessageScreen::renderBottom(C3D_RenderTarget *target) {
 
 	renderReactionIcon();
 	VoiceControls::draw(VOICE_BTN_X, VOICE_BTN_Y);
+
+	if (VoicePopup::getInstance().isOpen()) {
+		VoicePopup::getInstance().render();
+	}
 }
 
 void MessageScreen::fetchOlderMessages() {
@@ -4318,10 +4349,7 @@ void MessageScreen::renderReactionIcon() {
 }
 
 std::vector<Discord::VoiceParticipant> MessageScreen::callParticipants() const {
-	if (!isCallableChannel()) {
-		return {};
-	}
-	return Discord::DiscordClient::getInstance().getVoiceParticipants(channelId);
+	return VoiceControls::getActiveParticipants(channelId);
 }
 
 void MessageScreen::renderDmProfile(float y) {
@@ -4374,101 +4402,32 @@ void MessageScreen::renderDmProfile(float y) {
 }
 
 void MessageScreen::renderCallParticipants(float y, const std::vector<Discord::VoiceParticipant> &participants) {
-	drawText(10.0f, y, 0.5f, 0.45f, 0.45f, ScreenManager::colorSelection(), TR("call.in_call"));
-	y += 17.0f;
-
-	const float rowH = 26.0f;
-	const float avatarSize = 20.0f;
-	const int maxRows = 5;
-
-	int drawn = 0;
-	for (const auto &p : participants) {
-		if (drawn >= maxRows) {
-			break;
-		}
-
-		float rowY = y + drawn * rowH;
-		float avatarY = rowY + (rowH - avatarSize) / 2.0f;
-
-		if (Discord::VoiceClient::getInstance().isSpeaking(p.userId)) {
-			drawCircle(14.0f + avatarSize / 2.0f, avatarY + avatarSize / 2.0f, 0.49f, avatarSize / 2.0f + 1.5f,
-			           C2D_Color32(35, 165, 90, 255));
-		}
-
-		C3D_Tex *avatar = Discord::AvatarCache::getInstance().getAvatar(p.userId, p.avatar, "0");
-		if (avatar) {
-			Tex3DS_SubTexture sub = {(u16)avatar->width, (u16)avatar->height, 0.0f, 1.0f, 1.0f, 0.0f};
-			C2D_Image img = {avatar, &sub};
-			C2D_DrawImageAt(img, 14.0f, avatarY, 0.5f, nullptr, avatarSize / avatar->width,
-			                avatarSize / avatar->height);
-		}
-
-		int stateIcons = (p.mute || p.selfMute ? 1 : 0) + (p.deaf || p.selfDeaf ? 1 : 0);
-		float nameX = 14.0f + avatarSize + 6.0f;
-		float nameLimit = 310.0f - nameX - stateIcons * 15.0f;
-		drawRichText(nameX, rowY + 5.0f, 0.5f, 0.45f, 0.45f, ScreenManager::colorText(),
-		             getTruncatedRichText(p.name, nameLimit, 0.45f, 0.45f));
-
-		const char *micIcon = p.mute       ? "romfs:/discord-icons/mic-denied.png"
-		                      : p.selfMute ? "romfs:/discord-icons/mic-muted.png"
-		                                   : nullptr;
-		const char *deafIcon = p.deaf       ? "romfs:/discord-icons/headphones-denied.png"
-		                       : p.selfDeaf ? "romfs:/discord-icons/headphones-muted.png"
-		                                    : nullptr;
-
-		const float stateSize = 12.0f;
-		float stateX = 310.0f - stateSize;
-		const struct {
-			const char *path;
-			bool byServer;
-		} icons[] = {{deafIcon, p.deaf}, {micIcon, p.mute}};
-
-		for (const auto &entry : icons) {
-			if (!entry.path) {
-				continue;
-			}
-			C3D_Tex *tex = UI::ImageManager::getInstance().getLocalImage(entry.path);
-			if (tex) {
-				Tex3DS_SubTexture sub = {(u16)tex->width, (u16)tex->height, 0.0f, 1.0f, 1.0f, 0.0f};
-				C2D_Image img = {tex, &sub};
-				C2D_ImageTint tint;
-				C2D_PlainImageTint(
-				    &tint, entry.byServer ? ScreenManager::colorError() : ScreenManager::colorTextMuted(), 1.0f);
-				C2D_DrawImageAt(img, stateX, rowY + (rowH - stateSize) / 2.0f, 0.5f, &tint, stateSize / tex->width,
-				                stateSize / tex->height);
-			}
-			stateX -= stateSize + 3.0f;
-		}
-
-		drawn++;
-	}
-
-	if ((int)participants.size() > maxRows) {
-		drawText(14.0f, y + maxRows * rowH, 0.5f, 0.4f, 0.4f, ScreenManager::colorTextMuted(),
-		         "+" + std::to_string((int)participants.size() - maxRows));
-	}
+	VoiceControls::drawParticipantList(y, participants);
 }
 
 bool MessageScreen::isCallableChannel() const {
-	if (channelType == 3) {
+	if (channelType == 1 || channelType == 3) {
+		Discord::Channel ch = Discord::DiscordClient::getInstance().getChannel(channelId);
+		return ch.recipients.empty() || !ch.recipients[0].bot;
+	}
+	if (channelType == 2 || channelType == 13) {
 		return true;
 	}
-	if (channelType != 1) {
-		return false;
-	}
-
-	Discord::Channel ch = Discord::DiscordClient::getInstance().getChannel(channelId);
-	return ch.recipients.empty() || !ch.recipients[0].bot;
+	return false;
 }
 
 bool MessageScreen::isCallActive() const {
 	Discord::VoiceClient &voice = Discord::VoiceClient::getInstance();
-	return voice.getState() != Discord::VoiceState::DISCONNECTED && voice.getChannelId() == channelId;
+	return voice.getState() != Discord::VoiceState::DISCONNECTED;
 }
 
 void MessageScreen::startCall() {
 	bool ongoing = !callParticipants().empty();
-	Discord::VoiceClient::getInstance().connect("DM", channelId, !ongoing);
+	std::string guild = Discord::DiscordClient::getInstance().getGuildIdFromChannel(channelId);
+	if (guild.empty()) {
+		guild = "DM";
+	}
+	Discord::VoiceClient::getInstance().connect(guild, channelId, !ongoing);
 }
 
 std::unordered_set<std::string> MessageScreen::getVisibleTwemojis() {

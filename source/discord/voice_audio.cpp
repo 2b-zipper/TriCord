@@ -98,7 +98,7 @@ void VoiceAudio::enqueue(Speaker &s, const uint8_t *data, size_t len, Stats &sta
 	s.count++;
 }
 
-void VoiceAudio::pushOpus(uint32_t ssrc, uint16_t seq, const uint8_t *data, size_t len) {
+void VoiceAudio::pushOpus(uint32_t ssrc, uint16_t seq, const uint8_t *data, size_t len, float volume) {
 	if (len == 0 || len > MAX_PACKET) {
 		return;
 	}
@@ -147,6 +147,7 @@ void VoiceAudio::pushOpus(uint32_t ssrc, uint16_t seq, const uint8_t *data, size
 			}
 		}
 	}
+	s.volume = volume;
 	s.lastSeq = seq;
 	s.haveSeq = true;
 	s.arrivedSilence = isOpusSilence(data, len);
@@ -189,6 +190,14 @@ void VoiceAudio::dropSpeaker(uint32_t ssrc) {
 	}
 	destroy(*it->second);
 	speakers.erase(it);
+}
+
+void VoiceAudio::setSpeakerVolume(uint32_t ssrc, float volume) {
+	std::lock_guard<std::mutex> lock(mutex);
+	auto it = speakers.find(ssrc);
+	if (it != speakers.end() && it->second) {
+		it->second->volume = volume;
+	}
 }
 
 void VoiceAudio::renderFrame(int16_t *out) {
@@ -242,6 +251,18 @@ void VoiceAudio::renderFrame(int16_t *out) {
 		}
 		if (decoded < FRAME_SAMPLES) {
 			memset(pcm + decoded, 0, (FRAME_SAMPLES - decoded) * sizeof(int16_t));
+		}
+
+		if (s.volume != 1.0f) {
+			for (int i = 0; i < FRAME_SAMPLES; i++) {
+				int32_t val = (int32_t)(pcm[i] * s.volume);
+				if (val > 32767) {
+					val = 32767;
+				} else if (val < -32768) {
+					val = -32768;
+				}
+				pcm[i] = (int16_t)val;
+			}
 		}
 
 		if (any) {

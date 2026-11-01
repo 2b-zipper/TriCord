@@ -754,16 +754,16 @@ void DiscordClient::sendModalSubmit(const Modal &modal, const std::string &nonce
 		return;
 	}
 
-	Network::NetworkManager::getInstance().enqueue(
-	    "https://discord.com/api/v10/interactions", "POST", buildModalSubmit(modal, nonce),
-	    Network::RequestPriority::REALTIME,
-	    [cb](const Network::HttpResponse &resp) {
-		    if (!resp.success) {
-			    Logger::log("[Discord] Failed to submit modal: %ld %s", resp.statusCode, resp.body.c_str());
-		    }
-		    cb(resp.success);
-	    },
-	    {{"Authorization", token}, {"Content-Type", "application/json"}});
+	Network::NetworkManager::getInstance().enqueue("https://discord.com/api/v10/interactions", "POST",
+	                                               buildModalSubmit(modal, nonce), Network::RequestPriority::REALTIME,
+	                                               [cb](const Network::HttpResponse &resp) {
+		                                               if (!resp.success) {
+			                                               Logger::log("[Discord] Failed to submit modal: %ld %s",
+			                                                           resp.statusCode, resp.body.c_str());
+		                                               }
+		                                               cb(resp.success);
+	                                               },
+	                                               {{"Authorization", token}, {"Content-Type", "application/json"}});
 }
 
 void DiscordClient::setState(ConnectionState newState, const std::string &message) {
@@ -4085,21 +4085,21 @@ void DiscordClient::hasArchivedThreads(const std::string &channelId, std::functi
 	std::string url = "https://discord.com/api/v10/channels/" + channelId +
 	                  "/threads/search?archived=true&sort_by=last_message_time&sort_order=desc&limit=1&offset=0";
 
-	Network::NetworkManager::getInstance().enqueue(
-	    url, "GET", "", Network::RequestPriority::INTERACTIVE,
-	    [cb](const Network::HttpResponse &resp) {
-		    bool found = false;
-		    if (resp.success) {
-			    rapidjson::Document doc;
-			    doc.Parse(resp.body.c_str());
-			    found = !doc.HasParseError() && doc.IsObject() && doc.HasMember("threads") &&
-			            doc["threads"].IsArray() && !doc["threads"].Empty();
-		    }
-		    if (cb) {
-			    cb(found);
-		    }
-	    },
-	    {{"Authorization", token}});
+	Network::NetworkManager::getInstance().enqueue(url, "GET", "", Network::RequestPriority::INTERACTIVE,
+	                                               [cb](const Network::HttpResponse &resp) {
+		                                               bool found = false;
+		                                               if (resp.success) {
+			                                               rapidjson::Document doc;
+			                                               doc.Parse(resp.body.c_str());
+			                                               found = !doc.HasParseError() && doc.IsObject() &&
+			                                                       doc.HasMember("threads") &&
+			                                                       doc["threads"].IsArray() && !doc["threads"].Empty();
+		                                               }
+		                                               if (cb) {
+			                                               cb(found);
+		                                               }
+	                                               },
+	                                               {{"Authorization", token}});
 }
 
 bool DiscordClient::deleteMessage(const std::string &channelId, const std::string &messageId) {

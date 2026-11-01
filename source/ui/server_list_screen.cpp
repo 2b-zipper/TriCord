@@ -7,6 +7,7 @@
 #include "log.h"
 #include "ui/image_manager.h"
 #include "ui/voice_controls.h"
+#include "ui/voice_popup.h"
 #include "utils/message_utils.h"
 #include "utils/redraw.h"
 #include "utils/utf8_utils.h"
@@ -62,6 +63,9 @@ ServerListScreen::ServerListScreen()
 
 bool ServerListScreen::isAnimating() const {
 	if (state == State::TRANSITION_TO_CHANNEL || state == State::TRANSITION_TO_SERVER) {
+		return true;
+	}
+	if (VoiceControls::visible()) {
 		return true;
 	}
 	return listItems.empty() && Discord::DiscordClient::getInstance().getState() != Discord::ConnectionState::READY;
@@ -1046,20 +1050,30 @@ void ServerListScreen::update() {
 	u32 kDown = hidKeysDown();
 	u32 kHeld = hidKeysHeld();
 
+	if (VoicePopup::getInstance().handleKeys(kDown)) {
+		return;
+	}
+
 	if ((kDown | kHeld) & KEY_TOUCH) {
 		touchPosition touch;
 		hidTouchRead(&touch);
 
-		if (kDown & KEY_TOUCH) {
-			if (VoiceControls::handleTouch(touch, VOICE_BTN_X, VOICE_BTN_Y)) {
+		if (VoiceControls::visible()) {
+			if (handleVoicePanelTouch(touch, (kDown & KEY_TOUCH) != 0, (kHeld & KEY_TOUCH) != 0)) {
 				return;
 			}
-			isDraggingBottom = true;
-			lastTouch = touch;
-		} else if (isDraggingBottom) {
-			float dy = touch.py - lastTouch.py;
-			bottomScrollY -= dy;
-			lastTouch = touch;
+		} else {
+			if (kDown & KEY_TOUCH) {
+				if (VoiceControls::handleTouch(touch, VOICE_BTN_X, VOICE_BTN_Y)) {
+					return;
+				}
+				isDraggingBottom = true;
+				lastTouch = touch;
+			} else if (isDraggingBottom) {
+				float dy = touch.py - lastTouch.py;
+				bottomScrollY -= dy;
+				lastTouch = touch;
+			}
 		}
 	} else {
 		isDraggingBottom = false;
@@ -2021,9 +2035,88 @@ void ServerListScreen::drawVoiceStatus() {
 	drawText(10.0f, BOTTOM_SCREEN_HEIGHT - 38.0f, 0.5f, 0.4f, 0.4f, color, label);
 }
 
+bool ServerListScreen::handleVoicePanelTouch(const touchPosition &touch, bool isDown, bool isHeld) {
+	if (!VoiceControls::visible()) {
+		return false;
+	}
+
+	if (VoicePopup::getInstance().isOpen()) {
+		return VoicePopup::getInstance().handleTouch(touch, isDown, isHeld);
+	}
+
+	if (isDown && VoiceControls::handleTouch(touch, VOICE_BTN_X, VOICE_BTN_Y)) {
+		return true;
+	}
+
+	if (isDown) {
+		auto participants = VoiceControls::getActiveParticipants();
+		if (VoiceControls::handleParticipantTouch(touch, 57.0f, participants)) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+void ServerListScreen::drawVoicePanel() {
+	Discord::VoiceClient &voice = Discord::VoiceClient::getInstance();
+	Discord::DiscordClient &dc = Discord::DiscordClient::getInstance();
+	std::string vcChannelId = voice.getChannelId();
+
+	std::string channelName;
+	{
+		std::lock_guard<std::recursive_mutex> lock(dc.getMutex());
+		for (const auto &g : dc.getGuilds()) {
+			for (const auto &ch : g.channels) {
+				if (ch.id == vcChannelId) {
+					channelName = ch.name;
+					break;
+				}
+			}
+			if (!channelName.empty()) {
+				break;
+			}
+		}
+	}
+	if (channelName.empty()) {
+		Discord::Channel ch = dc.getChannel(vcChannelId);
+		channelName = !ch.name.empty() ? ch.name : TR("call.in_call");
+	}
+
+	float headerX = 35.0f;
+	C3D_Tex *tex = UI::ImageManager::getInstance().getLocalImage("romfs:/discord-icons/voice.png");
+	if (tex) {
+		Tex3DS_SubTexture sub = {(u16)tex->width, (u16)tex->height, 0.0f, 1.0f, 1.0f, 0.0f};
+		C2D_Image img = {tex, &sub};
+		C2D_ImageTint tint;
+		C2D_PlainImageTint(&tint, ScreenManager::colorAccent(), 1.0f);
+		C2D_DrawImageAt(img, headerX, 8.5f, 0.5f, &tint, 14.0f / tex->width, 14.0f / tex->height);
+		headerX += 18.0f;
+	}
+
+	drawRichText(headerX, 8.5f, 0.5f, 0.55f, 0.55f, ScreenManager::colorAccent(),
+	             getTruncatedRichText(channelName, 305.0f - headerX, 0.55f, 0.55f));
+	C2D_DrawRectSolid(10, 32, 0.5f, 300, 1, ScreenManager::colorSeparator());
+
+	auto participants = VoiceControls::getActiveParticipants();
+	VoiceControls::drawParticipantList(40.0f, participants);
+	C2D_DrawRectSolid(0, BOTTOM_SCREEN_HEIGHT - 38.0f, 0.45f, 320, 38.0f, ScreenManager::colorBackgroundDark());
+	drawVoiceStatus();
+	VoiceControls::draw(VOICE_BTN_X, VOICE_BTN_Y);
+
+	if (VoicePopup::getInstance().isOpen()) {
+		VoicePopup::getInstance().render();
+	}
+}
+
 void ServerListScreen::renderBottom(C3D_RenderTarget *target) {
 	C2D_SceneBegin(target);
 	C2D_TargetClear(target, ScreenManager::colorBackgroundDark());
+
+	if (VoiceControls::visible()) {
+		drawVoicePanel();
+		return;
+	}
 
 	Discord::DiscordClient &client = Discord::DiscordClient::getInstance();
 	std::lock_guard<std::recursive_mutex> lock(client.getMutex());

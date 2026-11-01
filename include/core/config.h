@@ -29,6 +29,7 @@
 #include <3ds.h>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 struct Theme {
@@ -115,8 +116,6 @@ class Config {
 	void setTypingIndicatorEnabled(bool enabled);
 	bool isNotificationSoundEnabled() const { return notificationSound; }
 	void setNotificationSoundEnabled(bool enabled);
-	bool isEchoCancellationEnabled() const { return echoCancellation; }
-	void setEchoCancellationEnabled(bool enabled);
 	bool isFileLoggingEnabled() const { return fileLoggingEnabled; }
 	void setFileLoggingEnabled(bool enabled);
 
@@ -129,6 +128,12 @@ class Config {
 
 	bool isDisclaimerAccepted() const { return disclaimerAccepted; }
 	void setDisclaimerAccepted(bool accepted);
+
+	int getMicSensitivity() const { return micSensitivity; }
+	void setMicSensitivity(int val);
+
+	int getUserVolume(const std::string &userId) const;
+	void setUserVolume(const std::string &userId, int volumePercent);
 
 	void loadTheme();
 
@@ -145,12 +150,14 @@ class Config {
 	int themeType;
 	bool typingIndicatorEnabled;
 	bool notificationSound;
-	bool echoCancellation;
 	bool fileLoggingEnabled;
 	bool disclaimerAccepted;
 	bool showAvatars;
 	bool showServerIcons;
 	bool showHiddenChannels;
+
+	int micSensitivity;
+	std::unordered_map<std::string, int> userVolumes;
 
 	bool customThemeEnabled;
 	std::string selectedThemeName;

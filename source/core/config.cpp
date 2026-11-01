@@ -1,5 +1,6 @@
 #include "config.h"
 
+#include <algorithm>
 #include <3ds.h>
 #include <citro2d.h>
 #include <cstdio>
@@ -22,9 +23,9 @@
 
 Config::Config()
     : currentAccountIndex(-1), timezoneOffset(0), language("en_US"), themeType(0), typingIndicatorEnabled(true),
-      notificationSound(true), echoCancellation(true), fileLoggingEnabled(false), disclaimerAccepted(false),
-      showAvatars(true), showServerIcons(true), showHiddenChannels(false),
-      customThemeEnabled(false), selectedThemeName("") {
+      notificationSound(true), fileLoggingEnabled(false), disclaimerAccepted(false), showAvatars(true),
+      showServerIcons(true), showHiddenChannels(false), micSensitivity(50), customThemeEnabled(false),
+      selectedThemeName("") {
 	customTheme = getDarkPreset();
 	customTheme.name = "Custom Theme";
 }
@@ -220,10 +221,6 @@ void Config::loadSettings() {
 			if (doc.HasMember("notification_sound") && doc["notification_sound"].IsBool()) {
 				notificationSound = doc["notification_sound"].GetBool();
 			}
-			// Not "echo_cancellation": Old 3DS used to default off and saved that.
-			if (doc.HasMember("echo_cancel") && doc["echo_cancel"].IsBool()) {
-				echoCancellation = doc["echo_cancel"].GetBool();
-			}
 			if (doc.HasMember("file_logging") && doc["file_logging"].IsBool()) {
 				fileLoggingEnabled = doc["file_logging"].GetBool();
 			}
@@ -245,6 +242,17 @@ void Config::loadSettings() {
 			if (doc.HasMember("show_hidden_channels") && doc["show_hidden_channels"].IsBool()) {
 				showHiddenChannels = doc["show_hidden_channels"].GetBool();
 			}
+			if (doc.HasMember("mic_sensitivity") && doc["mic_sensitivity"].IsInt()) {
+				micSensitivity = std::clamp(doc["mic_sensitivity"].GetInt(), 0, 100);
+			}
+			if (doc.HasMember("user_volumes") && doc["user_volumes"].IsObject()) {
+				userVolumes.clear();
+				for (auto it = doc["user_volumes"].MemberBegin(); it != doc["user_volumes"].MemberEnd(); ++it) {
+					if (it->name.IsString() && it->value.IsInt()) {
+						userVolumes[it->name.GetString()] = std::clamp(it->value.GetInt(), 0, 200);
+					}
+				}
+			}
 		} else {
 			saveSettings();
 		}
@@ -256,7 +264,6 @@ void Config::loadSettings() {
 		Core::I18n::getInstance().loadLanguage("en_US");
 	}
 	Logger::setFileLoggingEnabled(fileLoggingEnabled);
-	Logger::log("[Config] Echo cancellation %s", echoCancellation ? "on" : "off");
 }
 
 void Config::saveSettings() {
@@ -274,8 +281,6 @@ void Config::saveSettings() {
 	writer.Bool(typingIndicatorEnabled);
 	writer.Key("notification_sound");
 	writer.Bool(notificationSound);
-	writer.Key("echo_cancel");
-	writer.Bool(echoCancellation);
 	writer.Key("file_logging");
 	writer.Bool(fileLoggingEnabled);
 	writer.Key("disclaimer_accepted");
@@ -290,6 +295,15 @@ void Config::saveSettings() {
 	writer.Bool(showServerIcons);
 	writer.Key("show_hidden_channels");
 	writer.Bool(showHiddenChannels);
+	writer.Key("mic_sensitivity");
+	writer.Int(micSensitivity);
+	writer.Key("user_volumes");
+	writer.StartObject();
+	for (const auto &pair : userVolumes) {
+		writer.Key(pair.first.c_str());
+		writer.Int(pair.second);
+	}
+	writer.EndObject();
 	writer.EndObject();
 
 	std::string settingsPath = std::string(CONFIG_DIR_PATH) + "/settings.json";
@@ -304,6 +318,24 @@ void Config::setFileLoggingEnabled(bool enabled) {
 
 void Config::setDisclaimerAccepted(bool accepted) {
 	disclaimerAccepted = accepted;
+	saveSettings();
+}
+
+void Config::setMicSensitivity(int val) {
+	std::lock_guard<std::recursive_mutex> lock(mutex);
+	micSensitivity = std::clamp(val, 0, 100);
+	saveSettings();
+}
+
+int Config::getUserVolume(const std::string &userId) const {
+	std::lock_guard<std::recursive_mutex> lock(mutex);
+	auto it = userVolumes.find(userId);
+	return (it != userVolumes.end()) ? it->second : 100;
+}
+
+void Config::setUserVolume(const std::string &userId, int volumePercent) {
+	std::lock_guard<std::recursive_mutex> lock(mutex);
+	userVolumes[userId] = std::clamp(volumePercent, 0, 200);
 	saveSettings();
 }
 
@@ -327,11 +359,6 @@ void Config::setTypingIndicatorEnabled(bool enabled) {
 
 void Config::setNotificationSoundEnabled(bool enabled) {
 	notificationSound = enabled;
-	saveSettings();
-}
-
-void Config::setEchoCancellationEnabled(bool enabled) {
-	echoCancellation = enabled;
 	saveSettings();
 }
 
