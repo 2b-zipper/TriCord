@@ -1747,6 +1747,12 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y, float max
 		drawRoundedRect(4.0f, highlightY, 0.1f, 392.0f, highlightH, 6.0f, ScreenManager::colorBackgroundLight());
 	}
 
+	for (const auto &react : msg.reactions) {
+		if (!react.emoji.id.empty()) {
+			EmojiManager::getInstance().prefetchEmoji(react.emoji.id, true);
+		}
+	}
+
 	if (msg.type != 0 && msg.type != 19) {
 		drawSystemMessage(msg, y, topMargin, height, isSelected);
 		float reactionsY = y + topMargin + (msg.hasPollResult ? 50.0f : 18.0f);
@@ -2582,13 +2588,6 @@ size_t MessageScreen::messageFingerprint(const Discord::Message &msg) {
 }
 
 void MessageScreen::buildMessageCache(const Discord::Message &msg, MessageRenderCache &cache) {
-	for (const auto &react : msg.reactions) {
-		if (!react.emoji.id.empty()) {
-			EmojiManager::getInstance().prefetchEmoji(react.emoji.id, false);
-		}
-	}
-	EmojiManager::getInstance().prefetchEmojisFromText(msg.content);
-
 	cache.dateKey = MessageUtils::getLocalDateString(msg.timestamp);
 	cache.headerTimestamp = MessageUtils::formatTimestamp(msg.timestamp);
 
