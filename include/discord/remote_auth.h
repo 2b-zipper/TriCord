@@ -58,6 +58,7 @@ class RemoteAuth {
 
 	void *rsaContext;
 	std::string publicKeyBase64;
+	std::string expectedFingerprint;
 
 	std::atomic<bool> keyReady;
 	std::atomic<bool> sessionWanted;

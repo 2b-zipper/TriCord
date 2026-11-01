@@ -11,6 +11,7 @@
 #include <mbedtls/bignum.h>
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
+#include <mbedtls/md.h>
 #include <mbedtls/pk.h>
 #include <mbedtls/rsa.h>
 #include <rapidjson/document.h>
@@ -47,6 +48,22 @@ int consoleEntropy(void *, unsigned char *output, size_t length, size_t *written
 	}
 	*written = length;
 	return 0;
+}
+
+std::string base64UrlEncode(const unsigned char *data, size_t length) {
+	std::string encoded = Utils::Base64::encode(data, length);
+	for (char &c : encoded) {
+		if (c == '+') {
+			c = '-';
+		} else if (c == '/') {
+			c = '_';
+		}
+	}
+	const size_t padPos = encoded.find('=');
+	if (padPos != std::string::npos) {
+		encoded.resize(padPos);
+	}
+	return encoded;
 }
 
 std::vector<uint16_t> oddPrimesBelow(uint32_t limit) {
@@ -341,10 +358,15 @@ void RemoteAuth::handleMessage(std::string &message) {
 
 	} else if (op == "pending_remote_init") {
 		const std::string received = Utils::Json::getString(doc, "fingerprint");
-		if (!received.empty()) {
-			post([this, received] { fingerprint = received; });
-			setState(RemoteAuthState::WAITING_FOR_SCAN, Core::I18n::getInstance().get("login.status.login"));
+		if (received.empty() || received != expectedFingerprint) {
+			Logger::log("[RemoteAuth] Fingerprint mismatch");
+			retryImmediately = true;
+			setState(RemoteAuthState::FAILED, Core::I18n::getInstance().get("login.status.failed_auth"));
+			ws.disconnect();
+			return;
 		}
+		post([this, received] { fingerprint = received; });
+		setState(RemoteAuthState::WAITING_FOR_SCAN, Core::I18n::getInstance().get("login.status.login"));
 
 	} else if (op == "pending_ticket") {
 		if (doc.HasMember("encrypted_user_payload") && doc["encrypted_user_payload"].IsString()) {
@@ -490,6 +512,11 @@ std::string RemoteAuth::exportPublicKeyBase64() {
 	}
 
 	unsigned char *der_start = buf + sizeof(buf) - ret;
+	unsigned char digest[32];
+	if (mbedtls_md(mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), der_start, ret, digest) != 0) {
+		return "";
+	}
+	expectedFingerprint = base64UrlEncode(digest, sizeof(digest));
 	return Utils::Base64::encode(der_start, ret);
 }
 
@@ -523,20 +550,7 @@ std::string RemoteAuth::decryptNonce(const std::string &encryptedNonceBase64) {
 		return "";
 	}
 
-	std::string encoded = Utils::Base64::encode((const unsigned char *)nonce.data(), nonce.size());
-	for (char &c : encoded) {
-		if (c == '+') {
-			c = '-';
-		} else if (c == '/') {
-			c = '_';
-		}
-	}
-	size_t padPos = encoded.find('=');
-	if (padPos != std::string::npos) {
-		encoded = encoded.substr(0, padPos);
-	}
-
-	return encoded;
+	return base64UrlEncode((const unsigned char *)nonce.data(), nonce.size());
 }
 
 std::string RemoteAuth::decryptToken(const std::string &encryptedTokenBase64) { return decrypt(encryptedTokenBase64); }
