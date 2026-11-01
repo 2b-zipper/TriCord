@@ -178,6 +178,27 @@ bool VoiceClient::isSpeaking(const std::string &userId) const {
 	return it != speakingUntil.end() && osGetTime() < it->second;
 }
 
+int VoiceClient::getMicLevel() const { return capture.lastPeak(); }
+
+int VoiceClient::getMicGateThreshold() const {
+	int sensitivity = Config::getInstance().getMicSensitivity();
+	return (sensitivity <= 50) ? 3500 - (int)((float)sensitivity / 50.0f * (3500 - 1200))
+	                           : 1200 - (int)((float)(sensitivity - 50) / 50.0f * (1200 - 100));
+}
+
+void VoiceClient::setUserVolume(const std::string &userId, int volumePercent) {
+	Config::getInstance().setUserVolume(userId, volumePercent);
+	float factor = (float)volumePercent / 100.0f;
+	std::shared_lock<std::shared_mutex> lock(ssrcMutex);
+	for (const auto &pair : ssrcToUser) {
+		if (pair.second == userId) {
+			audio.setSpeakerVolume(pair.first, factor);
+		}
+	}
+}
+
+int VoiceClient::getUserVolume(const std::string &userId) const { return Config::getInstance().getUserVolume(userId); }
+
 void VoiceClient::setMuted(bool m) {
 	if (capture.isMuted() == m) {
 		return;
@@ -683,7 +704,11 @@ void VoiceClient::handleRtpPacket(uint8_t *packet, size_t len) {
 	}
 	lock.unlock();
 
-	audio.pushOpus(ssrc, seq, opusData, opusLen);
+	float vol = 1.0f;
+	if (userId) {
+		vol = (float)Config::getInstance().getUserVolume(*userId) / 100.0f;
+	}
+	audio.pushOpus(ssrc, seq, opusData, opusLen, vol);
 }
 
 void VoiceClient::sendSpeaking(bool speaking) {
@@ -822,7 +847,7 @@ void VoiceClient::mediaThread() {
 
 		const uint64_t now = osGetTime();
 		if (now >= echoCheckAt) {
-			echo.setEnabled(Config::getInstance().isEchoCancellationEnabled() && !osIsHeadsetConnected());
+			echo.setEnabled(!osIsHeadsetConnected());
 			echoCheckAt = now + ECHO_CHECK_INTERVAL_MS;
 		}
 
@@ -900,7 +925,7 @@ void VoiceClient::pumpMicrophone(const std::string &selfId) {
 		}
 
 		// The echo canceller's residue must not count as the user speaking.
-		int gate = SPEAKING_PEAK_THRESHOLD;
+		int gate = getMicGateThreshold();
 		if (echo.isRunning() && echo.isEnabled()) {
 			int farGate = audio.farLevel() * ECHO_GATE_PERCENT / 100;
 			if (farGate > ECHO_GATE_MAX) {

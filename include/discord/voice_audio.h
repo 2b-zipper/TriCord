@@ -25,8 +25,9 @@ class VoiceAudio {
 	void stop();
 	bool isRunning() const { return running; }
 
-	void pushOpus(uint32_t ssrc, uint16_t seq, const uint8_t *data, size_t len);
+	void pushOpus(uint32_t ssrc, uint16_t seq, const uint8_t *data, size_t len, float volume = 1.0f);
 	void dropSpeaker(uint32_t ssrc);
+	void setSpeakerVolume(uint32_t ssrc, float volume);
 
 	void setDeafened(bool d);
 	bool isDeafened() const { return deafened; }
@@ -54,6 +55,7 @@ class VoiceAudio {
 
 	struct Speaker {
 		OpusDecoder *decoder = nullptr;
+		float volume = 1.0f;
 		uint16_t lastSeq = 0;
 		bool haveSeq = false;
 		bool playing = false;

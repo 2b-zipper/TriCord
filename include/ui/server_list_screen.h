@@ -155,6 +155,9 @@ class ServerListScreen : public Screen {
 	float bottomScrollY = 0.0f;
 	touchPosition lastTouch = {0, 0};
 	bool isDraggingBottom = false;
+
+	void drawVoicePanel();
+	bool handleVoicePanelTouch(const touchPosition &touch, bool isDown, bool isHeld);
 };
 
 } // namespace UI
