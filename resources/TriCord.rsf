@@ -170,7 +170,7 @@ AccessControlInfo:
    - nwm::UDS
    - ptm:u
    - pxi:dev
-   - ps:u
+   - ps:ps
    - soc:U
    - ssl:C
    - y2r:u

@@ -8,6 +8,7 @@
 #include "utils/worker_thread.h"
 
 #include <3ds.h>
+#include <algorithm>
 #include <arpa/inet.h>
 #include <cstring>
 #include <malloc.h>
@@ -350,7 +351,7 @@ void VoiceClient::socketThread() {
 	sendIdentify();
 
 	while (!stopWorker && ws.isConnected()) {
-		ws.poll();
+		const bool received = ws.poll();
 
 		if (heartbeatInterval > 0) {
 			uint64_t now = osGetTime();
@@ -360,7 +361,7 @@ void VoiceClient::socketThread() {
 			}
 		}
 
-		svcSleepThread(10000000ULL);
+		svcSleepThread(received ? Network::WebSocketClient::BUSY_POLL_NS : Network::WebSocketClient::IDLE_POLL_NS);
 	}
 
 	ws.disconnect();
@@ -782,6 +783,8 @@ void VoiceClient::mediaThread() {
 	constexpr uint64_t TICKS_PER_US = SYSCLOCK_ARM11 / 1000000ULL;
 	constexpr uint64_t STATS_INTERVAL_MS = 10000;
 	constexpr uint64_t ECHO_CHECK_INTERVAL_MS = 250;
+	constexpr uint64_t MIN_WAIT_NS = 2000000ULL;
+	constexpr uint64_t MAX_WAIT_NS = 10000000ULL;
 	uint64_t statsAt = osGetTime() + STATS_INTERVAL_MS;
 	uint64_t echoCheckAt = 0;
 	uint64_t lastLoop = svcGetSystemTick();
@@ -789,19 +792,10 @@ void VoiceClient::mediaThread() {
 	uint32_t loops = 0;
 
 	while (!stopMedia) {
-		// The worker closes the socket on exit; FD_SET(-1) corrupts the fd_set.
 		int sock = udpSocket;
 		if (sock < 0) {
 			break;
 		}
-
-		fd_set readSet;
-		FD_ZERO(&readSet);
-		FD_SET(sock, &readSet);
-		timeval timeout{};
-		timeout.tv_usec = 10000;
-
-		int ready = select(sock + 1, &readSet, nullptr, nullptr, &timeout);
 
 		const uint64_t woke = svcGetSystemTick();
 		if (woke - lastLoop > maxGap) {
@@ -809,13 +803,14 @@ void VoiceClient::mediaThread() {
 		}
 		lastLoop = woke;
 
-		// One packet per pass: select returns at once if more are waiting, and
-		// draining until EAGAIN spends an extra IPC call on every wake-up.
-		if (ready > 0) {
+		// Not select: it allocates on every call, and moonlight's 3DS port saw poll take 14ms
+		// even with no timeout, which is more than the spare time in a 20ms frame.
+		for (int i = 0; i < MAX_PACKETS_PER_PASS; i++) {
 			const int received = recv(sock, recvBuffer, sizeof(recvBuffer), MSG_DONTWAIT);
-			if (received > 0) {
-				handleRtpPacket(recvBuffer, (size_t)received);
+			if (received <= 0) {
+				break;
 			}
+			handleRtpPacket(recvBuffer, (size_t)received);
 		}
 
 		// Both sides stop together, so the canceller keeps its estimate of the echo
@@ -847,15 +842,20 @@ void VoiceClient::mediaThread() {
 		loops++;
 
 		if (now >= statsAt) {
-			Logger::log("[VoiceStats] loops=%lu gapMax=%lums recv+pump avg/max=%lu/%luus mic avg/max=%lu/%luus",
-			            (unsigned long)loops, (unsigned long)(maxGap / TICKS_PER_US / 1000),
-			            (unsigned long)(pumpSum / loops / TICKS_PER_US), (unsigned long)(pumpMax / TICKS_PER_US),
-			            (unsigned long)(micSum / loops / TICKS_PER_US), (unsigned long)(micMax / TICKS_PER_US));
+			Logger::log(
+			    "[VoiceStats] loops=%lu gapMax=%lums recv+pump avg/max=%lu/%luus mic avg/max=%lu/%luus micDropped=%lu",
+			    (unsigned long)loops, (unsigned long)(maxGap / TICKS_PER_US / 1000),
+			    (unsigned long)(pumpSum / loops / TICKS_PER_US), (unsigned long)(pumpMax / TICKS_PER_US),
+			    (unsigned long)(micSum / loops / TICKS_PER_US), (unsigned long)(micMax / TICKS_PER_US),
+			    (unsigned long)micFramesDropped);
 			audio.logStats();
 			loops = 0;
 			maxGap = pumpSum = pumpMax = micSum = micMax = 0;
+			micFramesDropped = 0;
 			statsAt = now + STATS_INTERVAL_MS;
 		}
+
+		svcSleepThread(std::clamp(capture.nanosUntilFrame(), MIN_WAIT_NS, MAX_WAIT_NS));
 	}
 
 	Logger::log("[Voice] Media thread stopped (decoded=%lu failures=%lu sent=%lu)", (unsigned long)packetsDecoded,
@@ -895,6 +895,7 @@ void VoiceClient::pumpMicrophone(const std::string &selfId) {
 		// The echo canceller has seen this frame; sending it late would only add delay.
 		if (capture.backlogFrames() >= 2) {
 			sendTimestamp += OPUS_FRAME_TICKS;
+			micFramesDropped++;
 			continue;
 		}
 

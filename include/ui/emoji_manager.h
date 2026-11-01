@@ -1,11 +1,13 @@
 #ifndef EMOJI_MANAGER_H
 #define EMOJI_MANAGER_H
 
+#include "ui/image_manager.h"
 #include "utils/image_utils.h"
 #include "utils/worker_thread.h"
 #include <citro2d.h>
 #include <condition_variable>
 #include <deque>
+#include <memory>
 #include <shared_mutex>
 #include <string>
 #include <unordered_map>
@@ -37,14 +39,16 @@ class EmojiManager {
 		int originalW = 0;
 		int originalH = 0;
 		uint32_t lastUsedFrame = 0;
+		uint64_t retryAt = 0;
+		int attempts = 0;
 		bool isLoading = false;
+		std::shared_ptr<ImageManager::Animation> animation;
 	};
 
-	EmojiInfo getEmojiInfo(const std::string &emojiId);
+	EmojiInfo getEmojiInfo(const std::string &emojiId, bool animated = false);
 	EmojiInfo getTwemojiInfo(const std::string &codepointHex);
 
-	// Visible emoji are fetched ahead of anything prefetched for off-screen messages.
-	void prefetchEmoji(const std::string &emojiId, bool visible = true);
+	void prefetchEmoji(const std::string &emojiId, bool animated = false);
 	void prefetchEmojisFromText(const std::string &text);
 
 	size_t getTwemojiCount();
@@ -69,7 +73,6 @@ class EmojiManager {
 	void freePendingLocked(std::deque<PendingEmoji> &queue);
 	void uploadPendingLocked(std::unordered_map<std::string, EmojiInfo> &cache, PendingEmoji &pending);
 	void evictLocked(std::unordered_map<std::string, EmojiInfo> &cache, size_t limit);
-	void fetchQueuedCustomLocked();
 
 	std::unordered_map<std::string, EmojiInfo> emojiCache;
 	std::unordered_map<std::string, EmojiInfo> twemojiCache;
@@ -89,11 +92,6 @@ class EmojiManager {
 	std::deque<PendingEmoji> pendingTwemoji;
 	std::deque<PendingEmoji> pendingCustom;
 
-	// Kept here rather than in the network queue so a visible emoji can still jump ahead.
-	std::deque<std::string> visibleCustomQueue;
-	std::deque<std::string> prefetchCustomQueue;
-	size_t customInFlight = 0;
-
 	Utils::WorkerThread loaderThread;
 	std::condition_variable_any loaderCv;
 	std::condition_variable_any pendingCv;
@@ -101,12 +99,13 @@ class EmojiManager {
 	bool stopLoader = false;
 
 	static const int TWEMOJI_DECODE_DIM = 32;
+	static const int MAX_CUSTOM_ATTEMPTS = 3;
 
 	static const size_t MAX_TWEMOJI_CACHE = 250;
 	static const size_t MAX_CUSTOM_CACHE = 250;
 	static const size_t EVICT_BATCH = 50;
 	static const size_t MAX_PENDING_EMOJI = 4;
-	static const size_t MAX_UPLOADS_PER_FRAME = 4;
+	static const size_t MAX_UPLOADS_PER_FRAME = 8;
 };
 
 } // namespace UI

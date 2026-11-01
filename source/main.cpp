@@ -96,6 +96,12 @@ int main(int argc, char **argv) {
 	            (unsigned long)(osGetMemRegionFree(MEMREGION_APPLICATION) / 1024),
 	            (unsigned long)(__ctru_heap_size / 1024), (unsigned long)(__ctru_linear_heap_size / 1024),
 	            (unsigned long)(linearSpaceFree() / 1024));
+	// mbedTLS gathers entropy through sslc and ignores the failure when sslc is not up, which
+	// would leave every TLS session keyed from stack contents.
+	if (R_FAILED(sslcInit(0))) {
+		Logger::log("SSL service unavailable, TLS has no entropy");
+	}
+
 	Config::getInstance().load();
 	if (Utils::System::isNew3DS()) {
 		Network::NetworkManager::getInstance().init(3, 2);
@@ -106,8 +112,8 @@ int main(int argc, char **argv) {
 	Network::HttpClient timeClient;
 	timeClient.setTimeout(3);
 	Network::HttpResponse resp = timeClient.get("http://detectportal.firefox.com/success.txt", {});
-	if (resp.headers.count("Date")) {
-		UI::MessageUtils::syncClock(resp.headers["Date"]);
+	if (!resp.date.empty()) {
+		UI::MessageUtils::syncClock(resp.date);
 	}
 
 	UI::ImageManager::getInstance().init();
@@ -141,6 +147,7 @@ int main(int argc, char **argv) {
 	UI::ImageManager::getInstance().shutdown();
 	Utils::SoundPlayer::getInstance().shutdown();
 	ndspExit();
+	sslcExit();
 	psExit();
 	romfsExit();
 	C2D_Fini();

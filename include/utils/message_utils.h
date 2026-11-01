@@ -28,6 +28,7 @@ std::string getChannelDisplayName(const Discord::Channel &channel);
 
 bool canGroupWithPrevious(const Discord::Message &current, const Discord::Message &previous);
 std::string formatMentions(const std::string &text, const Discord::Message &msg);
+std::string buildDisplayContent(const Discord::Message &msg);
 
 } // namespace MessageUtils
 } // namespace UI

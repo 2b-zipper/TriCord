@@ -1,7 +1,6 @@
 #include "ui/emoji_manager.h"
 #include "log.h"
 #include "network/network_manager.h"
-#include "ui/image_manager.h"
 #include "utils/image_utils.h"
 #include "utils/redraw.h"
 #include "utils/system_utils.h"
@@ -15,6 +14,14 @@
 #include <unordered_set>
 
 namespace UI {
+
+namespace {
+
+std::string emojiUrl(const std::string &emojiId, const char *extension) {
+	return "https://media.discordapp.net/emojis/" + emojiId + extension + "?size=32";
+}
+
+} // namespace
 
 EmojiManager &EmojiManager::getInstance() {
 	static EmojiManager instance;
@@ -188,8 +195,6 @@ void EmojiManager::shutdown() {
 	}
 	emojiCache.clear();
 	twemojiCache.clear();
-	visibleCustomQueue.clear();
-	prefetchCustomQueue.clear();
 	priorityQueue.clear();
 	backgroundQueue.clear();
 	inQueue.clear();
@@ -276,22 +281,23 @@ void EmojiManager::update() {
 	frameCounter++;
 	ensureLoaderLocked();
 
-	size_t uploads = 0;
-	while (!pendingTwemoji.empty() && uploads < MAX_UPLOADS_PER_FRAME) {
+	size_t twemojiUploads = 0;
+	while (!pendingTwemoji.empty() && twemojiUploads < MAX_UPLOADS_PER_FRAME) {
 		uploadPendingLocked(twemojiCache, pendingTwemoji.front());
 		pendingTwemoji.pop_front();
-		uploads++;
+		twemojiUploads++;
 	}
-	if (uploads > 0) {
+	if (twemojiUploads > 0) {
 		pendingCv.notify_one();
 	}
 
-	for (size_t i = 0; i < MAX_UPLOADS_PER_FRAME && !pendingCustom.empty(); i++) {
+	size_t customUploads = 0;
+	while (!pendingCustom.empty() && customUploads < MAX_UPLOADS_PER_FRAME) {
 		uploadPendingLocked(emojiCache, pendingCustom.front());
 		pendingCustom.pop_front();
-		uploads++;
+		customUploads++;
 	}
-	if (uploads > 0) {
+	if (twemojiUploads > 0 || customUploads > 0) {
 		Utils::requestRedraw();
 	}
 	evictLocked(twemojiCache, MAX_TWEMOJI_CACHE);
@@ -312,7 +318,13 @@ void EmojiManager::uploadPendingLocked(std::unordered_map<std::string, EmojiInfo
 		it->second.originalW = pending.tiled.w;
 		it->second.originalH = pending.tiled.h;
 		it->second.isLoading = false;
-		it->second.lastUsedFrame = frameCounter;
+		if (tex) {
+			it->second.lastUsedFrame = frameCounter;
+			it->second.attempts = 0;
+		} else {
+			it->second.attempts++;
+			it->second.retryAt = osGetTime() + (uint64_t)3000 * it->second.attempts;
+		}
 	} else if (tex) {
 		C3D_TexDelete(tex);
 		free(tex);
@@ -355,73 +367,74 @@ size_t EmojiManager::getCustomCount() {
 	return emojiCache.size();
 }
 
-EmojiManager::EmojiInfo EmojiManager::getEmojiInfo(const std::string &emojiId) {
+EmojiManager::EmojiInfo EmojiManager::getEmojiInfo(const std::string &emojiId, bool animated) {
+	if (animated) {
+		const ImageManager::ImageInfo gif = ImageManager::getInstance().getImageInfo(emojiUrl(emojiId, ".gif"));
+		if (!gif.failed) {
+			EmojiInfo info;
+			info.tex = gif.tex;
+			info.originalW = gif.originalW;
+			info.originalH = gif.originalH;
+			info.animation = gif.animation;
+			return info;
+		}
+	}
+
 	std::shared_lock<std::shared_mutex> lock(cacheMutex);
 	auto it = emojiCache.find(emojiId);
 	if (it != emojiCache.end()) {
-		it->second.lastUsedFrame = frameCounter;
+		if (it->second.tex) {
+			it->second.lastUsedFrame = frameCounter;
+		}
 		return it->second;
 	}
 	return EmojiInfo();
 }
 
-void EmojiManager::prefetchEmoji(const std::string &emojiId, bool visible) {
+void EmojiManager::prefetchEmoji(const std::string &emojiId, bool animated) {
 	if (emojiId.empty()) {
 		return;
 	}
 
-	std::unique_lock<std::shared_mutex> lock(cacheMutex);
-	auto it = emojiCache.find(emojiId);
-	if (it == emojiCache.end()) {
-		EmojiInfo placeholder;
-		placeholder.isLoading = true;
-		emojiCache[emojiId] = placeholder;
-		(visible ? visibleCustomQueue : prefetchCustomQueue).push_back(emojiId);
-	} else if (visible && it->second.isLoading) {
-		auto queued = std::find(prefetchCustomQueue.begin(), prefetchCustomQueue.end(), emojiId);
-		if (queued == prefetchCustomQueue.end()) {
+	if (animated) {
+		ImageManager &images = ImageManager::getInstance();
+		const std::string url = emojiUrl(emojiId, ".gif");
+		if (!images.getImageInfo(url).failed) {
+			images.prefetch(url, 0, 0, Network::RequestPriority::INTERACTIVE);
 			return;
 		}
-		prefetchCustomQueue.erase(queued);
-		visibleCustomQueue.push_back(emojiId);
-	} else {
-		return;
 	}
-	fetchQueuedCustomLocked();
-}
 
-void EmojiManager::fetchQueuedCustomLocked() {
-	const size_t maxInFlight = Utils::System::isNew3DS() ? 4 : 2;
-	while (customInFlight < maxInFlight && !(visibleCustomQueue.empty() && prefetchCustomQueue.empty())) {
-		std::deque<std::string> &queue = visibleCustomQueue.empty() ? prefetchCustomQueue : visibleCustomQueue;
-		std::string emojiId = std::move(queue.front());
-		queue.pop_front();
-		customInFlight++;
-
-		std::string url = "https://media.discordapp.net/emojis/" + emojiId + ".png?size=32";
-		Network::NetworkManager::getInstance().enqueue(
-		    url, "GET", "", Network::RequestPriority::INTERACTIVE, [this, emojiId](Network::HttpResponse &resp) {
-			    bool ok = resp.statusCode == 200 && !resp.body.empty();
-			    {
-				    std::unique_lock<std::shared_mutex> lock(cacheMutex);
-				    customInFlight--;
-				    if (!ok) {
-					    pendingCustom.push_back({emojiId, {}});
-				    }
-				    fetchQueuedCustomLocked();
-			    }
-			    if (!ok) {
-				    return;
-			    }
-
-			    ImageManager::getInstance().runOnDecoder([this, emojiId, body = std::move(resp.body)] {
-				    Utils::Image::TiledData tiled =
-				        Utils::Image::decodeToTiled((const unsigned char *)body.data(), body.size());
-				    std::unique_lock<std::shared_mutex> lock(cacheMutex);
-				    pendingCustom.push_back({emojiId, tiled});
-			    });
-		    });
+	{
+		std::unique_lock<std::shared_mutex> lock(cacheMutex);
+		auto it = emojiCache.find(emojiId);
+		if (it == emojiCache.end()) {
+			EmojiInfo placeholder;
+			placeholder.isLoading = true;
+			placeholder.lastUsedFrame = frameCounter;
+			emojiCache[emojiId] = placeholder;
+		} else if (!it->second.tex && !it->second.isLoading && it->second.attempts < MAX_CUSTOM_ATTEMPTS &&
+		           osGetTime() >= it->second.retryAt) {
+			it->second.isLoading = true;
+			it->second.lastUsedFrame = frameCounter;
+		} else {
+			return;
+		}
 	}
+
+	Network::NetworkManager::getInstance().enqueue(
+	    emojiUrl(emojiId, ".png"), "GET", "", Network::RequestPriority::INTERACTIVE,
+	    [this, emojiId](Network::HttpResponse &resp) {
+		    Utils::Image::TiledData tiled;
+		    if (resp.statusCode == 200 && !resp.body.empty()) {
+			    tiled = Utils::Image::decodeToTiled((const unsigned char *)resp.body.data(), resp.body.size(),
+			                                        TWEMOJI_DECODE_DIM, TWEMOJI_DECODE_DIM);
+		    } else {
+			    Logger::log("[Emoji] Fetch failed for %s (status %d)", emojiId.c_str(), resp.statusCode);
+		    }
+		    std::unique_lock<std::shared_mutex> lock(cacheMutex);
+		    pendingCustom.push_back({emojiId, tiled});
+	    });
 }
 
 void EmojiManager::prefetchEmojisFromText(const std::string &text) {
@@ -447,7 +460,7 @@ void EmojiManager::prefetchEmojisFromText(const std::string &text) {
 		}
 		std::string emojiId = text.substr(secondColon + 1, closeBracket - secondColon - 1);
 		if (!emojiId.empty()) {
-			prefetchEmoji(emojiId, false);
+			prefetchEmoji(emojiId, isAnimated);
 		}
 		cursor = closeBracket;
 	}

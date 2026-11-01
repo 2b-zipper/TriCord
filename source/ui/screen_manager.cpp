@@ -900,7 +900,7 @@ void drawRichText(float x, float y, float z, float scaleX, float scaleY, u32 col
 						size_t closeBracket = text.find('>', secondColon);
 						if (closeBracket != std::string::npos) {
 							std::string id = text.substr(secondColon + 1, closeBracket - secondColon - 1);
-							EmojiManager::EmojiInfo info = EmojiManager::getInstance().getEmojiInfo(id);
+							EmojiManager::EmojiInfo info = EmojiManager::getInstance().getEmojiInfo(id, isAnimated);
 							float emojiSize = 28.0f * scaleY;
 
 							if (info.tex) {
@@ -913,8 +913,9 @@ void drawRichText(float x, float y, float z, float scaleX, float scaleY, u32 col
 								const C2D_Image img = {info.tex, &subtex};
 								C2D_DrawImageAt(img, currentX, y + 1.0f, z, nullptr, emojiSize / info.originalW,
 								                emojiSize / info.originalH);
+								ImageManager::getInstance().markDrawn(info.animation);
 							} else {
-								EmojiManager::getInstance().prefetchEmoji(id);
+								EmojiManager::getInstance().prefetchEmoji(id, isAnimated);
 
 								std::string name = text.substr(start + (isAnimated ? 3 : 2),
 								                               secondColon - (start + (isAnimated ? 3 : 2)));

@@ -167,10 +167,15 @@ struct Embed {
 	std::string thumbnail_proxy_url;
 	int thumbnail_width = 0;
 	int thumbnail_height = 0;
+	std::string gif_url;
 	std::string provider_name;
 	std::string type;
 	std::string timestamp;
 	std::vector<EmbedField> fields;
+
+	bool isBareGif() const {
+		return type == "gifv" && !(gif_url.empty() && thumbnail_url.empty() && image_url.empty());
+	}
 };
 
 struct Attachment {
@@ -182,6 +187,7 @@ struct Attachment {
 	int width = 0;
 	int height = 0;
 	std::string content_type;
+	bool spoiler = false;
 };
 
 struct Sticker {
@@ -230,6 +236,108 @@ struct PollResult {
 	bool hasWinner = false;
 };
 
+enum class InteractionResult { SUCCESS, FAILURE, MODAL };
+
+namespace ComponentType {
+constexpr int ACTION_ROW = 1;
+constexpr int BUTTON = 2;
+constexpr int STRING_SELECT = 3;
+constexpr int TEXT_INPUT = 4;
+constexpr int USER_SELECT = 5;
+constexpr int ROLE_SELECT = 6;
+constexpr int MENTIONABLE_SELECT = 7;
+constexpr int CHANNEL_SELECT = 8;
+constexpr int SECTION = 9;
+constexpr int TEXT_DISPLAY = 10;
+constexpr int THUMBNAIL = 11;
+constexpr int MEDIA_GALLERY = 12;
+constexpr int FILE_DISPLAY = 13;
+constexpr int SEPARATOR = 14;
+constexpr int CONTAINER = 17;
+constexpr int LABEL = 18;
+constexpr int FILE_UPLOAD = 19;
+constexpr int RADIO_GROUP = 21;
+constexpr int CHECKBOX_GROUP = 22;
+constexpr int CHECKBOX = 23;
+} // namespace ComponentType
+
+namespace ButtonStyle {
+constexpr int PRIMARY = 1;
+constexpr int SUCCESS = 3;
+constexpr int DANGER = 4;
+constexpr int LINK = 5;
+constexpr int PREMIUM = 6;
+} // namespace ButtonStyle
+
+struct SelectOption {
+	std::string label;
+	std::string value;
+	std::string description;
+	Emoji emoji;
+};
+
+struct MessageControl {
+	int type = 0;
+	int style = 0;
+	std::string label;
+	std::string customId;
+	std::string url;
+	Emoji emoji;
+	bool disabled = false;
+	bool hidden = false;
+
+	int minValues = 1;
+	int maxValues = 1;
+	std::vector<SelectOption> options;
+	std::vector<int> channelTypes;
+	std::vector<std::string> chosen;
+	std::string chosenLabel;
+
+	bool isButton() const { return type == ComponentType::BUTTON; }
+	// Premium buttons have neither, so there is nothing to do with them here.
+	bool canActivate() const { return !disabled && (!customId.empty() || !url.empty()); }
+};
+
+struct ModalField {
+	int wrapperType = 0;
+	std::string label;
+	std::string description;
+	std::string placeholder;
+	std::string value;
+	int minLength = 0;
+	int maxLength = 4000;
+	bool required = true;
+	bool checked = false;
+	MessageControl control;
+};
+
+struct Modal {
+	std::string id;
+	std::string applicationId;
+	std::string channelId;
+	std::string customId;
+	std::string title;
+	std::string nonce;
+	std::vector<ModalField> fields;
+};
+
+struct MessageBlock {
+	enum class Kind { TEXT, MEDIA, SEPARATOR, CONTROLS, CONTAINER };
+
+	Kind kind = Kind::TEXT;
+	bool spoiler = false;
+	std::string text;
+	// Indices into Message::attachments, which keeps retries and spoiler checks in one place.
+	std::vector<int> attachments;
+	// A section is a TEXT block with its accessory: this thumbnail, or a single button in controls.
+	int thumbnail = -1;
+	std::vector<MessageControl> controls;
+	bool divider = true;
+	bool largeSpacing = false;
+	int accentColor = -1;
+	std::vector<MessageBlock> children;
+};
+
 struct Message {
 	std::string id;
 	std::string content;
@@ -253,6 +361,20 @@ struct Message {
 	std::string referencedContent;
 	int type = 0;
 	std::string edited_timestamp;
+
+	int flags = 0;
+	std::string applicationId;
+	std::string interactionName;
+	std::string interactionUser;
+	std::vector<MessageBlock> blocks;
+
+	// The types Discord renders as their content rather than as a system line.
+	bool showsContent() const { return type == 0 || type == 19 || type == 20 || type == 23 || type == 26; }
+	bool isComponentsV2() const { return flags & (1 << 15); }
+	bool isEphemeral() const { return flags & (1 << 6); }
+	bool isThinking() const { return flags & (1 << 7); }
+	bool showsReplyPreview() const { return type == 19 && !referencedAuthorName.empty(); }
+	bool showsCommandLine() const { return !interactionName.empty() && !showsReplyPreview(); }
 
 	bool isForwarded = false;
 	std::string originalAuthorName;

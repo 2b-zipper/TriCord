@@ -1,60 +1,46 @@
 #include "network/http_client.h"
 #include "config.h"
 #include "log.h"
-#include <rapidjson/document.h>
+#include "network/network_manager.h"
+#include "network/tls.h"
+#include <algorithm>
+#include <cstdlib>
+#include <cstring>
+#include <mbedtls/ssl.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
+#include <strings.h>
 #include <utils/base64_utils.h>
-#include <utils/message_utils.h>
 #include <utils/system_utils.h>
+#include <vector>
 
 namespace Network {
 
-HttpClient::HttpClient() : curl(nullptr), share(nullptr), timeout(HTTP_TIMEOUT_SECONDS), verifySSL(true) {
-	curl = curl_easy_init();
-	if (!curl) {
-		Logger::log("[HTTP] Failed to initialize curl");
-		return;
-	}
+namespace {
 
-	curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
-	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-	curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
+constexpr const char *USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, "
+                                   "like Gecko) Chrome/143.0.0.0 Safari/537.36";
+constexpr long MAX_REDIRECTS = 5;
+constexpr long KEEPALIVE_IDLE_SECONDS = 120;
+constexpr long KEEPALIVE_INTERVAL_SECONDS = 60;
+constexpr long DNS_CACHE_SECONDS = 600;
+constexpr long CONNECTION_MAX_AGE_SECONDS = 600;
+constexpr size_t LARGE_BODY = 64 * 1024;
+constexpr size_t BODY_HEAP_MARGIN = 1024 * 1024;
 
-	curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
-	curl_easy_setopt(curl, CURLOPT_TCP_KEEPIDLE, 120L);
-	curl_easy_setopt(curl, CURLOPT_TCP_KEEPINTVL, 60L);
+struct DefaultHeader {
+	std::string name;
+	std::string line;
+	bool discordOnly;
+};
 
-	curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+std::vector<DefaultHeader> defaultHeaders;
 
-	curl_easy_setopt(curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
-
-	bool disableSSL = Config::getInstance().isSslVerificationDisabled();
-	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, disableSSL ? 0L : 1L);
-	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, disableSSL ? 0L : 2L);
-	const char *caPath = "romfs:/cacert-2025-12-02.pem";
-	curl_easy_setopt(curl, CURLOPT_CAINFO, caPath);
-
-	defaultHeaders["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, "
-	                               "like Gecko) Chrome/143.0.0.0 Safari/537.36";
-
-	updateSuperProperties();
-
-	defaultHeaders["X-Debug-Options"] = "bugReporterEnabled";
-	defaultHeaders["Content-Type"] = "application/json";
-	defaultHeaders["Accept"] = "*/*";
-
-	std::string lang = Config::getInstance().getLanguage();
-	if (lang == "ja") {
-		defaultHeaders["X-Discord-Locale"] = "ja";
-		defaultHeaders["Accept-Language"] = "ja,en-US;q=0.9,en;q=0.8";
-	} else {
-		defaultHeaders["X-Discord-Locale"] = "en-US";
-		defaultHeaders["Accept-Language"] = "en-US,en;q=0.9";
-	}
+void addDefaultHeader(const std::string &name, const std::string &value, bool discordOnly = false) {
+	defaultHeaders.push_back({name, name + ": " + value, discordOnly});
 }
 
-static std::string generateRandomId(size_t len) {
+std::string generateRandomId(size_t len) {
 	static const char charset[] = "0123456789abcdef";
 	std::string result;
 	result.reserve(len);
@@ -64,17 +50,16 @@ static std::string generateRandomId(size_t len) {
 	return result;
 }
 
-static std::string generateUUID() {
+std::string generateUUID() {
 	return generateRandomId(8) + "-" + generateRandomId(4) + "-" + generateRandomId(4) + "-" + generateRandomId(4) +
 	       "-" + generateRandomId(12);
 }
 
-void HttpClient::updateSuperProperties() {
+std::string buildSuperProperties(const std::string &lang) {
 	rapidjson::StringBuffer s;
 	rapidjson::Writer<rapidjson::StringBuffer> writer(s);
 
-	std::string lang = Config::getInstance().getLanguage();
-	std::string locale = (lang == "ja") ? "ja-JP" : "en-US";
+	const std::string locale = (lang == "ja") ? "ja-JP" : "en-US";
 
 	writer.StartObject();
 	writer.Key("os");
@@ -88,7 +73,7 @@ void HttpClient::updateSuperProperties() {
 	writer.Key("has_client_mods");
 	writer.Bool(false);
 	writer.Key("browser_user_agent");
-	writer.String(defaultHeaders["User-Agent"].c_str());
+	writer.String(USER_AGENT);
 	writer.Key("browser_version");
 	writer.String("143.0.0.0");
 	writer.Key("os_version");
@@ -117,203 +102,180 @@ void HttpClient::updateSuperProperties() {
 	writer.String("focused");
 	writer.EndObject();
 
-	std::string json = s.GetString();
-	defaultHeaders["X-Super-Properties"] = Utils::Base64::encode((const unsigned char *)json.c_str(), json.length());
+	const std::string json = s.GetString();
+	return Utils::Base64::encode((const unsigned char *)json.c_str(), json.length());
 }
 
-HttpClient::~HttpClient() {
-	if (curl) {
-		curl_easy_cleanup(curl);
-		curl = nullptr;
-	}
+bool isDiscordUrl(const std::string &url) {
+	return url.find("discord.com") != std::string::npos || url.find("discordapp.com") != std::string::npos ||
+	       url.find("discordapp.net") != std::string::npos;
 }
 
-void HttpClient::setHeader(const std::string &key, const std::string &value) { defaultHeaders[key] = value; }
+curl_slist *buildHeaderList(const HttpRequest &request) {
+	const bool discord = isDiscordUrl(request.url);
+	curl_slist *list = nullptr;
 
-void HttpClient::removeHeader(const std::string &key) { defaultHeaders.erase(key); }
-
-void HttpClient::setAuthToken(const std::string &token) {
-	authToken = token;
-	if (!token.empty()) {
-		defaultHeaders["Authorization"] = token;
-	} else {
-		defaultHeaders.erase("Authorization");
-	}
-}
-
-void HttpClient::setTimeout(long seconds) {
-	timeout = seconds;
-	if (curl) {
-		curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
-	}
-}
-
-void HttpClient::setVerifySSL(bool verify) {
-	if (Config::getInstance().isSslVerificationDisabled()) {
-		verify = false;
-	}
-	verifySSL = verify;
-	if (curl) {
-		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, verify ? 1L : 0L);
-		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, verify ? 2L : 0L);
-	}
-}
-
-void HttpClient::setShareHandle(CURLSH *handle) {
-	share = handle;
-	if (curl) {
-		curl_easy_setopt(curl, CURLOPT_SHARE, share);
-	}
-}
-
-void HttpClient::clearHeaders() {
-	defaultHeaders.clear();
-	defaultHeaders["User-Agent"] = APP_USER_AGENT;
-	defaultHeaders["Content-Type"] = "application/json";
-	defaultHeaders["Accept"] = "application/json";
-}
-
-size_t HttpClient::writeCallback(void *contents, size_t size, size_t nmemb, void *userp) {
-	size_t realsize = size * nmemb;
-	std::string *str = static_cast<std::string *>(userp);
-	str->append(static_cast<char *>(contents), realsize);
-	return realsize;
-}
-
-size_t HttpClient::headerCallback(char *buffer, size_t size, size_t nitems, void *userdata) {
-	size_t realsize = size * nitems;
-	auto *headers = static_cast<std::map<std::string, std::string> *>(userdata);
-
-	std::string header(buffer, realsize);
-	size_t colonPos = header.find(':');
-	if (colonPos != std::string::npos) {
-		std::string key = header.substr(0, colonPos);
-		std::string value = header.substr(colonPos + 1);
-
-		while (!value.empty() && (value[0] == ' ' || value[0] == '\t')) {
-			value.erase(0, 1);
-		}
-		while (!value.empty() && (value.back() == '\r' || value.back() == '\n')) {
-			value.pop_back();
-		}
-
-		(*headers)[key] = value;
-	}
-
-	return realsize;
-}
-
-void HttpClient::setupHeaders(const std::string &url, struct curl_slist **headers,
-                              const std::map<std::string, std::string> &extraHeaders) {
-
-	*headers = nullptr;
-
-	bool isDiscord = (url.find("discord.com") != std::string::npos || url.find("discordapp.com") != std::string::npos ||
-	                  url.find("discordapp.net") != std::string::npos);
-
-	for (const auto &pair : defaultHeaders) {
-		if (extraHeaders.find(pair.first) == extraHeaders.end()) {
-			if (!isDiscord && (pair.first == "X-Super-Properties" || pair.first == "X-Discord-Locale")) {
-				continue;
-			}
-			std::string headerStr = pair.first + ": " + pair.second;
-			*headers = curl_slist_append(*headers, headerStr.c_str());
+	for (const DefaultHeader &header : defaultHeaders) {
+		if ((discord || !header.discordOnly) && request.headers.find(header.name) == request.headers.end()) {
+			list = curl_slist_append(list, header.line.c_str());
 		}
 	}
-
-	for (const auto &pair : extraHeaders) {
-		std::string headerStr = pair.first + ": " + pair.second;
-		*headers = curl_slist_append(*headers, headerStr.c_str());
+	for (const auto &pair : request.headers) {
+		list = curl_slist_append(list, (pair.first + ": " + pair.second).c_str());
 	}
-
-	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, *headers);
+	return list;
 }
 
-HttpResponse HttpClient::performRequest(const std::string &url, const std::string &method, const std::string &body,
-                                        const std::map<std::string, std::string> &extraHeaders) {
-	HttpResponse response;
-	response.success = false;
-	response.statusCode = 0;
+bool fitsInHeap(size_t bytes) {
+	return bytes <= LARGE_BODY || bytes + BODY_HEAP_MARGIN <= Utils::System::heapFreeBytes();
+}
 
-	if (!curl) {
-		response.error = "CURL not initialized";
-		return response;
+size_t receiveBody(void *contents, size_t size, size_t nmemb, void *userp) {
+	auto *body = static_cast<std::string *>(userp);
+	const size_t len = size * nmemb;
+	const size_t needed = body->size() + len;
+
+	if (needed > body->capacity() && !fitsInHeap(std::max(needed, body->capacity() * 2))) {
+		Logger::log("[HTTP] Body of over %zu bytes does not fit in memory", needed);
+		return 0;
+	}
+	body->append(static_cast<char *>(contents), len);
+	return len;
+}
+
+bool headerIs(const char *line, size_t len, const char *name) {
+	const size_t nameLen = strlen(name);
+	return len > nameLen && line[nameLen] == ':' && strncasecmp(line, name, nameLen) == 0;
+}
+
+std::string headerValue(const char *line, size_t len, size_t nameLen) {
+	size_t start = nameLen + 1;
+	while (start < len && (line[start] == ' ' || line[start] == '\t')) {
+		start++;
+	}
+	while (len > start && (line[len - 1] == '\r' || line[len - 1] == '\n')) {
+		len--;
+	}
+	return std::string(line + start, len - start);
+}
+
+size_t receiveHeader(char *line, size_t size, size_t nitems, void *userdata) {
+	auto *response = static_cast<HttpResponse *>(userdata);
+	const size_t len = size * nitems;
+
+	if (headerIs(line, len, "Date")) {
+		response->date = headerValue(line, len, 4);
+	} else if (headerIs(line, len, "Retry-After")) {
+		response->retryAfter = headerValue(line, len, 11);
+	} else if (headerIs(line, len, "Content-Length")) {
+		const size_t length = strtoul(line + 15, nullptr, 10);
+		if (fitsInHeap(length)) {
+			response->body.reserve(length);
+		}
+	}
+	return len;
+}
+
+CURLcode useSharedCaChain(CURL *, void *sslConfig, void *) {
+	mbedtls_ssl_conf_ca_chain(static_cast<mbedtls_ssl_config *>(sslConfig), sharedCaChain(), nullptr);
+	return CURLE_OK;
+}
+
+} // namespace
+
+void initHttpDefaults() {
+	if (!defaultHeaders.empty()) {
+		return;
+	}
+	const std::string lang = Config::getInstance().getLanguage();
+	const bool japanese = lang == "ja";
+
+	addDefaultHeader("Accept", "*/*");
+	addDefaultHeader("Accept-Language", japanese ? "ja,en-US;q=0.9,en;q=0.8" : "en-US,en;q=0.9");
+	addDefaultHeader("Content-Type", "application/json");
+	addDefaultHeader("User-Agent", USER_AGENT);
+	addDefaultHeader("X-Debug-Options", "bugReporterEnabled");
+	addDefaultHeader("X-Discord-Locale", japanese ? "ja" : "en-US", true);
+	addDefaultHeader("X-Super-Properties", buildSuperProperties(lang), true);
+}
+
+curl_slist *prepareTransfer(CURL *easy, const HttpRequest &request, HttpResponse &response) {
+	curl_easy_reset(easy);
+
+	curl_easy_setopt(easy, CURLOPT_URL, request.url.c_str());
+	curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
+	curl_easy_setopt(easy, CURLOPT_TIMEOUT, request.timeoutSeconds);
+	curl_easy_setopt(easy, CURLOPT_FOLLOWLOCATION, 1L);
+	curl_easy_setopt(easy, CURLOPT_MAXREDIRS, MAX_REDIRECTS);
+	curl_easy_setopt(easy, CURLOPT_TCP_KEEPALIVE, 1L);
+	curl_easy_setopt(easy, CURLOPT_TCP_KEEPIDLE, KEEPALIVE_IDLE_SECONDS);
+	curl_easy_setopt(easy, CURLOPT_TCP_KEEPINTVL, KEEPALIVE_INTERVAL_SECONDS);
+	curl_easy_setopt(easy, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+	curl_easy_setopt(easy, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+	curl_easy_setopt(easy, CURLOPT_ACCEPT_ENCODING, "");
+	curl_easy_setopt(easy, CURLOPT_DNS_CACHE_TIMEOUT, DNS_CACHE_SECONDS);
+	curl_easy_setopt(easy, CURLOPT_MAXAGE_CONN, CONNECTION_MAX_AGE_SECONDS);
+
+	const bool verify = !Config::getInstance().isSslVerificationDisabled();
+	curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, verify ? 1L : 0L);
+	curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, verify ? 2L : 0L);
+	curl_easy_setopt(easy, CURLOPT_CAINFO, nullptr);
+	curl_easy_setopt(easy, CURLOPT_CAPATH, nullptr);
+	if (verify) {
+		curl_easy_setopt(easy, CURLOPT_SSL_CTX_FUNCTION, useSharedCaChain);
 	}
 
-	curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-
-	curl_easy_setopt(curl, CURLOPT_HTTPGET, 0L);
-	curl_easy_setopt(curl, CURLOPT_POST, 0L);
-	curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, NULL);
-	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, NULL);
-
+	const std::string &method = request.method;
 	if (method == "POST") {
-		curl_easy_setopt(curl, CURLOPT_POST, 1L);
-		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
-		curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)body.length());
-	} else if (method == "PATCH") {
-		curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PATCH");
-		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
-		curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)body.length());
-	} else if (method == "PUT") {
-		curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
-		if (!body.empty()) {
-			curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
-			curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)body.length());
-		}
-	} else if (method == "DELETE") {
-		curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
-	} else {
-		curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+		curl_easy_setopt(easy, CURLOPT_POST, 1L);
+	} else if (method != "GET") {
+		curl_easy_setopt(easy, CURLOPT_CUSTOMREQUEST, method.c_str());
+	}
+	if (method == "POST" || method == "PATCH" || (method != "GET" && !request.body.empty())) {
+		curl_easy_setopt(easy, CURLOPT_POSTFIELDS, request.body.c_str());
+		curl_easy_setopt(easy, CURLOPT_POSTFIELDSIZE, (long)request.body.length());
 	}
 
-	struct curl_slist *headerList = nullptr;
-	setupHeaders(url, &headerList, extraHeaders);
+	curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, receiveBody);
+	curl_easy_setopt(easy, CURLOPT_WRITEDATA, &response.body);
+	curl_easy_setopt(easy, CURLOPT_HEADERFUNCTION, receiveHeader);
+	curl_easy_setopt(easy, CURLOPT_HEADERDATA, &response);
 
-	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
-	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response.body);
-	curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, headerCallback);
-	curl_easy_setopt(curl, CURLOPT_HEADERDATA, &response.headers);
+	curl_slist *headers = buildHeaderList(request);
+	curl_easy_setopt(easy, CURLOPT_HTTPHEADER, headers);
+	return headers;
+}
 
-	CURLcode res = curl_easy_perform(curl);
-
-	if (headerList) {
-		curl_slist_free_all(headerList);
+HttpResponse HttpClient::perform(const std::string &url, const std::string &method, const std::string &body,
+                                 const std::map<std::string, std::string> &extraHeaders) {
+	HttpRequest request{url, method, body, extraHeaders, timeout > 0 ? timeout : HTTP_TIMEOUT_SECONDS};
+	if (!authToken.empty()) {
+		request.headers["Authorization"] = authToken;
 	}
-
-	if (res != CURLE_OK) {
-		response.error = curl_easy_strerror(res);
-
-		return response;
-	}
-
-	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response.statusCode);
-	response.success = (response.statusCode >= 200 && response.statusCode < 300);
-
-	return response;
+	return NetworkManager::getInstance().perform(std::move(request));
 }
 
 HttpResponse HttpClient::get(const std::string &url, const std::map<std::string, std::string> &extraHeaders) {
-	return performRequest(url, "GET", "", extraHeaders);
+	return perform(url, "GET", "", extraHeaders);
 }
 
 HttpResponse HttpClient::post(const std::string &url, const std::string &body,
                               const std::map<std::string, std::string> &extraHeaders) {
-	return performRequest(url, "POST", body, extraHeaders);
+	return perform(url, "POST", body, extraHeaders);
 }
 
 HttpResponse HttpClient::patch(const std::string &url, const std::string &body,
                                const std::map<std::string, std::string> &extraHeaders) {
-	return performRequest(url, "PATCH", body, extraHeaders);
+	return perform(url, "PATCH", body, extraHeaders);
 }
 
 HttpResponse HttpClient::put(const std::string &url, const std::string &body,
                              const std::map<std::string, std::string> &extraHeaders) {
-	return performRequest(url, "PUT", body, extraHeaders);
+	return perform(url, "PUT", body, extraHeaders);
 }
 
 HttpResponse HttpClient::del(const std::string &url, const std::map<std::string, std::string> &extraHeaders) {
-	return performRequest(url, "DELETE", "", extraHeaders);
+	return perform(url, "DELETE", "", extraHeaders);
 }
 
 } // namespace Network

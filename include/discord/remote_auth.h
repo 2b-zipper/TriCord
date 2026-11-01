@@ -3,7 +3,10 @@
 
 #include "network/websocket_client.h"
 #include <3ds.h>
+#include <atomic>
+#include <deque>
 #include <functional>
+#include <mutex>
 #include <string>
 #include "utils/worker_thread.h"
 
@@ -28,8 +31,6 @@ class RemoteAuth {
 	RemoteAuth();
 	~RemoteAuth();
 
-	void prepare();
-
 	bool start();
 
 	void cancel();
@@ -48,35 +49,43 @@ class RemoteAuth {
 
   private:
 	Network::WebSocketClient ws;
-	RemoteAuthState state;
+	std::atomic<RemoteAuthState> state;
 	std::string fingerprint;
-	std::string ticket;
 	uint64_t heartbeatInterval;
 	uint64_t lastHeartbeat;
-	uint64_t lastRetryTime;
+	uint64_t retryAt;
 	const uint64_t retryDelay = 5000;
 
 	void *rsaContext;
-	void *ctrDrbgContext;
-	void *entropyContext;
 	std::string publicKeyBase64;
+	std::string expectedFingerprint;
 
-	bool isInitializing;
-	bool initSuccess;
-	void runInit();
+	std::atomic<bool> keyReady;
+	std::atomic<bool> sessionWanted;
+	std::atomic<bool> workerRunning;
+	std::atomic<bool> retryImmediately;
+
+	std::mutex eventMutex;
+	std::deque<std::function<void()>> events;
 
 	std::function<void(RemoteAuthState, const std::string &)> onStateChange;
 	std::function<void(const RemoteAuthUser &)> onUserScanned;
 	std::function<void(const std::string &)> onTokenReceived;
 
 	Utils::WorkerThread workerThread;
+	void launchWorker();
+	void runSession();
+	void serve();
+	void post(std::function<void()> event);
 	void handleMessage(std::string &message);
+	void finish(const std::string &ticket);
 	void sendHeartbeat();
 	void setState(RemoteAuthState newState, const std::string &info = "");
 
 	bool initRSA();
 	void cleanupRSA();
 	std::string exportPublicKeyBase64();
+	std::string decrypt(const std::string &encryptedBase64);
 	std::string decryptNonce(const std::string &encryptedNonceBase64);
 };
 

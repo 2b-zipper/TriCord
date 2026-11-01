@@ -92,6 +92,22 @@ void VoiceCapture::stop() {
 	Logger::log("[VoiceCapture] stopped");
 }
 
+uint32_t VoiceCapture::availableSamples() const {
+	const uint32_t writeOffset = micGetLastSampleOffset();
+	const uint32_t bytes =
+	    (writeOffset >= readOffset) ? (writeOffset - readOffset) : (micBufferSize - readOffset + writeOffset);
+	return bytes / 2;
+}
+
+uint64_t VoiceCapture::nanosUntilFrame() {
+	std::lock_guard<std::mutex> lock(mutex);
+	if (!running) {
+		return UINT64_MAX;
+	}
+	const uint32_t available = availableSamples();
+	return available >= SRC_PER_FRAME ? 0 : (SRC_PER_FRAME - available) * NANOS_PER_SAMPLE;
+}
+
 bool VoiceCapture::readFrame(int16_t *pcm) {
 	std::lock_guard<std::mutex> lock(mutex);
 	if (!running || !micBuffer) {
@@ -99,11 +115,7 @@ bool VoiceCapture::readFrame(int16_t *pcm) {
 	}
 
 	const uint32_t totalSamples = micBufferSize / 2;
-	const uint32_t writeOffset = micGetLastSampleOffset();
-
-	uint32_t available =
-	    (writeOffset >= readOffset) ? (writeOffset - readOffset) : (micBufferSize - readOffset + writeOffset);
-	available /= 2;
+	const uint32_t available = availableSamples();
 
 	if (available < SRC_PER_FRAME) {
 		backlog = 0;
@@ -112,7 +124,7 @@ bool VoiceCapture::readFrame(int16_t *pcm) {
 
 	// A second behind or more: the stream is not worth catching up on.
 	if (available > totalSamples / 2) {
-		readOffset = writeOffset;
+		readOffset = micGetLastSampleOffset();
 		resamplePos = 0;
 		backlog = 0;
 		return false;
