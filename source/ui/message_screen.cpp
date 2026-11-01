@@ -932,7 +932,7 @@ float MessageScreen::drawSystemMessage(const Discord::Message &msg, float y, flo
                                        bool isSelected) {
 	float blockHeight = 14.0f;
 	float drawY = y + topMargin + ((height - topMargin - blockHeight) / 2.0f);
-	if (msg.hasPollResult) {
+	if (msg.hasPollResult || !msg.reactions.empty()) {
 		drawY = y + topMargin + 4.0f;
 	}
 
