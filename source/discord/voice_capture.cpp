@@ -3,7 +3,7 @@
 
 #include <cstring>
 #include <malloc.h>
-#include <opus/opus.h>
+#include <opus.h>
 
 namespace Discord {
 
@@ -120,23 +120,29 @@ bool VoiceCapture::readFrame(int16_t *pcm) {
 
 	const int16_t *samples = (const int16_t *)micBuffer;
 	const uint32_t base = readOffset / 2;
+	const bool skip = muted;
 	uint32_t pos = resamplePos;
 
-	for (int i = 0; i < FRAME_SAMPLES; i++) {
-		uint32_t a = base + (pos >> 20);
-		if (a >= totalSamples) {
-			a -= totalSamples;
-		}
-		uint32_t b = a + 1;
-		if (b >= totalSamples) {
-			b -= totalSamples;
-		}
+	if (skip) {
+		memset(pcm, 0, FRAME_SAMPLES * sizeof(int16_t));
+		pos += FRAME_SAMPLES * STEP_Q20;
+	} else {
+		for (int i = 0; i < FRAME_SAMPLES; i++) {
+			uint32_t a = base + (pos >> 20);
+			if (a >= totalSamples) {
+				a -= totalSamples;
+			}
+			uint32_t b = a + 1;
+			if (b >= totalSamples) {
+				b -= totalSamples;
+			}
 
-		const int32_t sa = samples[a];
-		const int32_t sb = samples[b];
-		const int32_t frac = (int32_t)((pos >> 6) & 0x3FFF);
-		pcm[i] = (int16_t)(sa + (((sb - sa) * frac) >> 14));
-		pos += STEP_Q20;
+			const int32_t sa = samples[a];
+			const int32_t sb = samples[b];
+			const int32_t frac = (int32_t)((pos >> 6) & 0x3FFF);
+			pcm[i] = (int16_t)(sa + (((sb - sa) * frac) >> 14));
+			pos += STEP_Q20;
+		}
 	}
 
 	const uint32_t consumed = pos >> 20;
@@ -148,6 +154,11 @@ bool VoiceCapture::readFrame(int16_t *pcm) {
 	readOffset = next * 2;
 
 	backlog = (int)((available - consumed) / SRC_PER_FRAME);
+
+	if (skip) {
+		peakLevel = 0;
+		return true;
+	}
 
 	// Ahead of the peak, so the speaking indicator ignores the speaker's output.
 	if (echo) {

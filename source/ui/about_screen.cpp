@@ -157,6 +157,10 @@ void AboutScreen::renderBottom(C3D_RenderTarget *target) {
 	drawLib("RapidJSON, stb_image, qrcodegen");
 	drawLib("Twemoji Assets");
 
+	y += 2.0f;
+	drawText(x + 8.0f, y, 0.5f, 0.35f, 0.35f, ScreenManager::colorTextMuted(), "License texts: romfs:/licenses");
+	y += 12.0f;
+
 	drawSectionTitle("Source Code");
 	drawText(x + 8.0f, y, 0.5f, 0.36f, 0.36f, ScreenManager::colorTextMuted(), "Licensed under GPL v3.0");
 	y += 13.0f;

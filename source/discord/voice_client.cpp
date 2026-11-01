@@ -5,6 +5,7 @@
 #include "utils/json_utils.h"
 #include "utils/redraw.h"
 #include "utils/sound_player.h"
+#include "utils/worker_thread.h"
 
 #include <3ds.h>
 #include <arpa/inet.h>
@@ -650,19 +651,17 @@ void VoiceClient::handleRtpPacket(uint8_t *packet, size_t len) {
 		Logger::log("[Voice] First media packet decrypted, ssrc=%lu bytes=%zu", (unsigned long)ssrc, opusLen);
 	}
 
+	std::shared_lock<std::shared_mutex> lock(ssrcMutex);
+	auto it = ssrcToUser.find(ssrc);
+	const std::string *userId = it != ssrcToUser.end() ? &it->second : nullptr;
+
 	if (daveVersion != 0) {
-		std::string userId;
-		{
-			std::shared_lock<std::shared_mutex> lock(ssrcMutex);
-			auto it = ssrcToUser.find(ssrc);
-			if (it == ssrcToUser.end()) {
-				return;
-			}
-			userId = it->second;
+		if (!userId) {
+			return;
 		}
 
 		size_t written = 0;
-		if (!dave.decryptOpus(userId, opusData, opusLen, daveFrameBuffer, sizeof(daveFrameBuffer), &written) ||
+		if (!dave.decryptOpus(*userId, opusData, opusLen, daveFrameBuffer, sizeof(daveFrameBuffer), &written) ||
 		    written == 0) {
 			daveDecryptFailures++;
 			if (daveDecryptFailures <= 5 || daveDecryptFailures % 200 == 0) {
@@ -670,30 +669,19 @@ void VoiceClient::handleRtpPacket(uint8_t *packet, size_t len) {
 			}
 			return;
 		}
-		if (isOpusSilence(daveFrameBuffer, written)) {
-			clearSpeaking(userId);
-		} else {
-			markSpeaking(userId);
-		}
-		audio.pushOpus(ssrc, seq, daveFrameBuffer, written);
-		return;
+		opusData = daveFrameBuffer;
+		opusLen = written;
 	}
 
-	std::string userId;
-	{
-		std::shared_lock<std::shared_mutex> lock(ssrcMutex);
-		auto it = ssrcToUser.find(ssrc);
-		if (it != ssrcToUser.end()) {
-			userId = it->second;
-		}
-	}
-	if (!userId.empty()) {
+	if (userId) {
 		if (isOpusSilence(opusData, opusLen)) {
-			clearSpeaking(userId);
+			clearSpeaking(*userId);
 		} else {
-			markSpeaking(userId);
+			markSpeaking(*userId);
 		}
 	}
+	lock.unlock();
+
 	audio.pushOpus(ssrc, seq, opusData, opusLen);
 }
 
@@ -821,12 +809,18 @@ void VoiceClient::mediaThread() {
 		}
 		lastLoop = woke;
 
+		// One packet per pass: select returns at once if more are waiting, and
+		// draining until EAGAIN spends an extra IPC call on every wake-up.
 		if (ready > 0) {
-			int received;
-			while ((received = recv(sock, recvBuffer, sizeof(recvBuffer), MSG_DONTWAIT)) > 0) {
+			const int received = recv(sock, recvBuffer, sizeof(recvBuffer), MSG_DONTWAIT);
+			if (received > 0) {
 				handleRtpPacket(recvBuffer, (size_t)received);
 			}
 		}
+
+		// Both sides stop together, so the canceller keeps its estimate of the echo
+		// path; re-initialising would leak echo for a second after unmuting.
+		echo.setPaused(capture.isMuted());
 
 		audio.pump();
 		const uint64_t afterPump = svcGetSystemTick();
@@ -1212,12 +1206,22 @@ void VoiceClient::handlePayload(const std::string &message) {
 				wanted = 0x18;
 			}
 			const int candidates[] = {wanted, (int)callerPriority, 0x3F};
-			for (int prio : candidates) {
-				media = threadCreate(mediaThreadEntry, this, MEDIA_STACK_SIZE, prio, 0, false);
-				if (media) {
-					Logger::log("[Voice] Media thread priority 0x%X (UI 0x%X)", prio, (unsigned)callerPriority);
-					break;
+			auto createOn = [&](int core) {
+				for (int prio : candidates) {
+					media = threadCreate(mediaThreadEntry, this, MEDIA_STACK_SIZE, prio, core, false);
+					if (media) {
+						Logger::log("[Voice] Media thread on core %d, priority 0x%X (UI 0x%X)", core, prio,
+						            (unsigned)callerPriority);
+						return;
+					}
 				}
+			};
+			// On a New 3DS the call gets a core of its own instead of preempting the UI.
+			if (Utils::WorkerThread::extraCoreAvailable()) {
+				createOn(2);
+			}
+			if (!media) {
+				createOn(0);
 			}
 			if (!media) {
 				Logger::log("[Voice] Media thread creation failed");
