@@ -20,6 +20,7 @@ class MessageScreen : public Screen {
 	struct EmbedLayout {
 		bool hasImage;
 		bool hasThumbnail;
+		bool hasMedia;
 		bool isLargeThumbnail;
 		bool isMedia;
 		bool isSimpleMedia;

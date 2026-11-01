@@ -5,6 +5,8 @@
 #include "log.h"
 #include "network/http_client.h"
 #include "network/network_manager.h"
+#include "utils/gif_decoder.h"
+#include "utils/image_utils.h"
 #include "utils/json_utils.h"
 #include "utils/message_utils.h"
 #include "utils/redraw.h"
@@ -2323,6 +2325,48 @@ Member DiscordClient::parseMemberObject(const rapidjson::Value &mObj, const std:
 	return member;
 }
 
+namespace {
+
+std::string withQuery(const std::string &url, const char *query) {
+	return url + (url.find('?') == std::string::npos ? "?" : "&") + query;
+}
+
+// Tenor keeps every rendition of a GIF under one id, and the last five
+// characters of the id select the rendition. AAAAM is the 220px GIF.
+std::string tenorGifUrl(const std::string &url) {
+	constexpr size_t CODE_LENGTH = 5;
+	const size_t host = url.find(".tenor.com/");
+	if (host == std::string::npos) {
+		return "";
+	}
+	const size_t idStart = host + strlen(".tenor.com/");
+	const size_t idEnd = url.find('/', idStart);
+	const size_t extension = url.rfind('.');
+	if (idEnd == std::string::npos || idEnd - idStart <= CODE_LENGTH || extension < idEnd) {
+		return "";
+	}
+	return url.substr(0, idEnd - CODE_LENGTH) + "AAAAM" + url.substr(idEnd, extension - idEnd) + ".gif";
+}
+
+// A gifv embed only points at video. The proxy transcodes on request, but its
+// URLs are signed, so Tenor's own GIF rendition cannot go through it.
+std::string gifvUrl(const Embed &embed, const rapidjson::Value &video) {
+	std::string tenorUrl = tenorGifUrl(embed.thumbnail_url);
+	if (tenorUrl.empty()) {
+		tenorUrl = tenorGifUrl(Utils::Json::getString(video, "url"));
+	}
+	if (!tenorUrl.empty()) {
+		return tenorUrl;
+	}
+	const std::string proxyUrl = Utils::Json::getString(video, "proxy_url");
+	if (proxyUrl.empty() || Utils::Gif::hasGifPath(embed.thumbnail_url)) {
+		return "";
+	}
+	return withQuery(proxyUrl, "format=gif");
+}
+
+} // namespace
+
 Embed DiscordClient::parseEmbedObject(const rapidjson::Value &eObj) {
 	Embed embed;
 	embed.title = Utils::Json::getString(eObj, "title");
@@ -2356,6 +2400,9 @@ Embed DiscordClient::parseEmbedObject(const rapidjson::Value &eObj) {
 		embed.thumbnail_width = Utils::Json::getInt(thumb, "width");
 		embed.thumbnail_height = Utils::Json::getInt(thumb, "height");
 	}
+	if (embed.type == "gifv" && eObj.HasMember("video") && eObj["video"].IsObject()) {
+		embed.gif_url = gifvUrl(embed, eObj["video"]);
+	}
 	if (eObj.HasMember("fields") && eObj["fields"].IsArray()) {
 		const rapidjson::Value &fields = eObj["fields"];
 		for (rapidjson::SizeType f = 0; f < fields.Size() && f < 10; f++) {
@@ -2366,6 +2413,15 @@ Embed DiscordClient::parseEmbedObject(const rapidjson::Value &eObj) {
 			field.isInline = fObj.HasMember("inline") && fObj["inline"].IsBool() ? fObj["inline"].GetBool() : false;
 			embed.fields.push_back(field);
 		}
+	}
+	// A gifv shows as the GIF alone, so any text it carries would only bring the frame back.
+	if (embed.isBareGif()) {
+		embed.title.clear();
+		embed.description.clear();
+		embed.author_name.clear();
+		embed.footer_text.clear();
+		embed.provider_name.clear();
+		embed.fields.clear();
 	}
 	return embed;
 }
@@ -2380,6 +2436,9 @@ Attachment DiscordClient::parseAttachmentObject(const rapidjson::Value &aObj) {
 	attachment.width = Utils::Json::getInt(aObj, "width");
 	attachment.height = Utils::Json::getInt(aObj, "height");
 	attachment.content_type = Utils::Json::getString(aObj, "content_type");
+	if ((size_t)attachment.size > Utils::Image::maxAnimatedBytes() && Utils::Gif::hasGifPath(attachment.proxy_url)) {
+		attachment.proxy_url = withQuery(attachment.proxy_url, "format=jpeg");
+	}
 	return attachment;
 }
 
@@ -2639,7 +2698,7 @@ Message DiscordClient::parseSingleMessage(const rapidjson::Value &d) {
 		}
 	}
 
-	msg.displayContent = UI::MessageUtils::formatMentions(msg.content, msg);
+	msg.displayContent = UI::MessageUtils::buildDisplayContent(msg);
 
 	for (auto &embed : msg.embeds) {
 		if (!embed.description.empty()) {

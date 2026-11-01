@@ -167,10 +167,15 @@ struct Embed {
 	std::string thumbnail_proxy_url;
 	int thumbnail_width = 0;
 	int thumbnail_height = 0;
+	std::string gif_url;
 	std::string provider_name;
 	std::string type;
 	std::string timestamp;
 	std::vector<EmbedField> fields;
+
+	bool isBareGif() const {
+		return type == "gifv" && !(gif_url.empty() && thumbnail_url.empty() && image_url.empty());
+	}
 };
 
 struct Attachment {

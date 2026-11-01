@@ -1,13 +1,44 @@
 #include "ui/image_manager.h"
 #include "log.h"
 #include "network/network_manager.h"
+#include "utils/gif_decoder.h"
 #include "utils/image_utils.h"
 #include "utils/redraw.h"
 #include "utils/system_utils.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace UI {
+
+namespace {
+
+constexpr size_t ANIMATION_STACK = 8 * 1024;
+constexpr s64 ANIMATION_POLL_NS = 16 * 1000000LL;
+
+// GIFs often run faster than the screen is worth redrawing for. Frames are
+// still decoded on time, so playback speed does not change.
+int minFrameMs() {
+	static const int ms = Utils::System::isNew3DS() ? 33 : 66;
+	return ms;
+}
+
+bool isDiscordMedia(const std::string &url) {
+	return url.find("cdn.discordapp.com") != std::string::npos ||
+	       url.find("media.discordapp.net") != std::string::npos || url.find("images-ext-") != std::string::npos;
+}
+
+} // namespace
+
+struct ImageManager::Animation {
+	Animation(std::string body, int maxDim) : gif(std::move(body), maxDim) {}
+
+	Utils::Gif::Decoder gif;
+	C3D_Tex *tex = nullptr;
+	u64 dueAt = 0;
+	std::atomic<bool> frameReady{false};
+	std::atomic<bool> drawn{false};
+};
 
 ImageManager &ImageManager::getInstance() {
 	static ImageManager instance;
@@ -30,6 +61,10 @@ void ImageManager::init() {
 		stopDecoder = false;
 		decoderThread.start([this] { decoderWorker(); }, 3, 32 * 1024, true);
 	}
+	if (!animationThread.joinable()) {
+		stopAnimation = false;
+		animationThread.start([this] { animationWorker(); }, 3, ANIMATION_STACK, true);
+	}
 }
 
 void ImageManager::shutdown() {
@@ -46,6 +81,14 @@ void ImageManager::shutdown() {
 		std::lock_guard<std::mutex> lock(decodeMutex);
 		jobQueue.clear();
 	}
+	{
+		std::lock_guard<std::mutex> lock(animationMutex);
+		stopAnimation = true;
+	}
+	animationCv.notify_all();
+	if (animationThread.joinable()) {
+		animationThread.join();
+	}
 
 	clear();
 }
@@ -53,14 +96,12 @@ void ImageManager::shutdown() {
 void ImageManager::clear() {
 	std::lock_guard<std::mutex> lock(cacheMutex);
 	for (auto &pair : textureCache) {
-		if (pair.second.tex) {
-			C3D_TexDelete(pair.second.tex);
-			free(pair.second.tex);
-		}
+		releaseTexture(pair.second);
 	}
 	textureCache.clear();
 	lruList.clear();
 	fetchingUrls.clear();
+	stillFallback.clear();
 	freePendingLocked();
 	currentCacheBytes = 0;
 	{
@@ -68,6 +109,17 @@ void ImageManager::clear() {
 		decodeQueue.clear();
 	}
 	currentSessionId++;
+}
+
+void ImageManager::releaseTexture(const ImageInfo &info) {
+	if (info.animation) {
+		std::lock_guard<std::mutex> lock(animationMutex);
+		animations.erase(std::remove(animations.begin(), animations.end(), info.animation), animations.end());
+	}
+	if (info.tex) {
+		C3D_TexDelete(info.tex);
+		free(info.tex);
+	}
 }
 
 void ImageManager::freePendingLocked() {
@@ -101,10 +153,7 @@ void ImageManager::evictOldest() {
 	auto it = textureCache.find(url);
 	if (it != textureCache.end()) {
 		currentCacheBytes -= it->second.vramSize;
-		if (it->second.tex) {
-			C3D_TexDelete(it->second.tex);
-			free(it->second.tex);
-		}
+		releaseTexture(it->second);
 		textureCache.erase(it);
 	}
 }
@@ -124,10 +173,7 @@ void ImageManager::clearRemote() {
 	for (auto it = textureCache.begin(); it != textureCache.end();) {
 		if (it->first.find("http") == 0) {
 			currentCacheBytes -= it->second.vramSize;
-			if (it->second.tex) {
-				C3D_TexDelete(it->second.tex);
-				free(it->second.tex);
-			}
+			releaseTexture(it->second);
 			it = textureCache.erase(it);
 		} else {
 			++it;
@@ -235,6 +281,7 @@ void ImageManager::prefetch(const std::string &url, int origW, int origH, Networ
 	if (url.empty()) {
 		return;
 	}
+	bool animated;
 	{
 		std::lock_guard<std::mutex> lock(cacheMutex);
 		auto it = textureCache.find(url);
@@ -249,6 +296,8 @@ void ImageManager::prefetch(const std::string &url, int origW, int origH, Networ
 		}
 
 		fetchingUrls.insert(url);
+		animated =
+		    !stillFallback.count(url) && (Utils::Gif::hasGifPath(url) || url.find("format=gif") != std::string::npos);
 	}
 
 	std::string optimizedUrl = url;
@@ -260,8 +309,8 @@ void ImageManager::prefetch(const std::string &url, int origW, int origH, Networ
 
 	if (optimizedUrl.find("media.discordapp.net") != std::string::npos ||
 	    optimizedUrl.find("images-ext-") != std::string::npos) {
-		int targetW = Utils::Image::maxRemoteDim();
-		int targetH = Utils::Image::maxRemoteDim();
+		int targetW = animated ? Utils::Image::maxAnimatedDim() : Utils::Image::maxRemoteDim();
+		int targetH = targetW;
 		if (origW > 0 && origH > 0) {
 			if (origW > targetW || origH > targetH) {
 				if (origW > origH) {
@@ -301,7 +350,7 @@ void ImageManager::prefetch(const std::string &url, int origW, int origH, Networ
 				optimizedUrl += separator + "width=" + std::to_string(targetW) + "&height=" + std::to_string(targetH);
 				separator = "&";
 			}
-			if (optimizedUrl.find("format=") == std::string::npos) {
+			if (!animated && optimizedUrl.find("format=") == std::string::npos) {
 				optimizedUrl += separator + "format=jpeg";
 			}
 		}
@@ -327,6 +376,9 @@ void ImageManager::prefetch(const std::string &url, int origW, int origH, Networ
 		    } else {
 			    Logger::log("[Image] Fetch failed for %s. Status: %d, Body size: %zu", url.c_str(), resp.statusCode,
 			                resp.body.size());
+			    if (retryAsStill(url, priority)) {
+				    return;
+			    }
 			    std::lock_guard<std::mutex> lock(cacheMutex);
 			    ImageInfo info;
 			    info.failed = true;
@@ -334,6 +386,37 @@ void ImageManager::prefetch(const std::string &url, int origW, int origH, Networ
 			    fetchingUrls.erase(url);
 		    }
 	    });
+}
+
+bool ImageManager::retryAsStill(const std::string &url, Network::RequestPriority priority) {
+	if (!isDiscordMedia(url) || !Utils::Gif::hasGifPath(url)) {
+		return false;
+	}
+	{
+		std::lock_guard<std::mutex> lock(cacheMutex);
+		if (!stillFallback.insert(url).second) {
+			return false;
+		}
+		fetchingUrls.erase(url);
+	}
+	prefetch(url, 0, 0, priority);
+	return true;
+}
+
+std::shared_ptr<ImageManager::Animation> ImageManager::decodeGif(std::string body, Utils::Image::TiledData &tiled) {
+	const bool tooLarge = body.size() > Utils::Image::maxAnimatedBytes();
+	auto animation = std::make_shared<Animation>(std::move(body), Utils::Image::maxAnimatedDim());
+	if (!animation->gif.valid()) {
+		return nullptr;
+	}
+
+	const int delayMs = animation->gif.next();
+	tiled = animation->gif.copyPixels();
+	if (tooLarge || animation->gif.frameCount() < 2) {
+		return nullptr;
+	}
+	animation->dueAt = osGetTime() + delayMs;
+	return animation;
 }
 
 void ImageManager::runOnDecoder(std::function<void()> job) {
@@ -380,12 +463,22 @@ void ImageManager::decoderWorker() {
 			continue;
 		}
 
-		Utils::Image::TiledData tiled =
-		    Utils::Image::decodeToTiled((const unsigned char *)req.body.data(), req.body.size());
+		Utils::Image::TiledData tiled;
+		std::shared_ptr<Animation> animation;
+		if (Utils::Gif::isGif(req.body)) {
+			animation = decodeGif(std::move(req.body), tiled);
+		} else {
+			tiled = Utils::Image::decodeToTiled((const unsigned char *)req.body.data(), req.body.size());
+		}
+
+		if (!tiled.pixels && retryAsStill(req.url, req.priority)) {
+			continue;
+		}
 
 		PendingTexture pending;
 		pending.url = req.url;
 		pending.tiled = tiled;
+		pending.animation = std::move(animation);
 		pending.success = (tiled.pixels != nullptr);
 		pending.width = tiled.w;
 		pending.height = tiled.h;
@@ -401,7 +494,71 @@ void ImageManager::decoderWorker() {
 	}
 }
 
+void ImageManager::animationWorker() {
+	const auto waitingForFrame = [](const std::shared_ptr<Animation> &animation) {
+		return animation->drawn && !animation->frameReady;
+	};
+
+	while (true) {
+		std::vector<std::shared_ptr<Animation>> playing;
+		{
+			std::unique_lock<std::mutex> lock(animationMutex);
+			animationCv.wait(lock, [&] {
+				return stopAnimation || std::any_of(animations.begin(), animations.end(), waitingForFrame);
+			});
+			if (stopAnimation) {
+				return;
+			}
+			playing = animations;
+		}
+
+		const u64 now = osGetTime();
+		for (const auto &animation : playing) {
+			if (!waitingForFrame(animation) || now < animation->dueAt) {
+				continue;
+			}
+
+			int shownMs = 0;
+			do {
+				shownMs += animation->gif.next();
+			} while (shownMs < minFrameMs());
+
+			animation->dueAt = std::max(animation->dueAt + shownMs, now);
+			animation->frameReady = true;
+		}
+		svcSleepThread(ANIMATION_POLL_NS);
+	}
+}
+
+void ImageManager::uploadAnimationFrames() {
+	std::lock_guard<std::mutex> lock(animationMutex);
+	for (const auto &animation : animations) {
+		if (!animation->frameReady) {
+			continue;
+		}
+		memcpy(animation->tex->data, animation->gif.pixels(), animation->gif.pixelBytes());
+		GSPGPU_FlushDataCache(animation->tex->data, animation->gif.pixelBytes());
+
+		animation->drawn = false;
+		animation->frameReady = false;
+		Utils::requestRedraw();
+	}
+}
+
+void ImageManager::markDrawn(const ImageInfo &info) {
+	if (!info.animation || info.animation->drawn) {
+		return;
+	}
+	{
+		std::lock_guard<std::mutex> lock(animationMutex);
+		info.animation->drawn = true;
+	}
+	animationCv.notify_one();
+}
+
 void ImageManager::update() {
+	uploadAnimationFrames();
+
 	PendingTexture p;
 	{
 		std::lock_guard<std::mutex> lock(cacheMutex);
@@ -414,10 +571,11 @@ void ImageManager::update() {
 	pendingCv.notify_one();
 
 	bool decoded = p.success && p.tiled.pixels;
+	const size_t imageBytes = p.tiled.vramSize + (p.animation ? p.animation->gif.memoryBytes() : 0);
 
 	if (decoded) {
 		std::lock_guard<std::mutex> lock(cacheMutex);
-		while (currentCacheBytes + p.tiled.vramSize > getCacheBudget() && !lruList.empty()) {
+		while (currentCacheBytes + imageBytes > getCacheBudget() && !lruList.empty()) {
 			evictOldest();
 		}
 	}
@@ -438,7 +596,13 @@ void ImageManager::update() {
 			info.tex = tex;
 			info.originalW = p.width;
 			info.originalH = p.height;
-			info.vramSize = p.tiled.vramSize;
+			info.vramSize = imageBytes;
+			if (p.animation) {
+				p.animation->tex = tex;
+				info.animation = p.animation;
+				std::lock_guard<std::mutex> lock(animationMutex);
+				animations.push_back(p.animation);
+			}
 		} else {
 			info.failed = true;
 			Logger::log("[Image] C3D_TexInit completely failed for %s", p.url.c_str());

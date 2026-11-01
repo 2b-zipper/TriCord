@@ -30,15 +30,39 @@ EmbedLayout getEmbedLayout(const Discord::Embed &embed, float maxWidth) {
 	EmbedLayout l;
 	l.hasImage = !embed.image_url.empty();
 	l.hasThumbnail = !embed.thumbnail_url.empty();
+	l.hasMedia = l.hasImage || l.hasThumbnail || !embed.gif_url.empty();
 	l.isLargeThumbnail = (l.hasThumbnail && embed.thumbnail_width >= 160 &&
 	                      (float)embed.thumbnail_width > (float)embed.thumbnail_height * 1.2f);
 	l.isMedia = (embed.type == "image" || embed.type == "gifv" || embed.type == "video" || embed.type == "article" ||
 	             l.isLargeThumbnail);
 	l.isSimpleMedia = l.isMedia && embed.title.empty() && embed.description.empty() && embed.fields.empty() &&
-	                  embed.author_name.empty() && (l.hasImage || l.hasThumbnail);
+	                  embed.author_name.empty() && l.hasMedia;
 	l.showThumbnailOnRight = !l.isSimpleMedia && l.hasThumbnail && !l.isMedia;
 	l.pixelWidth = maxWidth - (l.showThumbnailOnRight ? 76.0f : 16.0f);
 	return l;
+}
+
+std::string embedMediaUrl(const Discord::Embed &embed, const EmbedLayout &layout) {
+	const bool hasStill = layout.hasImage || layout.hasThumbnail;
+	if (!embed.gif_url.empty() && (!hasStill || !UI::ImageManager::getInstance().getImageInfo(embed.gif_url).failed)) {
+		return embed.gif_url;
+	}
+	if (layout.hasImage) {
+		return embed.image_proxy_url.empty() ? embed.image_url : embed.image_proxy_url;
+	}
+	return embed.thumbnail_proxy_url.empty() ? embed.thumbnail_url : embed.thumbnail_proxy_url;
+}
+
+bool isImageAttachment(const Discord::Attachment &attach) {
+	return attach.content_type.find("image/") != std::string::npos ||
+	       attach.filename.find(".png") != std::string::npos || attach.filename.find(".jpg") != std::string::npos ||
+	       attach.filename.find(".jpeg") != std::string::npos || attach.filename.find(".gif") != std::string::npos;
+}
+
+void markDrawnIfVisible(const UI::ImageManager::ImageInfo &info, float y, float height) {
+	if (y + height > 0.0f && y < 240.0f) {
+		UI::ImageManager::getInstance().markDrawn(info);
+	}
 }
 
 } // namespace
@@ -503,7 +527,7 @@ void MessageScreen::update() {
 						for (auto &msg : messages) {
 							if (msg.id == editId) {
 								msg.content = res.text;
-								msg.displayContent = UI::MessageUtils::formatMentions(res.text, msg);
+								msg.displayContent = UI::MessageUtils::buildDisplayContent(msg);
 								break;
 							}
 						}
@@ -535,6 +559,9 @@ void MessageScreen::update() {
 						ImageManager::getInstance().prefetch(url);
 					}
 					for (const auto &embed : msg.embeds) {
+						if (!embed.gif_url.empty()) {
+							ImageManager::getInstance().clearFailed(embed.gif_url);
+						}
 						if (!embed.image_url.empty()) {
 							ImageManager::getInstance().clearFailed(embed.image_url);
 							if (!embed.image_proxy_url.empty()) {
@@ -809,12 +836,7 @@ float MessageScreen::calculateMessageHeight(const Discord::Message &msg, bool sh
 
 		if (!msg.attachments.empty()) {
 			for (const auto &attach : msg.attachments) {
-				bool isImage = attach.content_type.find("image/") != std::string::npos ||
-				               attach.filename.find(".png") != std::string::npos ||
-				               attach.filename.find(".jpg") != std::string::npos ||
-				               attach.filename.find(".jpeg") != std::string::npos;
-
-				if (isImage) {
+				if (isImageAttachment(attach)) {
 					float mediaMaxWidth = std::min(maxWidth - 42.0f - 10.0f, 330.0f);
 					float maxHeight = 260.0f;
 					float drawW = mediaMaxWidth;
@@ -1309,10 +1331,7 @@ float MessageScreen::drawAttachments(const Discord::Message &msg, float x, float
 
 	float newY = y;
 	for (const auto &attach : msg.attachments) {
-		if (attach.content_type.find("image/") != std::string::npos ||
-		    attach.filename.find(".png") != std::string::npos || attach.filename.find(".jpg") != std::string::npos ||
-		    attach.filename.find(".jpeg") != std::string::npos) {
-
+		if (isImageAttachment(attach)) {
 			float mediaMaxWidth = std::min(maxWidth, 330.0f);
 			float maxHeight = 260.0f;
 			float drawW = mediaMaxWidth;
@@ -1370,6 +1389,7 @@ float MessageScreen::drawAttachments(const Discord::Message &msg, float x, float
 
 				const C2D_Image img = {info.tex, &subtex};
 				C2D_DrawImageAt(img, x, newY, 0.5f, nullptr, drawW / info.originalW, drawH / info.originalH);
+				markDrawnIfVisible(info, newY, drawH);
 				newY += drawH + 4.0f;
 			} else if (info.failed) {
 				u32 errorBg = (Config::getInstance().getThemeType() == 1) ? C2D_Color32(255, 235, 235, 255)
@@ -1426,6 +1446,7 @@ float MessageScreen::drawStickers(const Discord::Message &msg, float x, float y,
 			Tex3DS_SubTexture subtex = {(u16)info.originalW, (u16)info.originalH, 0.0f, 1.0f, uMax, 1.0f - vMax};
 			const C2D_Image img = {info.tex, &subtex};
 			C2D_DrawImageAt(img, x, newY, 0.5f, nullptr, stickerSize / info.originalW, stickerSize / info.originalH);
+			markDrawnIfVisible(info, newY, stickerSize);
 			newY += stickerSize + 4.0f;
 		} else if (info.failed) {
 			u32 stickerBg = (Config::getInstance().getThemeType() == 1) ? C2D_Color32(255, 235, 235, 255)
@@ -2381,7 +2402,7 @@ Discord::Message MessageScreen::createOptimisticMessage(const std::string &conte
 	msg.id = "pending_" + std::to_string(osGetTime());
 	msg.nonce = msg.id;
 	msg.content = content;
-	msg.displayContent = UI::MessageUtils::formatMentions(content, msg);
+	msg.displayContent = UI::MessageUtils::buildDisplayContent(msg);
 	msg.channelId = channelId;
 	msg.author = Discord::DiscordClient::getInstance().getCurrentUser();
 	msg.timestamp = TR("message.status.sending");
@@ -2603,9 +2624,7 @@ void MessageScreen::buildMessageCache(const Discord::Message &msg, MessageRender
 	}
 
 	for (const auto &attach : msg.attachments) {
-		if (attach.content_type.find("image/") != std::string::npos ||
-		    attach.filename.find(".png") != std::string::npos || attach.filename.find(".jpg") != std::string::npos ||
-		    attach.filename.find(".jpeg") != std::string::npos) {
+		if (isImageAttachment(attach)) {
 			cache.dependsOnImages = true;
 			break;
 		}
@@ -2617,7 +2636,7 @@ void MessageScreen::buildMessageCache(const Discord::Message &msg, MessageRender
 		eCache.layout = getEmbedLayout(embed, maxW);
 		eCache.height = calculateEmbedHeight(embed, maxW);
 
-		if (eCache.layout.hasImage || eCache.layout.hasThumbnail) {
+		if (eCache.layout.hasMedia) {
 			cache.dependsOnImages = true;
 		}
 
@@ -2820,7 +2839,8 @@ void MessageScreen::renderMenu() {
 
 float MessageScreen::calculateEmbedHeight(const Discord::Embed &embed, float maxWidth) {
 	std::string keyStr = embed.title + "|" + embed.description + "|" + embed.author_name + "|" + embed.image_url + "|" +
-	                     embed.thumbnail_url + "|" + embed.footer_text + "|" + std::to_string((int)maxWidth);
+	                     embed.thumbnail_url + "|" + embed.gif_url + "|" + embed.footer_text + "|" +
+	                     std::to_string((int)maxWidth);
 	for (const auto &f : embed.fields) {
 		keyStr += "|" + f.name + "|" + f.value;
 	}
@@ -2833,11 +2853,8 @@ float MessageScreen::calculateEmbedHeight(const Discord::Embed &embed, float max
 	EmbedLayout layout = getEmbedLayout(embed, maxWidth);
 
 	ImageManager::ImageInfo mediaInfo;
-	if (layout.hasImage || layout.hasThumbnail) {
-		std::string mediaUrl =
-		    layout.hasImage ? (embed.image_proxy_url.empty() ? embed.image_url : embed.image_proxy_url)
-		                    : (embed.thumbnail_proxy_url.empty() ? embed.thumbnail_url : embed.thumbnail_proxy_url);
-		mediaInfo = ImageManager::getInstance().getImageInfo(mediaUrl);
+	if (layout.hasMedia) {
+		mediaInfo = ImageManager::getInstance().getImageInfo(embedMediaUrl(embed, layout));
 	}
 
 	float h = layout.isSimpleMedia ? 0.0f : 10.0f;
@@ -2875,7 +2892,7 @@ float MessageScreen::calculateEmbedHeight(const Discord::Embed &embed, float max
 		h = std::max(h, 72.0f);
 	}
 
-	if (layout.hasImage || (layout.isMedia && layout.hasThumbnail)) {
+	if (layout.hasImage || (layout.isMedia && layout.hasMedia)) {
 		int imgW = layout.hasImage ? embed.image_width : embed.thumbnail_width;
 		int imgH = layout.hasImage ? embed.image_height : embed.thumbnail_height;
 		if (mediaInfo.tex) {
@@ -3015,10 +3032,8 @@ float MessageScreen::renderEmbed(const Discord::Embed &embed, float x, float y, 
 		}
 	}
 
-	if (layout.hasImage || (layout.isMedia && layout.hasThumbnail)) {
-		std::string mediaUrl =
-		    layout.hasImage ? (!embed.image_proxy_url.empty() ? embed.image_proxy_url : embed.image_url)
-		                    : (!embed.thumbnail_proxy_url.empty() ? embed.thumbnail_proxy_url : embed.thumbnail_url);
+	if (layout.hasImage || (layout.isMedia && layout.hasMedia)) {
+		std::string mediaUrl = embedMediaUrl(embed, layout);
 		int imgW = layout.hasImage ? embed.image_width : embed.thumbnail_width;
 		int imgH = layout.hasImage ? embed.image_height : embed.thumbnail_height;
 		auto info = ImageManager::getInstance().getImageInfo(mediaUrl);
@@ -3053,6 +3068,7 @@ float MessageScreen::renderEmbed(const Discord::Embed &embed, float x, float y, 
 			Tex3DS_SubTexture subtex = {(u16)info.originalW, (u16)info.originalH, 0.0f, 1.0f, uMax, 1.0f - vMax};
 			C2D_Image img = {info.tex, &subtex};
 			C2D_DrawImageAt(img, textX, currentY, 0.49f, nullptr, drawW / info.originalW, drawH / info.originalH);
+			markDrawnIfVisible(info, currentY, drawH);
 		} else if (info.failed) {
 			u32 errorBg = C2D_Color32(60, 40, 40, 255);
 			C2D_DrawRectSolid(textX, currentY, 0.49f, drawW, drawH, errorBg);

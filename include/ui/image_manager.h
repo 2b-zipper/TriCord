@@ -10,10 +10,12 @@
 #include <functional>
 #include <list>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace UI {
 
@@ -24,12 +26,15 @@ class ImageManager {
 	void init();
 	void shutdown();
 
+	struct Animation;
+
 	struct ImageInfo {
 		C3D_Tex *tex = nullptr;
 		int originalW = 0;
 		int originalH = 0;
 		size_t vramSize = 0;
 		bool failed = false;
+		std::shared_ptr<Animation> animation;
 	};
 
 	C3D_Tex *getImage(const std::string &url);
@@ -41,6 +46,10 @@ class ImageManager {
 	              Network::RequestPriority priority = Network::RequestPriority::BACKGROUND);
 
 	void update();
+
+	// A frame only advances once the previous one reached the screen, which is
+	// what stops a GIF that has scrolled away.
+	void markDrawn(const ImageInfo &info);
 
 	void runOnDecoder(std::function<void()> job);
 
@@ -61,6 +70,7 @@ class ImageManager {
 		std::string url;
 		C3D_Tex *tex = nullptr;
 		Utils::Image::TiledData tiled;
+		std::shared_ptr<Animation> animation;
 		int width = 0;
 		int height = 0;
 		bool success = false;
@@ -76,6 +86,7 @@ class ImageManager {
 	std::map<std::string, ImageInfo, std::less<>> textureCache;
 	std::list<std::string> lruList;
 	std::set<std::string> fetchingUrls;
+	std::set<std::string> stillFallback;
 	std::deque<PendingTexture> pendingTextures;
 	std::deque<DecodeRequest> decodeQueue;
 	// clear() must not drop these.
@@ -88,6 +99,12 @@ class ImageManager {
 	Utils::WorkerThread decoderThread;
 	std::atomic<bool> stopDecoder{false};
 
+	std::vector<std::shared_ptr<Animation>> animations;
+	std::mutex animationMutex;
+	std::condition_variable animationCv;
+	Utils::WorkerThread animationThread;
+	bool stopAnimation = false;
+
 	std::atomic<int> currentSessionId{0};
 	std::atomic<uint32_t> generation{0};
 
@@ -96,8 +113,13 @@ class ImageManager {
 	size_t currentCacheBytes = 0;
 	void touchImage(const std::string &url);
 	void evictOldest();
+	void releaseTexture(const ImageInfo &info);
 	void freePendingLocked();
+	bool retryAsStill(const std::string &url, Network::RequestPriority priority);
+	std::shared_ptr<Animation> decodeGif(std::string body, Utils::Image::TiledData &tiled);
+	void uploadAnimationFrames();
 	void decoderWorker();
+	void animationWorker();
 };
 
 } // namespace UI

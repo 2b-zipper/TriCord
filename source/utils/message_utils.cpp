@@ -6,6 +6,7 @@
 #include "utils/utf8_utils.h"
 #include "discord/discord_client.h"
 #include <3ds.h>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <ctime>
@@ -722,6 +723,46 @@ std::string formatMentions(const std::string &text, const Discord::Message &msg)
 		i++;
 	}
 	return out;
+}
+
+static std::string hideGifLinks(std::string text, const std::vector<Discord::Embed> &embeds) {
+	constexpr const char *SPACE = " \t\r\n";
+	std::vector<std::string> gifUrls;
+	for (const auto &embed : embeds) {
+		if (embed.isBareGif()) {
+			gifUrls.push_back(embed.url);
+		}
+	}
+	if (gifUrls.empty()) {
+		return text;
+	}
+
+	std::vector<std::pair<size_t, size_t>> links;
+	size_t start = text.find_first_not_of(SPACE);
+	while (start != std::string::npos) {
+		const size_t end = std::min(text.find_first_of(SPACE, start), text.size());
+		if (text.compare(start, 7, "http://") == 0 || text.compare(start, 8, "https://") == 0) {
+			links.emplace_back(start, end);
+		}
+		start = text.find_first_not_of(SPACE, end);
+	}
+
+	// Only a link can produce a gifv, so a lone link is its source even when the embed URL differs.
+	for (auto link = links.rbegin(); link != links.rend(); ++link) {
+		const std::string url = text.substr(link->first, link->second - link->first);
+		if (links.size() == 1 || std::find(gifUrls.begin(), gifUrls.end(), url) != gifUrls.end()) {
+			const size_t next = text.find_first_not_of(SPACE, link->second);
+			text.erase(link->first, (next == std::string::npos ? text.size() : next) - link->first);
+		}
+	}
+
+	const size_t last = text.find_last_not_of(SPACE);
+	text.erase(last == std::string::npos ? 0 : last + 1);
+	return text;
+}
+
+std::string buildDisplayContent(const Discord::Message &msg) {
+	return hideGifLinks(formatMentions(msg.content, msg), msg.embeds);
 }
 
 } // namespace MessageUtils

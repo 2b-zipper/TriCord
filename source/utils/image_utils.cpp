@@ -1,4 +1,6 @@
 #define STB_IMAGE_IMPLEMENTATION
+// stbi__gif_load overflows the 32KB decoder thread stack.
+#define STBI_NO_GIF
 #include "stb_image.h"
 
 #include "utils/image_utils.h"
@@ -19,6 +21,13 @@ static const int mortonTable[] = {0,  1,  4,  5,  16, 17, 20, 21, 2,  3,  6,  7,
 int maxRemoteDim() {
 	static const int dim = System::isNew3DS() ? 512 : 256;
 	return dim;
+}
+
+int maxAnimatedDim() { return std::min(maxRemoteDim(), 320); }
+
+size_t maxAnimatedBytes() {
+	static const size_t bytes = (System::isNew3DS() ? 6 : 3) * 1024 * 1024;
+	return bytes;
 }
 
 TiledData decodeToTiled(const unsigned char *data, size_t size, int maxWidth, int maxHeight, bool noResize,
@@ -196,7 +205,7 @@ C3D_Tex *createTexture(const TiledData &tiled) {
 	if (!tex) {
 		return nullptr;
 	}
-	if (!C3D_TexInit(tex, tiled.p2w, tiled.p2h, GPU_RGBA8)) {
+	if (!C3D_TexInit(tex, tiled.p2w, tiled.p2h, tiled.format)) {
 		free(tex);
 		return nullptr;
 	}
