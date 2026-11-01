@@ -313,6 +313,8 @@ void LoginScreen::renderTop(C3D_RenderTarget *target) {
 	drawRichText(leftX, layoutY + 75.0f, 0.3f, 0.45f, 0.45f, ScreenManager::colorTextMuted(),
 	             Core::I18n::getInstance().get("login.excited"));
 
+	drawText(leftX, layoutY + 125.0f, 0.3f, 0.38f, 0.38f, ScreenManager::colorTextMuted(), TR("login.token_hint"));
+
 	float qrSize = 110.0f;
 	float qrX = 285.0f;
 	float qrY = 45.0f;

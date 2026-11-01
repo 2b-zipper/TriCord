@@ -118,10 +118,6 @@ This is due to the 3DS hardware limitations, so there is nothing I can do about 
 ### I have a question
 Feel free to ask in our [Discord server](https://discord.gg/quYy9fK8tJ).
 
-### I cannot log in with the error "Failed to exchange ticket" or "Login failed: Login failed: 0"
-This appears to be due to SSL verification failing for some reason. In v0.4.0 or later, you can open Settings, press **Y**, and search for `devmode` to temporarily reveal "Developer Options" at the bottom of the list. By toggling **SSL Verification** to **OFF**, you can skip SSL checks and attempt to connect.
->**WARNING:** Disabling SSL verification lowers security and makes you vulnerable to Man-in-the-Middle (MITM) attacks. If you have any security concerns, do not use this option. I do not accept bug reports or provide support for settings within the Developer Options.
-
 ### I found a bug
 Please report it by opening a [GitHub Issue](https://github.com/2b-zipper/TriCord/issues) or by visiting the bug-reports channel in our Discord server.
 

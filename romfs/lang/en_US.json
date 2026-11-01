@@ -105,6 +105,7 @@
     "login.swkbd.email": "Enter Email",
     "login.swkbd.mfa": "Enter MFA Code",
     "login.swkbd.password": "Enter Password",
+    "login.token_hint": "Can't use QR or email?\nSave your token to\nsdmc:/3ds/TriCord/token.txt\nand restart TriCord.",
     "login.waiting_scan": "Waiting for scan...",
     "login.welcome": "Welcome back!",
     "menu.about": "About TriCord",
