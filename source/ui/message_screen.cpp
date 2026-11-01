@@ -11,6 +11,7 @@
 #include "ui/markdown_renderer.h"
 #include "ui/screen_manager.h"
 #include "utils/message_utils.h"
+#include "utils/redraw.h"
 #include "utils/utf8_utils.h"
 #include <3ds.h>
 #include <algorithm>
@@ -80,6 +81,213 @@ float bottomButtonY() {
 bool pollEnded(const Discord::Poll &poll);
 
 static std::unordered_map<std::string, std::string> channelDrafts;
+
+constexpr float BLOCK_GAP = 4.0f;
+constexpr float BLOCK_WIDTH = 400.0f - 42.0f - 10.0f;
+constexpr float BUTTON_H = 20.0f;
+constexpr float BUTTON_PAD = 8.0f;
+constexpr float BUTTON_GAP = 4.0f;
+constexpr float BUTTON_SCALE = 0.4f;
+constexpr float BUTTON_EMOJI = 14.0f;
+constexpr float BUTTON_LINK_ICON = 12.0f;
+constexpr u32 COLOR_NEUTRAL = C2D_Color32(78, 80, 88, 255);
+constexpr float SELECT_H = 22.0f;
+constexpr float EPHEMERAL_NOTE_H = 12.0f;
+constexpr float SELECT_MAX_W = 260.0f;
+constexpr float CONTAINER_PAD = 6.0f;
+constexpr float CONTAINER_BAR = 4.0f;
+constexpr float THUMBNAIL_SIZE = 64.0f;
+constexpr float ACCESSORY_GAP = 6.0f;
+constexpr int PICKER_ROWS = 7;
+constexpr float PICKER_ROW_H = 26.0f;
+constexpr uint64_t INTERACTION_TIMEOUT_MS = 15000;
+
+std::string attachmentUrl(const Discord::Attachment &attach) {
+	return attach.proxy_url.empty() ? attach.url : attach.proxy_url;
+}
+
+void fitAttachment(const Discord::Attachment &attach, const ImageManager::ImageInfo &info, float maxWidth, float &drawW,
+                   float &drawH) {
+	const float mediaMaxWidth = std::min(maxWidth, 330.0f);
+	const float maxHeight = 260.0f;
+
+	int imgW = attach.width;
+	int imgH = attach.height;
+	if (info.tex && (imgW <= 0 || imgH <= 0)) {
+		imgW = info.originalW;
+		imgH = info.originalH;
+	}
+
+	if (imgW > 0 && imgH > 0) {
+		float aspect = (float)imgW / imgH;
+		drawW = std::min((float)imgW, mediaMaxWidth);
+		if (imgW > 160) {
+			drawW = mediaMaxWidth;
+		}
+
+		drawH = drawW / aspect;
+		if (drawH > maxHeight) {
+			drawH = maxHeight;
+			drawW = drawH * aspect;
+		}
+	} else {
+		drawW = std::min(mediaMaxWidth, 160.0f);
+		drawH = drawW * 0.75f;
+	}
+}
+
+float attachmentHeight(const Discord::Attachment &attach, float maxWidth) {
+	if (!isImageAttachment(attach)) {
+		return 12.0f;
+	}
+	float drawW = 0.0f;
+	float drawH = 0.0f;
+	fitAttachment(attach, ImageManager::getInstance().getImageInfo(attachmentUrl(attach)), maxWidth, drawW, drawH);
+	return drawH + 4.0f;
+}
+
+void drawAttachmentImage(const Discord::Attachment &attach, const ImageManager::ImageInfo &info, float x, float y,
+                         float w, float h, bool hidden) {
+	if (hidden) {
+		const std::string label = TR("message.spoiler");
+		C2D_DrawRectSolid(x, y, 0.5f, w, h, COLOR_NEUTRAL);
+		drawText(x + (w - measureText(label, 0.35f, 0.35f)) / 2.0f, y + (h / 2.0f) - 6.0f, 0.5f, 0.35f, 0.35f,
+		         ScreenManager::colorWhite(), label);
+	} else if (info.tex) {
+		float uMax = (float)info.originalW / info.tex->width;
+		float vMax = (float)info.originalH / info.tex->height;
+		Tex3DS_SubTexture subtex = {(u16)info.originalW, (u16)info.originalH, 0.0f, 1.0f, uMax, 1.0f - vMax};
+
+		const C2D_Image img = {info.tex, &subtex};
+		C2D_DrawImageAt(img, x, y, 0.5f, nullptr, w / info.originalW, h / info.originalH);
+		markDrawnIfVisible(info, y, h);
+	} else if (info.failed) {
+		u32 errorBg = (Config::getInstance().getThemeType() == 1) ? C2D_Color32(255, 235, 235, 255)
+		                                                          : C2D_Color32(60, 40, 40, 255);
+		C2D_DrawRectSolid(x, y, 0.5f, w, h, errorBg);
+		drawText(x + 5, y + (h / 2) - 6, 0.5f, 0.3f, 0.3f, ScreenManager::colorError(), TR("message.image_failed"));
+	} else {
+		ImageManager::getInstance().prefetch(attachmentUrl(attach), attach.width, attach.height,
+		                                     Network::RequestPriority::INTERACTIVE);
+
+		C2D_DrawRectSolid(x, y, 0.5f, w, h, ScreenManager::colorBackgroundDark());
+		drawText(x + 5, y + (h / 2) - 6, 0.5f, 0.3f, 0.3f, ScreenManager::colorTextMuted(), TR("common.loading"));
+	}
+}
+
+void drawThumbnail(const Discord::Attachment &attach, float x, float y, bool hidden) {
+	const auto info = ImageManager::getInstance().getImageInfo(attachmentUrl(attach));
+	const int imgW = attach.width > 0 ? attach.width : info.originalW;
+	const int imgH = attach.height > 0 ? attach.height : info.originalH;
+
+	float w = THUMBNAIL_SIZE;
+	float h = THUMBNAIL_SIZE;
+	if (imgW > 0 && imgH > 0) {
+		const float scale = THUMBNAIL_SIZE / std::max(imgW, imgH);
+		w = imgW * scale;
+		h = imgH * scale;
+	}
+	drawAttachmentImage(attach, info, x + THUMBNAIL_SIZE - w, y, w, h, hidden);
+}
+
+void drawReplyArrow(float x, float y) {
+	std::string arrowPath = "romfs:/discord-icons/curve.png";
+	auto arrowInfo = ImageManager::getInstance().getImageInfo(arrowPath);
+	if (!arrowInfo.tex || arrowInfo.failed) {
+		ImageManager::getInstance().getLocalImage(arrowPath, true);
+		arrowInfo = ImageManager::getInstance().getImageInfo(arrowPath);
+	}
+
+	if (arrowInfo.tex) {
+		float iconSize = 8.0f;
+		float uMax = (float)arrowInfo.originalW / arrowInfo.tex->width;
+		float vMax = (float)arrowInfo.originalH / arrowInfo.tex->height;
+		Tex3DS_SubTexture subtex = {(u16)arrowInfo.originalW, (u16)arrowInfo.originalH, 0.0f, 1.0f, uMax, 1.0f - vMax};
+		C2D_Image img = {arrowInfo.tex, &subtex};
+		C2D_DrawImageAt(img, x + 1.0f, y + 2.0f, 0.5f, nullptr, iconSize / arrowInfo.originalW,
+		                iconSize / arrowInfo.originalH);
+	} else {
+		drawText(x, y, 0.5f, 0.35f, 0.35f, ScreenManager::colorTextMuted(), "↳ ");
+	}
+}
+
+void collectControls(std::vector<Discord::MessageBlock> &blocks, std::vector<Discord::MessageControl *> &out) {
+	for (auto &block : blocks) {
+		for (auto &control : block.controls) {
+			out.push_back(&control);
+		}
+		collectControls(block.children, out);
+	}
+}
+
+bool blocksHaveSpoiler(const std::vector<Discord::MessageBlock> &blocks) {
+	for (const auto &block : blocks) {
+		if (block.spoiler || block.text.find("||") != std::string::npos || blocksHaveSpoiler(block.children)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+size_t blocksFingerprint(const std::vector<Discord::MessageBlock> &blocks) {
+	size_t fp = blocks.size();
+	const auto mix = [&fp](size_t v) { fp = fp * 31 + v; };
+	for (const auto &block : blocks) {
+		mix(std::hash<std::string>{}(block.text));
+		mix((size_t)block.kind + block.attachments.size() * 8);
+		for (const auto &control : block.controls) {
+			mix(std::hash<std::string>{}(control.label) + (size_t)control.type);
+		}
+		mix(blocksFingerprint(block.children));
+	}
+	return fp;
+}
+
+bool hasEmoji(const Discord::Emoji &emoji) { return !emoji.name.empty() || !emoji.id.empty(); }
+
+u32 dimmed(u32 color) { return (color & 0x00FFFFFF) | 0x80000000; }
+
+u32 messageHighlight(bool ephemeral, bool selected) {
+	const bool light = Config::getInstance().getThemeType() == 1;
+	if (ephemeral) {
+		if (light) {
+			return selected ? C2D_Color32(232, 240, 255, 255) : C2D_Color32(218, 227, 252, 255);
+		}
+		return selected ? C2D_Color32(55, 62, 98, 255) : C2D_Color32(40, 47, 83, 255);
+	}
+	if (light) {
+		return selected ? C2D_Color32(255, 244, 194, 255) : C2D_Color32(250, 234, 184, 255);
+	}
+	return selected ? C2D_Color32(80, 69, 45, 255) : C2D_Color32(65, 54, 30, 255);
+}
+
+u32 buttonColor(const Discord::MessageControl &control) {
+	if (control.style == Discord::ButtonStyle::PRIMARY) {
+		return ScreenManager::colorAccent();
+	}
+	if (control.style == Discord::ButtonStyle::SUCCESS) {
+		return ScreenManager::colorSuccess();
+	}
+	if (control.style == Discord::ButtonStyle::DANGER) {
+		return ScreenManager::colorError();
+	}
+	return COLOR_NEUTRAL;
+}
+
+std::string buttonLabel(const Discord::MessageControl &control) {
+	return control.style == Discord::ButtonStyle::PREMIUM ? TR("message.premium_button") : control.label;
+}
+
+float buttonWidth(const Discord::MessageControl &control, float maxWidth) {
+	float width = BUTTON_PAD * 2.0f + measureRichText(buttonLabel(control), BUTTON_SCALE, BUTTON_SCALE);
+	if (hasEmoji(control.emoji)) {
+		width += BUTTON_EMOJI + (control.label.empty() ? 0.0f : 3.0f);
+	}
+	if (control.style == Discord::ButtonStyle::LINK) {
+		width += BUTTON_LINK_ICON;
+	}
+	return std::min(width, maxWidth);
+}
 } // namespace
 
 MessageScreen::MessageScreen(const std::string &channelId, const std::string &channelName)
@@ -119,6 +327,8 @@ MessageScreen::~MessageScreen() {
 	Discord::DiscordClient::getInstance().setMessageReactionAddCallback(nullptr);
 	Discord::DiscordClient::getInstance().setMessageReactionRemoveCallback(nullptr);
 	Discord::DiscordClient::getInstance().setPollVoteCallback(nullptr);
+	Discord::DiscordClient::getInstance().setInteractionCallback(nullptr);
+	Discord::DiscordClient::getInstance().setModalCallback(nullptr);
 	Discord::DiscordClient::getInstance().setConnectionCallback(nullptr);
 
 	embedHeightCache.clear();
@@ -215,13 +425,17 @@ void MessageScreen::onEnter() {
 		}
 	});
 
+	client.setInteractionCallback(
+	    [this](const std::string &nonce, Discord::InteractionResult result) { onInteractionResult(nonce, result); });
+	client.setModalCallback([this](const Discord::Modal &m) { onModalCreate(m); });
+
 	client.setConnectionCallback([this]() {
 		Logger::log("[UI] Gateway reconnected, catching up messages...");
 		catchUpMessages();
 	});
 
 	this->truncatedChannelName = getTruncatedRichText(this->channelName, 310.0f - 56.0f, 0.55f, 0.55f);
-	this->messages.clear();
+	this->messages = client.getEphemeralMessages(channelId);
 	targetScrollY = 0.0f;
 	currentScrollY = 0.0f;
 	totalContentHeight = 0.0f;
@@ -274,8 +488,7 @@ void MessageScreen::onEnter() {
 				                          if (!*token) {
 					                          return;
 				                          }
-				                          this->messages = fetched;
-				                          std::reverse(this->messages.begin(), this->messages.end());
+				                          replaceHistory(fetched);
 				                          rebuildLayoutCache();
 				                          scrollToBottom();
 			                          }
@@ -339,6 +552,14 @@ void MessageScreen::update() {
 		rebuildLayoutCache();
 	}
 
+	if (interactionPending && osGetTime() - interactionSentAt > INTERACTION_TIMEOUT_MS) {
+		onInteractionResult(interactionNonce, Discord::InteractionResult::FAILURE);
+	}
+	if (!interactionToast.empty()) {
+		ScreenManager::getInstance().showToast(Core::I18n::getInstance().get(interactionToast));
+		interactionToast.clear();
+	}
+
 	u32 kDown = hidKeysDown();
 	u32 kHeld = hidKeysHeld();
 	u32 kUp = hidKeysUp();
@@ -375,7 +596,9 @@ void MessageScreen::update() {
 					scrollToBottom();
 					handled = true;
 				} else if (isTouched(reactBtnX, btnY, btnW, btnH)) {
-					bottomMode = BottomScreenMode::EMOJI_PICKER;
+					if (!selectedIsEphemeral()) {
+						bottomMode = BottomScreenMode::EMOJI_PICKER;
+					}
 					handled = true;
 				} else if (isCallableChannel() && !isCallActive() && isTouched(callBtnX, btnY, btnW, btnH)) {
 					startCall();
@@ -396,7 +619,7 @@ void MessageScreen::update() {
 		isDraggingBottom = false;
 	}
 
-	if ((kDown & KEY_B) && !isMenuOpen) {
+	if ((kDown & KEY_B) && !isMenuOpen && !picker.open && !modalOpen && linkPopupUrl.empty()) {
 		if (bottomMode == BottomScreenMode::EMOJI_PICKER) {
 			bottomMode = BottomScreenMode::TOPIC;
 			return;
@@ -404,6 +627,11 @@ void MessageScreen::update() {
 
 		if (pollMode) {
 			pollMode = false;
+			return;
+		}
+
+		if (componentMode) {
+			componentMode = false;
 			return;
 		}
 
@@ -418,6 +646,8 @@ void MessageScreen::update() {
 		Discord::DiscordClient::getInstance().setMessageReactionAddCallback(nullptr);
 		Discord::DiscordClient::getInstance().setMessageReactionRemoveCallback(nullptr);
 		Discord::DiscordClient::getInstance().setPollVoteCallback(nullptr);
+		Discord::DiscordClient::getInstance().setInteractionCallback(nullptr);
+		Discord::DiscordClient::getInstance().setModalCallback(nullptr);
 		Discord::DiscordClient::getInstance().setConnectionCallback(nullptr);
 
 		{
@@ -442,6 +672,33 @@ void MessageScreen::update() {
 	if (pollMode && (selectedIndex < 0 || selectedIndex >= (int)this->messages.size() ||
 	                 !this->messages[selectedIndex].hasPoll || pollEnded(this->messages[selectedIndex].poll))) {
 		pollMode = false;
+	}
+
+	if (componentMode) {
+		const auto controls = selectedControls();
+		if (componentIndex >= (int)controls.size() || !canUseControl(*controls[componentIndex])) {
+			componentMode = false;
+			if (!modalOpen) {
+				picker.open = false;
+			}
+		}
+	}
+
+	if (!linkPopupUrl.empty()) {
+		if (kDown & (KEY_A | KEY_B)) {
+			linkPopupUrl.clear();
+		}
+		return;
+	}
+
+	if (picker.open) {
+		updateSelectPicker(kDown, kHeld);
+		return;
+	}
+
+	if (modalOpen) {
+		updateModal(kDown, kHeld, updateLock);
+		return;
 	}
 
 	if (isMenuOpen) {
@@ -476,6 +733,8 @@ void MessageScreen::update() {
 						revealedSpoilers.insert(id);
 					}
 				}
+			} else if (action == "React") {
+				bottomMode = BottomScreenMode::EMOJI_PICKER;
 			} else if (action == "Reply") {
 				if (selectedIndex >= 0 && selectedIndex < (int)messages.size()) {
 					std::string targetMsgId = messages[selectedIndex].id;
@@ -537,12 +796,14 @@ void MessageScreen::update() {
 				if (selectedIndex >= 0 && selectedIndex < (int)messages.size()) {
 					std::string mid = this->messages[selectedIndex].id;
 					if (Discord::DiscordClient::getInstance().deleteMessage(channelId, mid)) {
-						this->messages.erase(this->messages.begin() + selectedIndex);
-						if (selectedIndex >= (int)this->messages.size()) {
-							selectedIndex = std::max(0, (int)this->messages.size() - 1);
-						}
-						rebuildLayoutCache();
+						removeSelectedMessage();
 					}
+				}
+			} else if (action == "Dismiss") {
+				if (selectedIndex >= 0 && selectedIndex < (int)messages.size()) {
+					Discord::DiscordClient::getInstance().forgetEphemeralMessage(channelId,
+					                                                             this->messages[selectedIndex].id);
+					removeSelectedMessage();
 				}
 			} else if (action == "Retry") {
 				if (selectedIndex >= 0 && selectedIndex < (int)messages.size()) {
@@ -607,6 +868,18 @@ void MessageScreen::update() {
 		isManualScrolling = false;
 	}
 
+	if (componentMode && componentCursorHeight > 0.0f) {
+		const float topLimit = 28.0f;
+		const float bottomLimit = 232.0f;
+		const float cursorTop = componentCursorTop - targetScrollY;
+		if (cursorTop < topLimit) {
+			targetScrollY = componentCursorTop - topLimit;
+		} else if (cursorTop + componentCursorHeight > bottomLimit) {
+			targetScrollY = componentCursorTop + componentCursorHeight - bottomLimit;
+		}
+		targetScrollY = std::clamp(targetScrollY, 0.0f, std::max(0.0f, totalContentHeight - 240.0f));
+	}
+
 	float scrollSpeed = 0.5f;
 	currentScrollY += (targetScrollY - currentScrollY) * scrollSpeed;
 	if (std::fabs(targetScrollY - currentScrollY) < 0.5f) {
@@ -660,6 +933,16 @@ void MessageScreen::update() {
 			if (answerCount > 0) {
 				pollAnswerIndex += shouldMoveDown ? 1 : -1;
 				pollAnswerIndex = std::clamp(pollAnswerIndex, 0, answerCount - 1);
+			}
+			shouldMoveDown = false;
+			shouldMoveUp = false;
+		}
+
+		if (componentMode) {
+			if (shouldMoveDown || (kDown & KEY_RIGHT)) {
+				moveComponentCursor(1);
+			} else if (shouldMoveUp || (kDown & KEY_LEFT)) {
+				moveComponentCursor(-1);
 			}
 			shouldMoveDown = false;
 			shouldMoveUp = false;
@@ -724,12 +1007,19 @@ void MessageScreen::update() {
 				} else if (pollMode) {
 					submitPollVote(pollAnswerIndex);
 					return;
+				} else if (componentMode) {
+					activateControl();
+					return;
 				} else if (msg.hasPoll && !msg.poll.answers.empty() && !pollEnded(msg.poll)) {
 					pollMode = true;
 					pollAnswerIndex = 0;
 					return;
+				} else if (enterComponentMode()) {
+					return;
 				} else {
-					bottomMode = BottomScreenMode::EMOJI_PICKER;
+					if (!selectedIsEphemeral()) {
+						bottomMode = BottomScreenMode::EMOJI_PICKER;
+					}
 					return;
 				}
 			}
@@ -753,6 +1043,7 @@ void MessageScreen::update() {
 		float maxScroll = std::max(0.0f, totalContentHeight - SCREEN_HEIGHT);
 		if (currentScrollY >= maxScroll - 5.0f) {
 			showNewMessageIndicator = false;
+			newMessageCount = 0;
 		}
 	}
 
@@ -795,7 +1086,7 @@ float MessageScreen::calculateMessageHeight(const Discord::Message &msg, bool sh
 			totalH += 26.0f;
 		}
 	} else {
-		if (msg.type == 19 && !msg.referencedAuthorName.empty()) {
+		if (msg.showsReplyPreview() || msg.showsCommandLine()) {
 			totalH += 12.0f;
 		}
 
@@ -834,44 +1125,9 @@ float MessageScreen::calculateMessageHeight(const Discord::Message &msg, bool sh
 			}
 		}
 
-		if (!msg.attachments.empty()) {
+		if (!msg.isComponentsV2()) {
 			for (const auto &attach : msg.attachments) {
-				if (isImageAttachment(attach)) {
-					float mediaMaxWidth = std::min(maxWidth - 42.0f - 10.0f, 330.0f);
-					float maxHeight = 260.0f;
-					float drawW = mediaMaxWidth;
-					float drawH = 100.0f;
-
-					std::string imageUrl = attach.proxy_url.empty() ? attach.url : attach.proxy_url;
-					auto info = ImageManager::getInstance().getImageInfo(imageUrl);
-
-					int imgW = attach.width;
-					int imgH = attach.height;
-					if (info.tex && (imgW <= 0 || imgH <= 0)) {
-						imgW = info.originalW;
-						imgH = info.originalH;
-					}
-
-					if (imgW > 0 && imgH > 0) {
-						float aspect = (float)imgW / imgH;
-						drawW = std::min((float)imgW, mediaMaxWidth);
-						if (imgW > 160) {
-							drawW = mediaMaxWidth;
-						}
-
-						drawH = drawW / aspect;
-						if (drawH > maxHeight) {
-							drawH = maxHeight;
-							drawW = drawH * aspect;
-						}
-					} else {
-						drawW = std::min(mediaMaxWidth, 160.0f);
-						drawH = drawW * 0.75f;
-					}
-					totalH += drawH + 4.0f;
-				} else {
-					totalH += 12.0f;
-				}
+				totalH += attachmentHeight(attach, maxWidth - 42.0f - 10.0f);
 			}
 		}
 
@@ -884,6 +1140,15 @@ float MessageScreen::calculateMessageHeight(const Discord::Message &msg, bool sh
 					totalH += 100.0f + 4.0f;
 				}
 			}
+		}
+
+		if (!msg.blocks.empty()) {
+			BlockPass pass{msg};
+			totalH += layoutBlocks(msg.blocks, 0.0f, 0.0f, BLOCK_WIDTH, pass) + 4.0f;
+		}
+
+		if (msg.isEphemeral()) {
+			totalH += EPHEMERAL_NOTE_H;
 		}
 	}
 
@@ -1109,15 +1374,8 @@ float MessageScreen::drawSystemMessage(const Discord::Message &msg, float y, flo
 }
 
 float MessageScreen::drawReplyPreview(const Discord::Message &msg, float x, float y) {
-	if (msg.type != 19 || msg.referencedAuthorName.empty()) {
+	if (!msg.showsReplyPreview()) {
 		return y;
-	}
-
-	std::string arrowPath = "romfs:/discord-icons/curve.png";
-	auto arrowInfo = ImageManager::getInstance().getImageInfo(arrowPath);
-	if (!arrowInfo.tex || arrowInfo.failed) {
-		ImageManager::getInstance().getLocalImage(arrowPath, true);
-		arrowInfo = ImageManager::getInstance().getImageInfo(arrowPath);
 	}
 
 	std::string author =
@@ -1145,17 +1403,7 @@ float MessageScreen::drawReplyPreview(const Discord::Message &msg, float x, floa
 
 	float curX = x;
 
-	if (arrowInfo.tex) {
-		float iconSize = 8.0f;
-		float uMax = (float)arrowInfo.originalW / arrowInfo.tex->width;
-		float vMax = (float)arrowInfo.originalH / arrowInfo.tex->height;
-		Tex3DS_SubTexture subtex = {(u16)arrowInfo.originalW, (u16)arrowInfo.originalH, 0.0f, 1.0f, uMax, 1.0f - vMax};
-		C2D_Image img = {arrowInfo.tex, &subtex};
-		C2D_DrawImageAt(img, curX + 1.0f, y + 2.0f, 0.5f, nullptr, iconSize / arrowInfo.originalW,
-		                iconSize / arrowInfo.originalH);
-	} else {
-		drawText(curX, y, 0.5f, 0.35f, 0.35f, ScreenManager::colorTextMuted(), "↳ ");
-	}
+	drawReplyArrow(curX, y);
 	curX += prefixW;
 
 	u32 authorColor = ScreenManager::colorTextMuted();
@@ -1170,6 +1418,19 @@ float MessageScreen::drawReplyPreview(const Discord::Message &msg, float x, floa
 	curX += colonW;
 
 	drawRichText(curX, y, 0.5f, 0.35f, 0.35f, ScreenManager::colorTextMuted(), replyContent);
+	return y + 12.0f;
+}
+
+float MessageScreen::drawCommandLine(const Discord::Message &msg, float x, float y) {
+	if (!msg.showsCommandLine()) {
+		return y;
+	}
+
+	const float prefixW = 12.0f;
+	const std::string text = Core::I18n::format(TR("message.used_command"), msg.interactionUser, msg.interactionName);
+	drawReplyArrow(x, y);
+	drawRichText(x + prefixW, y, 0.5f, 0.35f, 0.35f, ScreenManager::colorTextMuted(),
+	             getTruncatedRichText(text, 310.0f - x - prefixW, 0.35f, 0.35f));
 	return y + 12.0f;
 }
 
@@ -1325,96 +1586,38 @@ float MessageScreen::drawMessageContent(const Discord::Message &msg, float x, fl
 }
 
 float MessageScreen::drawAttachments(const Discord::Message &msg, float x, float y, float maxWidth) {
-	if (msg.attachments.empty()) {
+	if (msg.isComponentsV2()) {
 		return y;
 	}
 
+	const bool revealed = revealedSpoilers.count(msg.id) > 0;
 	float newY = y;
 	for (const auto &attach : msg.attachments) {
-		if (isImageAttachment(attach)) {
-			float mediaMaxWidth = std::min(maxWidth, 330.0f);
-			float maxHeight = 260.0f;
-			float drawW = mediaMaxWidth;
-			float drawH = 100.0f;
-
-			int imgW = attach.width;
-			int imgH = attach.height;
-
-			if (imgW > 0 && imgH > 0) {
-				float aspect = (float)imgW / imgH;
-				drawW = std::min((float)imgW, mediaMaxWidth);
-				if (imgW > 160) {
-					drawW = mediaMaxWidth;
-				}
-
-				drawH = drawW / aspect;
-				if (drawH > maxHeight) {
-					drawH = maxHeight;
-					drawW = drawH * aspect;
-				}
-			} else {
-				drawW = std::min(mediaMaxWidth, 160.0f);
-				drawH = drawW * 0.75f;
-			}
-
-			if (newY + drawH < -30.0f || newY > 240.0f + 10.0f) {
-				newY += drawH + 4.0f;
-				continue;
-			}
-
-			std::string imageUrl = attach.proxy_url.empty() ? attach.url : attach.proxy_url;
-			auto info = ImageManager::getInstance().getImageInfo(imageUrl);
-
-			if (info.tex && (attach.width <= 0 || attach.height <= 0)) {
-				imgW = info.originalW;
-				imgH = info.originalH;
-				float aspect = (float)imgW / imgH;
-				drawW = std::min((float)imgW, mediaMaxWidth);
-				if (imgW > 160) {
-					drawW = mediaMaxWidth;
-				}
-
-				drawH = drawW / aspect;
-				if (drawH > maxHeight) {
-					drawH = maxHeight;
-					drawW = drawH * aspect;
-				}
-			}
-
-			if (info.tex) {
-
-				float uMax = (float)info.originalW / info.tex->width;
-				float vMax = (float)info.originalH / info.tex->height;
-				Tex3DS_SubTexture subtex = {(u16)info.originalW, (u16)info.originalH, 0.0f, 1.0f, uMax, 1.0f - vMax};
-
-				const C2D_Image img = {info.tex, &subtex};
-				C2D_DrawImageAt(img, x, newY, 0.5f, nullptr, drawW / info.originalW, drawH / info.originalH);
-				markDrawnIfVisible(info, newY, drawH);
-				newY += drawH + 4.0f;
-			} else if (info.failed) {
-				u32 errorBg = (Config::getInstance().getThemeType() == 1) ? C2D_Color32(255, 235, 235, 255)
-				                                                          : C2D_Color32(60, 40, 40, 255);
-				C2D_DrawRectSolid(x, newY, 0.5f, drawW, drawH, errorBg);
-				drawText(x + 5, newY + (drawH / 2) - 6, 0.5f, 0.3f, 0.3f, ScreenManager::colorError(),
-				         TR("message.image_failed"));
-				newY += drawH + 4.0f;
-			} else {
-				ImageManager::getInstance().prefetch(imageUrl, attach.width, attach.height,
-				                                     Network::RequestPriority::INTERACTIVE);
-
-				u32 placeholderBg = ScreenManager::colorBackgroundDark();
-				C2D_DrawRectSolid(x, newY, 0.5f, drawW, drawH, placeholderBg);
-				drawText(x + 5, newY + (drawH / 2) - 6, 0.5f, 0.3f, 0.3f, ScreenManager::colorTextMuted(),
-				         TR("common.loading"));
-				newY += drawH + 4.0f;
-			}
-		} else {
-			std::string fileInfo = Core::I18n::format(TR("message.file"), attach.filename);
-			drawText(x, newY, 0.5f, 0.35f, 0.35f, ScreenManager::colorTextMuted(), fileInfo);
-			newY += 12.0f;
-		}
+		newY = drawAttachment(attach, x, newY, maxWidth, revealed);
 	}
 	return newY;
+}
+
+float MessageScreen::drawAttachment(const Discord::Attachment &attach, float x, float y, float maxWidth,
+                                    bool revealed) {
+	const bool hidden = attach.spoiler && !revealed;
+
+	if (!isImageAttachment(attach)) {
+		const std::string name = hidden ? TR("message.spoiler") : attach.filename;
+		drawText(x, y, 0.5f, 0.35f, 0.35f, ScreenManager::colorTextMuted(),
+		         Core::I18n::format(TR("message.file"), name));
+		return y + 12.0f;
+	}
+
+	const auto info = ImageManager::getInstance().getImageInfo(attachmentUrl(attach));
+	float drawW = 0.0f;
+	float drawH = 0.0f;
+	fitAttachment(attach, info, maxWidth, drawW, drawH);
+
+	if (y + drawH >= -30.0f && y <= 240.0f + 10.0f) {
+		drawAttachmentImage(attach, info, x, y, drawW, drawH, hidden);
+	}
+	return y + drawH + 4.0f;
 }
 
 float MessageScreen::drawStickers(const Discord::Message &msg, float x, float y, float maxWidth) {
@@ -1667,6 +1870,897 @@ void MessageScreen::submitPollVote(int answerIndex) {
 	rebuildLayoutCache();
 }
 
+void MessageScreen::drawControl(const Discord::MessageControl &control, float x, float y, float width,
+                                const BlockPass &pass) {
+	const bool hidden = control.hidden && !pass.revealed;
+	const bool pending =
+	    interactionPending && pass.control == interactionControl && pass.msg.id == interactionMessageId;
+	const float height = control.isButton() ? BUTTON_H : SELECT_H;
+
+	if (componentMode && pass.selected && pass.control == componentIndex) {
+		drawRoundedRect(x - 2.0f, y - 2.0f, 0.45f, width + 4.0f, height + 4.0f, 6.0f, ScreenManager::colorText());
+		componentCursorTop = y + currentScrollY;
+		componentCursorHeight = height;
+	}
+
+	if (hidden || control.isButton()) {
+		const u32 fill = hidden ? COLOR_NEUTRAL : buttonColor(control);
+		drawRoundedRect(x, y, 0.46f, width, height, 4.0f, (control.disabled || pending) ? dimmed(fill) : fill);
+	} else {
+		const u32 fill = ScreenManager::colorBackgroundDark();
+		drawRoundedRect(x, y, 0.455f, width, height, 4.0f, COLOR_NEUTRAL);
+		drawRoundedRect(x + 1.0f, y + 1.0f, 0.46f, width - 2.0f, height - 2.0f, 3.0f,
+		                (control.disabled || pending) ? dimmed(fill) : fill);
+	}
+	if (hidden) {
+		return;
+	}
+
+	if (!control.isButton()) {
+		const bool chosen = !control.chosenLabel.empty();
+		std::string text = control.chosenLabel;
+		if (!chosen) {
+			text = control.label.empty() ? TR("message.select_placeholder") : control.label;
+		}
+		drawRichText(x + 6.0f, y + 6.0f, 0.48f, BUTTON_SCALE, BUTTON_SCALE,
+		             chosen ? ScreenManager::colorText() : ScreenManager::colorTextMuted(),
+		             getTruncatedRichText(text, width - 24.0f, BUTTON_SCALE, BUTTON_SCALE));
+		drawText(x + width - 14.0f, y + 7.0f, 0.48f, 0.3f, 0.3f, ScreenManager::colorTextMuted(), "▼");
+		return;
+	}
+
+	const u32 textColor =
+	    (control.disabled || pending) ? dimmed(ScreenManager::colorWhite()) : ScreenManager::colorWhite();
+
+	float labelX = x + BUTTON_PAD;
+	float labelEnd = x + width - BUTTON_PAD;
+	if (hasEmoji(control.emoji)) {
+		drawEmojiGlyph(control.emoji, labelX, y + 3.0f, BUTTON_EMOJI, 0.48f);
+		labelX += BUTTON_EMOJI + 3.0f;
+	}
+	if (control.style == Discord::ButtonStyle::LINK) {
+		labelEnd -= BUTTON_LINK_ICON;
+		C3D_Tex *icon =
+		    UI::ImageManager::getInstance().getLocalImage("romfs:/discord-icons/arrow-angle-right-up.png", true);
+		if (icon) {
+			const float iconSize = 8.0f;
+			Tex3DS_SubTexture subtex = {(u16)icon->width, (u16)icon->height, 0.0f, 1.0f, 1.0f, 0.0f};
+			C2D_Image img = {icon, &subtex};
+			C2D_ImageTint tint;
+			C2D_PlainImageTint(&tint, textColor, 1.0f);
+			C2D_DrawImageAt(img, labelEnd + 4.0f, y + 6.0f, 0.48f, &tint, iconSize / icon->width,
+			                iconSize / icon->height);
+		}
+	}
+	const std::string label = buttonLabel(control);
+	if (!label.empty()) {
+		// The button was sized to this label, so rounding alone must not cut it short.
+		drawRichText(labelX, y + 5.0f, 0.48f, BUTTON_SCALE, BUTTON_SCALE, textColor,
+		             getTruncatedRichText(label, labelEnd - labelX + 1.0f, BUTTON_SCALE, BUTTON_SCALE));
+	}
+}
+
+float MessageScreen::layoutBlocks(const std::vector<Discord::MessageBlock> &blocks, float x, float y, float width,
+                                  BlockPass &pass) {
+	using Kind = Discord::MessageBlock::Kind;
+
+	for (size_t b = 0; b < blocks.size(); b++) {
+		const Discord::MessageBlock &block = blocks[b];
+		if (b > 0 && block.kind != Kind::SEPARATOR && blocks[b - 1].kind != Kind::SEPARATOR) {
+			y += BLOCK_GAP;
+		}
+
+		if (block.kind == Kind::TEXT) {
+			const bool hasThumbnail = block.thumbnail >= 0;
+			const bool hasButton = !block.controls.empty();
+			float accessoryW = 0.0f;
+			if (hasThumbnail) {
+				accessoryW = THUMBNAIL_SIZE;
+			} else if (hasButton) {
+				accessoryW = buttonWidth(block.controls[0], width / 2.0f);
+			}
+			const float textW = (hasThumbnail || hasButton) ? width - accessoryW - ACCESSORY_GAP : width;
+
+			UI::MarkdownRenderer::LayoutRef layout;
+			if (pass.cache && pass.text < pass.cache->blockLayouts.size()) {
+				layout = pass.cache->blockLayouts[pass.text];
+			} else {
+				layout = UI::MarkdownRenderer::get(block.text, textW, 0.4f);
+				if (pass.layouts) {
+					pass.layouts->push_back(layout);
+				}
+			}
+			pass.text++;
+
+			float height = layout->height;
+			if (pass.draw) {
+				UI::MarkdownRenderer::draw(*layout, x, y, 0.5f, ScreenManager::colorText(), (size_t)-1, pass.revealed);
+			}
+			if (hasThumbnail) {
+				const Discord::Attachment &thumbnail = pass.msg.attachments[block.thumbnail];
+				if (pass.draw) {
+					drawThumbnail(thumbnail, x + width - accessoryW, y, thumbnail.spoiler && !pass.revealed);
+				}
+				height = std::max(height, THUMBNAIL_SIZE);
+			} else if (hasButton) {
+				if (pass.draw) {
+					drawControl(block.controls[0], x + width - accessoryW, y, accessoryW, pass);
+				}
+				pass.control++;
+				height = std::max(height, BUTTON_H);
+			}
+			y += height;
+		} else if (block.kind == Kind::MEDIA) {
+			for (int index : block.attachments) {
+				const Discord::Attachment &attach = pass.msg.attachments[index];
+				y = pass.draw ? drawAttachment(attach, x, y, width, pass.revealed)
+				              : y + attachmentHeight(attach, width);
+			}
+		} else if (block.kind == Kind::SEPARATOR) {
+			float gap = block.largeSpacing ? 16.0f : 8.0f;
+			if (!block.divider) {
+				gap *= 2.0f;
+			}
+			if (pass.draw && block.divider) {
+				C2D_DrawRectSolid(x, y + (gap / 2.0f) - 0.5f, 0.46f, width, 1.0f, ScreenManager::colorSeparator());
+			}
+			y += gap;
+		} else if (block.kind == Kind::CONTROLS) {
+			float rowX = x;
+			for (const auto &control : block.controls) {
+				if (control.isButton()) {
+					const float buttonW = buttonWidth(control, width);
+					if (rowX > x && rowX + buttonW > x + width) {
+						rowX = x;
+						y += BUTTON_H + BUTTON_GAP;
+					}
+					if (pass.draw) {
+						drawControl(control, rowX, y, buttonW, pass);
+					}
+					rowX += buttonW + BUTTON_GAP;
+				} else {
+					if (pass.draw) {
+						drawControl(control, x, y, std::min(width, SELECT_MAX_W), pass);
+					}
+					y += SELECT_H;
+				}
+				pass.control++;
+			}
+			if (rowX > x) {
+				y += BUTTON_H;
+			}
+		} else if (block.kind == Kind::CONTAINER) {
+			const float barW = block.accentColor >= 0 ? CONTAINER_BAR : 0.0f;
+			const float innerX = x + barW + CONTAINER_PAD;
+			const float innerW = width - barW - CONTAINER_PAD * 2.0f;
+
+			float innerH = 0.0f;
+			if (pass.draw) {
+				BlockPass measure = pass;
+				measure.draw = false;
+				innerH = layoutBlocks(block.children, 0.0f, 0.0f, innerW, measure);
+
+				const float boxH = innerH + CONTAINER_PAD * 2.0f;
+				C2D_DrawRectSolid(x, y, 0.4f, width, boxH, ScreenManager::colorEmbed());
+				if (block.accentColor >= 0) {
+					const int color = block.accentColor;
+					C2D_DrawRectSolid(x, y, 0.45f, CONTAINER_BAR, boxH,
+					                  C2D_Color32((color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF, 255));
+				}
+				layoutBlocks(block.children, innerX, y + CONTAINER_PAD, innerW, pass);
+			} else {
+				innerH = layoutBlocks(block.children, 0.0f, 0.0f, innerW, pass);
+			}
+			y += innerH + CONTAINER_PAD * 2.0f;
+		}
+	}
+	return y;
+}
+
+std::vector<Discord::MessageControl *> MessageScreen::selectedControls() {
+	std::vector<Discord::MessageControl *> controls;
+	if (selectedIndex >= 0 && selectedIndex < (int)messages.size()) {
+		collectControls(messages[selectedIndex].blocks, controls);
+	}
+	return controls;
+}
+
+bool MessageScreen::canUseControl(const Discord::MessageControl &control) const {
+	return control.canActivate() && (!control.hidden || revealedSpoilers.count(messages[selectedIndex].id) > 0);
+}
+
+bool MessageScreen::enterComponentMode() {
+	const auto controls = selectedControls();
+	for (size_t i = 0; i < controls.size(); i++) {
+		if (canUseControl(*controls[i])) {
+			componentMode = true;
+			componentIndex = (int)i;
+			componentCursorHeight = 0.0f;
+			return true;
+		}
+	}
+	return false;
+}
+
+void MessageScreen::moveComponentCursor(int step) {
+	const auto controls = selectedControls();
+	for (int i = componentIndex + step; i >= 0 && i < (int)controls.size(); i += step) {
+		if (canUseControl(*controls[i])) {
+			componentIndex = i;
+			componentCursorHeight = 0.0f;
+			return;
+		}
+	}
+}
+
+void MessageScreen::activateControl() {
+	const auto controls = selectedControls();
+	if (interactionPending || componentIndex >= (int)controls.size()) {
+		return;
+	}
+
+	Discord::MessageControl &control = *controls[componentIndex];
+	if (!control.url.empty()) {
+		linkPopupUrl = control.url;
+	} else if (control.isButton()) {
+		sendInteraction(control, {}, "");
+	} else {
+		openSelectPicker(control);
+	}
+}
+
+void MessageScreen::sendInteraction(Discord::MessageControl &control, const std::vector<std::string> &values,
+                                    const std::string &label) {
+	interactionPending = true;
+	interactionSentAt = osGetTime();
+	interactionNonce = std::to_string(interactionSentAt);
+	interactionMessageId = messages[selectedIndex].id;
+	interactionCustomId = control.customId;
+	interactionControl = componentIndex;
+
+	if (!control.isButton()) {
+		revertChosen = control.chosen;
+		revertChosenLabel = control.chosenLabel;
+		control.chosen = values;
+		control.chosenLabel = label;
+	}
+
+	Discord::DiscordClient::getInstance().sendComponentInteraction(
+	    messages[selectedIndex], control, values, interactionNonce,
+	    [this, token = aliveToken, nonce = interactionNonce](bool success) {
+		    if (!success && *token) {
+			    onInteractionResult(nonce, Discord::InteractionResult::FAILURE);
+		    }
+	    });
+}
+
+void MessageScreen::onInteractionResult(const std::string &nonce, Discord::InteractionResult result) {
+	std::lock_guard<std::recursive_mutex> lock(messageMutex);
+	if (nonce.empty() || nonce != interactionNonce) {
+		return;
+	}
+
+	if (result == Discord::InteractionResult::MODAL) {
+		interactionToast = "message.interaction_modal";
+	} else if (result == Discord::InteractionResult::FAILURE && interactionPending) {
+		interactionToast = "message.interaction_failed";
+		for (auto &msg : messages) {
+			if (msg.id != interactionMessageId) {
+				continue;
+			}
+			std::vector<Discord::MessageControl *> controls;
+			collectControls(msg.blocks, controls);
+			if (interactionControl < (int)controls.size() &&
+			    controls[interactionControl]->customId == interactionCustomId &&
+			    !controls[interactionControl]->isButton()) {
+				controls[interactionControl]->chosen = revertChosen;
+				controls[interactionControl]->chosenLabel = revertChosenLabel;
+			}
+			break;
+		}
+	}
+
+	interactionPending = false;
+	Utils::requestRedraw();
+}
+
+std::vector<Discord::SelectOption> MessageScreen::selectTargets(const Discord::MessageControl &control) {
+	namespace Type = Discord::ComponentType;
+
+	std::vector<Discord::SelectOption> options;
+	const auto add = [&options](const std::string &label, const std::string &value) {
+		if (!label.empty()) {
+			Discord::SelectOption option;
+			option.label = label;
+			option.value = value;
+			options.push_back(std::move(option));
+		}
+	};
+
+	Discord::DiscordClient &client = Discord::DiscordClient::getInstance();
+	const Discord::Guild *guild = client.getGuildPtr(guildId);
+	const bool users = control.type == Type::USER_SELECT || control.type == Type::MENTIONABLE_SELECT;
+	const bool roles = control.type == Type::ROLE_SELECT || control.type == Type::MENTIONABLE_SELECT;
+
+	if (users && guild) {
+		for (const auto &member : guild->members) {
+			if (!member.nickname.empty()) {
+				add(member.nickname, member.user_id);
+			} else {
+				add(member.globalName.empty() ? member.username : member.globalName, member.user_id);
+			}
+		}
+	} else if (users) {
+		const Discord::User self = client.getCurrentUser();
+		add(self.global_name.empty() ? self.username : self.global_name, self.id);
+		for (const auto &user : client.getChannel(channelId).recipients) {
+			add(user.global_name.empty() ? user.username : user.global_name, user.id);
+		}
+	}
+
+	if (roles && guild) {
+		for (const auto &role : guild->roles) {
+			if (role.id != guild->id) {
+				add("@" + role.name, role.id);
+			}
+		}
+	}
+
+	if (control.type == Type::CHANNEL_SELECT && guild) {
+		for (const auto &channel : guild->channels) {
+			const auto &types = control.channelTypes;
+			if (channel.viewable &&
+			    (types.empty() || std::find(types.begin(), types.end(), channel.type) != types.end())) {
+				add(MessageUtils::getChannelDisplayName(channel), channel.id);
+			}
+		}
+	}
+
+	std::sort(options.begin(), options.end(),
+	          [](const Discord::SelectOption &a, const Discord::SelectOption &b) { return a.label < b.label; });
+	return options;
+}
+
+void MessageScreen::openSelectPicker(const Discord::MessageControl &control) {
+	const bool hasStaticOptions = control.type == Discord::ComponentType::STRING_SELECT ||
+	                              control.type == Discord::ComponentType::RADIO_GROUP ||
+	                              control.type == Discord::ComponentType::CHECKBOX_GROUP;
+	picker.options = hasStaticOptions ? control.options : selectTargets(control);
+	if (picker.options.empty()) {
+		ScreenManager::getInstance().showToast(TR("message.select_empty"));
+		return;
+	}
+
+	picker.chosen = control.chosen;
+	picker.minValues = control.minValues;
+	picker.maxValues = control.maxValues;
+	// One required choice sends straight away; anything else needs a way to say it is finished.
+	picker.multi = control.maxValues > 1 || control.minValues == 0 ||
+	               control.type == Discord::ComponentType::CHECKBOX_GROUP;
+	picker.cursor = 0;
+	picker.first = 0;
+	picker.open = true;
+}
+
+void MessageScreen::updateSelectPicker(u32 kDown, u32 kHeld) {
+	int step = 0;
+	if (kDown & (KEY_DOWN | KEY_UP)) {
+		step = (kDown & KEY_DOWN) ? 1 : -1;
+		keyRepeatTimer = 0;
+	} else if (kHeld & (KEY_DOWN | KEY_UP)) {
+		keyRepeatTimer++;
+		if (keyRepeatTimer >= REPEAT_INITIAL_DELAY && (keyRepeatTimer - REPEAT_INITIAL_DELAY) % REPEAT_INTERVAL == 0) {
+			step = (kHeld & KEY_DOWN) ? 1 : -1;
+		}
+	} else {
+		keyRepeatTimer = 0;
+	}
+
+	const int optionCount = (int)picker.options.size();
+	const int rows = optionCount + (picker.multi ? 1 : 0);
+	picker.cursor = std::clamp(picker.cursor + step, 0, rows - 1);
+	if (picker.cursor < picker.first) {
+		picker.first = picker.cursor;
+	} else if (picker.cursor >= picker.first + PICKER_ROWS) {
+		picker.first = picker.cursor - PICKER_ROWS + 1;
+	}
+
+	if (kDown & KEY_B) {
+		picker.open = false;
+		return;
+	}
+	if (!(kDown & KEY_A)) {
+		return;
+	}
+
+	if (picker.cursor == optionCount) {
+		submitSelectPicker();
+		return;
+	}
+
+	const std::string &value = picker.options[picker.cursor].value;
+	if (!picker.multi) {
+		picker.chosen = {value};
+		submitSelectPicker();
+		return;
+	}
+
+	auto it = std::find(picker.chosen.begin(), picker.chosen.end(), value);
+	if (it != picker.chosen.end()) {
+		picker.chosen.erase(it);
+	} else if (picker.maxValues == 1) {
+		picker.chosen = {value};
+	} else if ((int)picker.chosen.size() < picker.maxValues) {
+		picker.chosen.push_back(value);
+	}
+}
+
+void MessageScreen::submitSelectPicker() {
+	std::vector<std::string> values;
+	std::string label;
+	for (const auto &option : picker.options) {
+		if (std::find(picker.chosen.begin(), picker.chosen.end(), option.value) != picker.chosen.end()) {
+			values.push_back(option.value);
+			label += (label.empty() ? "" : ", ") + option.label;
+		}
+	}
+	if ((int)values.size() < picker.minValues) {
+		return;
+	}
+
+	picker.open = false;
+	if (modalOpen) {
+		if (modalCursor >= 0 && modalCursor < (int)modal.fields.size()) {
+			modal.fields[modalCursor].control.chosen = values;
+			modal.fields[modalCursor].control.chosenLabel = label;
+		}
+		return;
+	}
+	const auto controls = selectedControls();
+	if (componentIndex < (int)controls.size()) {
+		sendInteraction(*controls[componentIndex], values, label);
+	}
+}
+
+void MessageScreen::onModalCreate(const Discord::Modal &incoming) {
+	std::lock_guard<std::recursive_mutex> lock(messageMutex);
+	if ((!incoming.nonce.empty() && incoming.nonce != interactionNonce) ||
+	    (!incoming.channelId.empty() && incoming.channelId != channelId)) {
+		return;
+	}
+
+	modal = incoming;
+	for (auto &field : modal.fields) {
+		if (!field.control.chosen.empty() && field.control.chosenLabel.empty()) {
+			const auto options = field.control.options.empty() ? selectTargets(field.control) : field.control.options;
+			for (const auto &opt : options) {
+				if (std::find(field.control.chosen.begin(), field.control.chosen.end(), opt.value) !=
+				    field.control.chosen.end()) {
+					field.control.chosenLabel += (field.control.chosenLabel.empty() ? "" : ", ") + opt.label;
+				}
+			}
+		}
+	}
+
+	modalCursor = 0;
+	while (modalCursor < (int)modal.fields.size() && !canSelectModalRow(modalCursor)) {
+		modalCursor++;
+	}
+	modalFirst = 0;
+	modalOpen = true;
+	picker.open = false;
+	interactionPending = false;
+	Utils::requestRedraw();
+}
+
+bool MessageScreen::canSelectModalRow(int row) const {
+	if (row < 0 || row > (int)modal.fields.size()) {
+		return false;
+	}
+	if (row == (int)modal.fields.size()) {
+		return true;
+	}
+	const auto &field = modal.fields[row];
+	return field.wrapperType != Discord::ComponentType::TEXT_DISPLAY &&
+	       field.control.type != Discord::ComponentType::FILE_UPLOAD;
+}
+
+bool MessageScreen::canSubmitModal() const {
+	for (const auto &field : modal.fields) {
+		if (field.wrapperType == Discord::ComponentType::TEXT_DISPLAY ||
+		    field.control.type == Discord::ComponentType::CHECKBOX) {
+			continue;
+		}
+		if (field.control.type == Discord::ComponentType::FILE_UPLOAD) {
+			if (field.required) {
+				return false;
+			}
+			continue;
+		}
+		if (field.control.type == Discord::ComponentType::TEXT_INPUT) {
+			size_t cursor = 0;
+			int count = 0;
+			while (cursor < field.value.size()) {
+				Utils::Utf8::decodeNext(field.value, cursor);
+				count++;
+			}
+			if (field.required && count == 0) {
+				return false;
+			}
+			if (count > 0 && count < field.minLength) {
+				return false;
+			}
+			if (field.required && count < field.minLength) {
+				return false;
+			}
+			continue;
+		}
+		const int minReq = field.required ? std::max(1, field.control.minValues) : 0;
+		if ((int)field.control.chosen.size() < minReq) {
+			return false;
+		}
+	}
+	return true;
+}
+
+void MessageScreen::updateModal(u32 kDown, u32 kHeld, std::unique_lock<std::recursive_mutex> &updateLock) {
+	int step = 0;
+	if (kDown & (KEY_DOWN | KEY_UP)) {
+		step = (kDown & KEY_DOWN) ? 1 : -1;
+		keyRepeatTimer = 0;
+	} else if (kHeld & (KEY_DOWN | KEY_UP)) {
+		keyRepeatTimer++;
+		if (keyRepeatTimer >= REPEAT_INITIAL_DELAY && (keyRepeatTimer - REPEAT_INITIAL_DELAY) % REPEAT_INTERVAL == 0) {
+			step = (kHeld & KEY_DOWN) ? 1 : -1;
+		}
+	} else {
+		keyRepeatTimer = 0;
+	}
+
+	const int rows = (int)modal.fields.size() + 1;
+	if (step != 0) {
+		for (int next = modalCursor + step; next >= 0 && next < rows; next += step) {
+			if (canSelectModalRow(next)) {
+				modalCursor = next;
+				break;
+			}
+		}
+	}
+
+	if (kDown & KEY_B) {
+		modalOpen = false;
+		return;
+	}
+	if (!(kDown & KEY_A)) {
+		return;
+	}
+
+	if (modalCursor == (int)modal.fields.size()) {
+		submitModal();
+		return;
+	}
+	if (modalCursor < 0 || modalCursor >= (int)modal.fields.size()) {
+		return;
+	}
+
+	Discord::ModalField &field = modal.fields[modalCursor];
+	if (field.control.type == Discord::ComponentType::TEXT_INPUT) {
+		const std::string hint = !field.placeholder.empty() ? field.placeholder : field.label;
+		const bool multiline = field.control.style == 2;
+		const int maxLen = std::clamp(field.maxLength, 1, 2000);
+		const std::string initial = field.value;
+
+		updateLock.unlock();
+		auto res = runKeyboard(hint, initial, multiline, maxLen, TR("common.ok"));
+		updateLock.lock();
+
+		if (res.button == SWKBD_BUTTON_RIGHT) {
+			field.value = res.text;
+		}
+	} else if (field.control.type == Discord::ComponentType::CHECKBOX) {
+		field.checked = !field.checked;
+	} else {
+		openSelectPicker(field.control);
+	}
+}
+
+void MessageScreen::submitModal() {
+	if (!canSubmitModal() || interactionPending) {
+		return;
+	}
+
+	modalOpen = false;
+	interactionPending = true;
+	interactionSentAt = osGetTime();
+	interactionNonce = std::to_string(interactionSentAt);
+	interactionMessageId.clear();
+	interactionCustomId = modal.customId;
+	interactionControl = -1;
+
+	Discord::DiscordClient::getInstance().sendModalSubmit(
+	    modal, interactionNonce, [this, token = aliveToken, nonce = interactionNonce](bool success) {
+		    if (!success && *token) {
+			    onInteractionResult(nonce, Discord::InteractionResult::FAILURE);
+		    }
+	    });
+}
+
+void MessageScreen::renderModal() {
+	if (!modalOpen) {
+		return;
+	}
+
+	drawOverlay(0.98f);
+
+	const auto rowHeight = [this](int row) -> float {
+		if (row == (int)modal.fields.size()) {
+			return 24.0f;
+		}
+		const auto &field = modal.fields[row];
+		if (field.wrapperType == Discord::ComponentType::TEXT_DISPLAY ||
+		    field.control.type == Discord::ComponentType::CHECKBOX) {
+			return 22.0f;
+		}
+		return 32.0f;
+	};
+
+	const int rows = (int)modal.fields.size() + 1;
+	const float maxContentH = 192.0f;
+	if (modalCursor < modalFirst) {
+		modalFirst = modalCursor;
+	}
+	while (modalFirst < modalCursor) {
+		float h = 0.0f;
+		for (int r = modalFirst; r <= modalCursor; r++) {
+			h += rowHeight(r);
+		}
+		if (h <= maxContentH) {
+			break;
+		}
+		modalFirst++;
+	}
+
+	float contentH = 0.0f;
+	int visibleEnd = modalFirst;
+	while (visibleEnd < rows) {
+		const float rh = rowHeight(visibleEnd);
+		if (visibleEnd > modalFirst && contentH + rh > maxContentH) {
+			break;
+		}
+		contentH += rh;
+		visibleEnd++;
+	}
+
+	const float headerH = 22.0f;
+	const float menuW = 350.0f;
+	const float menuH = headerH + contentH + 10.0f;
+	const float menuX = (400.0f - menuW) / 2.0f;
+	const float menuY = (240.0f - menuH) / 2.0f;
+
+	drawPopupBackground(menuX, menuY, menuW, menuH, 0.99f);
+
+	drawRichText(menuX + 10.0f, menuY + 5.0f, 0.996f, 0.45f, 0.45f, ScreenManager::colorText(),
+	             getTruncatedRichText(modal.title, menuW - 20.0f, 0.45f, 0.45f));
+	C2D_DrawRectSolid(menuX + 8.0f, menuY + headerH, 0.995f, menuW - 16.0f, 1.0f, ScreenManager::colorSeparator());
+
+	float itemY = menuY + headerH + 4.0f;
+	for (int row = modalFirst; row < visibleEnd; row++) {
+		const float rh = rowHeight(row);
+		const bool isSelected = row == modalCursor;
+
+		if (row == (int)modal.fields.size()) {
+			const bool valid = canSubmitModal();
+			const u32 bg = isSelected
+			                   ? (valid ? ScreenManager::colorSelection() : dimmed(ScreenManager::colorSelection()))
+			                   : (valid ? COLOR_NEUTRAL : dimmed(COLOR_NEUTRAL));
+			const u32 fg = valid ? ScreenManager::colorWhite() : dimmed(ScreenManager::colorWhite());
+			drawRoundedRect(menuX + 8.0f, itemY + 2.0f, 0.995f, menuW - 16.0f, 20.0f, 4.0f, bg);
+			drawCenteredRichText(itemY + 5.0f, 0.996f, 0.45f, 0.45f, fg, TR("common.send"), 400.0f);
+			itemY += rh;
+			continue;
+		}
+
+		const Discord::ModalField &field = modal.fields[row];
+		if (field.wrapperType == Discord::ComponentType::TEXT_DISPLAY) {
+			std::string clean = Utils::Markdown::stripFormatting(field.label);
+			std::replace(clean.begin(), clean.end(), '\n', ' ');
+			std::replace(clean.begin(), clean.end(), '\r', ' ');
+			drawRichText(menuX + 10.0f, itemY + 4.0f, 0.996f, 0.38f, 0.38f, ScreenManager::colorTextMuted(),
+			             getTruncatedRichText(clean, menuW - 20.0f, 0.38f, 0.38f));
+			itemY += rh;
+			continue;
+		}
+
+		if (field.control.type == Discord::ComponentType::CHECKBOX) {
+			drawPopupMenuItem(menuX + 8.0f, itemY, menuW - 16.0f, 20.0f, 0.995f, isSelected,
+			                  ScreenManager::colorSelection());
+			const float boxX = menuX + 14.0f;
+			const float boxY = itemY + 4.0f;
+			const u32 borderColor =
+			    isSelected ? ScreenManager::colorWhite()
+			               : (field.checked ? ScreenManager::colorAccent() : ScreenManager::colorTextMuted());
+			const u32 fillColor = field.checked ? ScreenManager::colorAccent() : ScreenManager::colorBackgroundDark();
+			C2D_DrawRectSolid(boxX, boxY, 0.996f, 12.0f, 12.0f, borderColor);
+			C2D_DrawRectSolid(boxX + 1.0f, boxY + 1.0f, 0.997f, 10.0f, 10.0f, fillColor);
+			if (field.checked) {
+				const u32 checkColor = ScreenManager::colorWhite();
+				C2D_DrawLine(boxX + 2.5f, boxY + 6.0f, checkColor, boxX + 5.0f, boxY + 8.5f, checkColor, 1.6f, 0.998f);
+				C2D_DrawLine(boxX + 4.5f, boxY + 8.5f, checkColor, boxX + 9.5f, boxY + 3.5f, checkColor, 1.6f, 0.998f);
+			}
+
+			const float textX = boxX + 18.0f;
+			const float availW = menuX + menuW - 12.0f - textX;
+			std::string text = field.label;
+			if (!field.description.empty()) {
+				text += " - " + field.description;
+			}
+			const u32 textColor = isSelected ? ScreenManager::colorWhite() : ScreenManager::colorText();
+			drawRichText(textX, itemY + 4.0f, 0.996f, 0.4f, 0.4f, textColor,
+			             getTruncatedRichText(text, availW, 0.4f, 0.4f));
+			itemY += rh;
+			continue;
+		}
+
+		float labelX = menuX + 10.0f;
+		const float maxLabelW = menuW - 20.0f - (field.required ? 10.0f : 0.0f);
+		const std::string truncLabel = getTruncatedRichText(field.label, maxLabelW, 0.36f, 0.36f);
+		drawRichText(labelX, itemY, 0.996f, 0.36f, 0.36f, ScreenManager::colorText(), truncLabel);
+		labelX += measureRichText(truncLabel, 0.36f, 0.36f);
+		if (field.required) {
+			drawText(labelX + 2.0f, itemY, 0.996f, 0.36f, 0.36f, ScreenManager::colorError(), "*");
+			labelX += 8.0f;
+		}
+		if (!field.description.empty()) {
+			const float descX = labelX + 6.0f;
+			const float descW = menuX + menuW - 10.0f - descX;
+			if (descW > 20.0f) {
+				drawRichText(descX, itemY + 1.0f, 0.996f, 0.32f, 0.32f, ScreenManager::colorTextMuted(),
+				             getTruncatedRichText(field.description, descW, 0.32f, 0.32f));
+			}
+		}
+
+		const float boxX = menuX + 8.0f;
+		const float boxY = itemY + 12.0f;
+		const float boxW = menuW - 16.0f;
+		const float boxH = 18.0f;
+		if (isSelected) {
+			drawRoundedRect(boxX, boxY, 0.995f, boxW, boxH, 4.0f, ScreenManager::colorSelection());
+		} else {
+			drawRoundedRect(boxX, boxY, 0.994f, boxW, boxH, 4.0f, ScreenManager::colorSeparator());
+			drawRoundedRect(boxX + 1.0f, boxY + 1.0f, 0.995f, boxW - 2.0f, boxH - 2.0f, 3.0f,
+			                ScreenManager::colorBackgroundDark());
+		}
+
+		const bool isTextInput = field.control.type == Discord::ComponentType::TEXT_INPUT;
+		const bool hasValue = isTextInput ? !field.value.empty() : !field.control.chosenLabel.empty();
+		std::string displayValue;
+		if (isTextInput) {
+			displayValue = hasValue ? field.value : field.placeholder;
+			std::replace(displayValue.begin(), displayValue.end(), '\n', ' ');
+			std::replace(displayValue.begin(), displayValue.end(), '\r', ' ');
+		} else {
+			displayValue = hasValue ? field.control.chosenLabel
+			                        : (!field.placeholder.empty() ? field.placeholder : TR("message.select_placeholder"));
+		}
+
+		const u32 valColor = isSelected ? (hasValue ? ScreenManager::colorWhite() : dimmed(ScreenManager::colorWhite()))
+		                                : (hasValue ? ScreenManager::colorText() : ScreenManager::colorTextMuted());
+		const float textLimit = boxW - (isTextInput ? 12.0f : 22.0f);
+		drawRichText(boxX + 6.0f, boxY + 3.0f, 0.996f, 0.38f, 0.38f, valColor,
+		             getTruncatedRichText(displayValue, textLimit, 0.38f, 0.38f));
+
+		if (!isTextInput) {
+			const float arrowX = boxX + boxW - 12.0f;
+			const float arrowY = boxY + 7.0f;
+			const u32 arrowColor = isSelected ? ScreenManager::colorWhite() : ScreenManager::colorTextMuted();
+			C2D_DrawTriangle(arrowX, arrowY, arrowColor, arrowX + 6.0f, arrowY, arrowColor, arrowX + 3.0f,
+			                 arrowY + 4.0f, arrowColor, 0.996f);
+		}
+
+		itemY += rh;
+	}
+}
+
+void MessageScreen::renderSelectPicker() {
+	if (!picker.open) {
+		return;
+	}
+
+	drawOverlay(0.98f);
+
+	const int optionCount = (int)picker.options.size();
+	const int rows = optionCount + (picker.multi ? 1 : 0);
+	const int visible = std::min(rows, PICKER_ROWS);
+	const float menuW = 320.0f;
+	const float menuH = visible * PICKER_ROW_H + (rows > visible ? 21.0f : 9.0f);
+	const float menuX = (400.0f - menuW) / 2.0f;
+	const float menuY = (240.0f - menuH) / 2.0f;
+
+	drawPopupBackground(menuX, menuY, menuW, menuH, 0.99f);
+
+	for (int i = 0; i < visible; i++) {
+		const int row = picker.first + i;
+		const float itemY = menuY + 6.0f + i * PICKER_ROW_H;
+		const bool isSelected = row == picker.cursor;
+		const u32 color = isSelected ? ScreenManager::colorWhite() : ScreenManager::colorText();
+
+		drawPopupMenuItem(menuX + 5.0f, itemY, menuW - 10.0f, PICKER_ROW_H - 3.0f, 0.995f, isSelected,
+		                  ScreenManager::colorSelection());
+
+		if (row == optionCount) {
+			drawCenteredRichText(itemY + 4.0f, 0.996f, 0.5f, 0.5f, color, TR("common.confirm"), 400.0f);
+			continue;
+		}
+
+		const Discord::SelectOption &option = picker.options[row];
+		float textX = menuX + 12.0f;
+		if (picker.multi) {
+			const bool chosen =
+			    std::find(picker.chosen.begin(), picker.chosen.end(), option.value) != picker.chosen.end();
+			const float boxY = itemY + 5.0f;
+			const u32 borderColor = isSelected ? ScreenManager::colorWhite()
+			                                   : (chosen ? ScreenManager::colorAccent() : ScreenManager::colorTextMuted());
+			const u32 fillColor = chosen ? ScreenManager::colorAccent() : ScreenManager::colorBackgroundDark();
+			C2D_DrawRectSolid(textX, boxY, 0.996f, 12.0f, 12.0f, borderColor);
+			C2D_DrawRectSolid(textX + 1.0f, boxY + 1.0f, 0.997f, 10.0f, 10.0f, fillColor);
+			if (chosen) {
+				const u32 checkColor = ScreenManager::colorWhite();
+				C2D_DrawLine(textX + 2.5f, boxY + 6.0f, checkColor, textX + 5.0f, boxY + 8.5f, checkColor, 1.6f,
+				             0.998f);
+				C2D_DrawLine(textX + 4.5f, boxY + 8.5f, checkColor, textX + 9.5f, boxY + 3.5f, checkColor, 1.6f,
+				             0.998f);
+			}
+			textX += 18.0f;
+		}
+		if (hasEmoji(option.emoji)) {
+			drawEmojiGlyph(option.emoji, textX, itemY + 3.0f, 16.0f, 0.996f);
+			textX += 20.0f;
+		}
+
+		const float textW = menuX + menuW - 12.0f - textX;
+		const bool hasDescription = !option.description.empty();
+		drawRichText(textX, itemY + (hasDescription ? 1.0f : 5.0f), 0.996f, 0.42f, 0.42f, color,
+		             getTruncatedRichText(option.label, textW, 0.42f, 0.42f));
+		if (hasDescription) {
+			drawRichText(textX, itemY + 12.0f, 0.996f, 0.32f, 0.32f,
+			             isSelected ? ScreenManager::colorWhite() : ScreenManager::colorTextMuted(),
+			             getTruncatedRichText(option.description, textW, 0.32f, 0.32f));
+		}
+	}
+
+	if (rows > visible) {
+		const std::string position = std::to_string(picker.cursor + 1) + "/" + std::to_string(rows);
+		drawText(menuX + menuW - 12.0f - measureText(position, 0.32f, 0.32f), menuY + menuH - 14.0f, 0.996f, 0.32f,
+		         0.32f, ScreenManager::colorTextMuted(), position);
+	}
+}
+
+void MessageScreen::renderLinkPopup() {
+	if (linkPopupUrl.empty()) {
+		return;
+	}
+
+	drawOverlay(0.98f);
+
+	const float menuW = 340.0f;
+	const float lineH = 13.0f;
+	std::vector<std::string> lines = MessageUtils::wrapText(linkPopupUrl, menuW - 20.0f, 0.4f);
+	if (lines.size() > 12) {
+		lines.resize(12);
+	}
+
+	const float menuH = lines.size() * lineH + 20.0f;
+	const float menuX = (400.0f - menuW) / 2.0f;
+	const float menuY = (240.0f - menuH) / 2.0f;
+	drawPopupBackground(menuX, menuY, menuW, menuH, 0.99f);
+
+	float textY = menuY + 10.0f;
+	for (const auto &line : lines) {
+		drawText(menuX + 10.0f, textY, 0.996f, 0.4f, 0.4f, ScreenManager::colorText(), line);
+		textY += lineH;
+	}
+}
+
 float MessageScreen::drawReactions(const Discord::Message &msg, float x, float y, bool isSelected) {
 	if (msg.reactions.empty()) {
 		return y;
@@ -1726,7 +2820,7 @@ float MessageScreen::drawReactions(const Discord::Message &msg, float x, float y
 }
 
 float MessageScreen::drawMessage(const Discord::Message &msg, float y, float maxWidth, bool isSelected, bool showHeader,
-                                 bool prevGroupedMention, bool nextGroupedMention,
+                                 bool prevGroupedHighlight, bool nextGroupedHighlight,
                                  const MessageRenderCache *renderCache) {
 	float height = renderCache ? renderCache->height : calculateMessageHeight(msg, showHeader);
 	float topMargin = showHeader ? 4.0f : 0.0f;
@@ -1740,29 +2834,23 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y, float max
 	                       ? renderCache->mentionState == 1
 	                       : Discord::DiscordClient::getInstance().isUserMentioned(msg);
 
-	if (isMentioned) {
+	if (isMentioned || msg.isEphemeral()) {
 		float highlightY = y + topMargin;
 		float highlightH = height - topMargin;
-		u32 mentionBg = (Config::getInstance().getThemeType() == 1) ? C2D_Color32(250, 234, 184, 255)
-		                                                            : C2D_Color32(65, 54, 30, 255);
-		u32 mentionBorder = C2D_Color32(250, 166, 26, 255);
+		u32 highlightBg = messageHighlight(msg.isEphemeral(), isSelected);
+		u32 highlightBorder = msg.isEphemeral() ? C2D_Color32(88, 101, 242, 255) : C2D_Color32(250, 166, 26, 255);
 
-		if (isSelected) {
-			mentionBg = (Config::getInstance().getThemeType() == 1) ? C2D_Color32(255, 244, 194, 255)
-			                                                        : C2D_Color32(80, 69, 45, 255);
+		drawRoundedRect(4.0f, highlightY, 0.1f, 392.0f, highlightH, 6.0f, highlightBg);
+		C2D_DrawRectSolid(4.0f, highlightY, 0.1f, 6.0f, highlightH, highlightBg);
+
+		if (prevGroupedHighlight) {
+			C2D_DrawRectSolid(390.0f, highlightY, 0.1f, 6.0f, 6.0f, highlightBg);
+		}
+		if (nextGroupedHighlight) {
+			C2D_DrawRectSolid(390.0f, highlightY + highlightH - 6.0f, 0.1f, 6.0f, 6.0f, highlightBg);
 		}
 
-		drawRoundedRect(4.0f, highlightY, 0.1f, 392.0f, highlightH, 6.0f, mentionBg);
-		C2D_DrawRectSolid(4.0f, highlightY, 0.1f, 6.0f, highlightH, mentionBg);
-
-		if (prevGroupedMention) {
-			C2D_DrawRectSolid(390.0f, highlightY, 0.1f, 6.0f, 6.0f, mentionBg);
-		}
-		if (nextGroupedMention) {
-			C2D_DrawRectSolid(390.0f, highlightY + highlightH - 6.0f, 0.1f, 6.0f, 6.0f, mentionBg);
-		}
-
-		C2D_DrawRectSolid(4.0f, highlightY, 0.11f, 2.0f, highlightH, mentionBorder);
+		C2D_DrawRectSolid(4.0f, highlightY, 0.11f, 2.0f, highlightH, highlightBorder);
 	} else if (isSelected) {
 		float highlightY = y + topMargin;
 		float highlightH = height - topMargin;
@@ -1784,6 +2872,7 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y, float max
 
 	float contentY = y + topMargin + 1.0f;
 	contentY = drawReplyPreview(msg, textOffsetX, contentY);
+	contentY = drawCommandLine(msg, textOffsetX, contentY);
 
 	float avatarTopY = contentY;
 	contentY = drawAuthorHeader(msg, textOffsetX, contentY, showHeader, renderCache);
@@ -1817,11 +2906,22 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y, float max
 	contentY = drawAttachments(msg, textOffsetX, contentY, attachmentMaxWidth);
 	contentY = drawStickers(msg, textOffsetX, contentY, attachmentMaxWidth);
 
+	if (!msg.blocks.empty()) {
+		BlockPass pass{msg, renderCache, nullptr, true, isSelected, revealedSpoilers.count(msg.id) > 0};
+		contentY = layoutBlocks(msg.blocks, textOffsetX, contentY + 2.0f, BLOCK_WIDTH, pass) + 2.0f;
+	}
+
 	if (msg.isForwarded) {
 		float barX = 38.0f;
 		float barW = 2.0f;
 		float barH = contentY - forwardedBarStartY;
 		C2D_DrawRectSolid(barX, forwardedBarStartY, 0.45f, barW, barH, ScreenManager::colorTextMuted());
+	}
+
+	if (msg.isEphemeral()) {
+		drawRichText(textOffsetX, contentY, 0.5f, 0.35f, 0.35f, ScreenManager::colorTextMuted(),
+		             TR("message.ephemeral"));
+		contentY += EPHEMERAL_NOTE_H;
 	}
 
 	contentY = drawReactions(msg, textOffsetX, contentY, isSelected);
@@ -1872,12 +2972,15 @@ void MessageScreen::renderTop(C3D_RenderTarget *target) {
 	const float MARGIN = 10.0f;
 	const float TOP_MARGIN = 30.0f;
 
-	auto mentionedAt = [&](size_t idx) {
+	auto highlightedAt = [&](size_t idx) {
 		MessageRenderCache &rc = renderCaches[idx];
 		if (rc.mentionState < 0) {
 			rc.mentionState = Discord::DiscordClient::getInstance().isUserMentioned(messages[idx]) ? 1 : 0;
 		}
-		return rc.mentionState == 1;
+		return rc.mentionState == 1 || messages[idx].isEphemeral();
+	};
+	auto isHighlighted = [](const Discord::Message &msg) {
+		return msg.isEphemeral() || Discord::DiscordClient::getInstance().isUserMentioned(msg);
 	};
 
 	for (size_t i = 0; i < messages.size(); i++) {
@@ -1946,12 +3049,12 @@ void MessageScreen::renderTop(C3D_RenderTarget *target) {
 
 		bool isSelected = (i == (size_t)selectedIndex);
 
-		bool prevGroupedMention = false;
-		bool nextGroupedMention = false;
+		bool prevGroupedHighlight = false;
+		bool nextGroupedHighlight = false;
 		if (renderCache) {
-			mentionedAt(i);
+			highlightedAt(i);
 			if (!showHeader && i > 0) {
-				prevGroupedMention = mentionedAt(i - 1);
+				prevGroupedHighlight = highlightedAt(i - 1);
 			}
 
 			if (i + 1 < renderCaches.size()) {
@@ -1961,12 +3064,12 @@ void MessageScreen::renderTop(C3D_RenderTarget *target) {
 					nextShowHeader = true;
 				}
 				if (!nextShowHeader) {
-					nextGroupedMention = mentionedAt(i + 1);
+					nextGroupedHighlight = highlightedAt(i + 1);
 				}
 			}
 		} else {
 			if (!showHeader && i > 0) {
-				prevGroupedMention = Discord::DiscordClient::getInstance().isUserMentioned(messages[i - 1]);
+				prevGroupedHighlight = isHighlighted(messages[i - 1]);
 			}
 
 			if (i + 1 < messages.size()) {
@@ -1977,12 +3080,12 @@ void MessageScreen::renderTop(C3D_RenderTarget *target) {
 					}
 				}
 				if (!nextShowHeader) {
-					nextGroupedMention = Discord::DiscordClient::getInstance().isUserMentioned(messages[i + 1]);
+					nextGroupedHighlight = isHighlighted(messages[i + 1]);
 				}
 			}
 		}
 
-		drawMessage(this->messages[i], msgY, 400.0f, isSelected, showHeader, prevGroupedMention, nextGroupedMention,
+		drawMessage(this->messages[i], msgY, 400.0f, isSelected, showHeader, prevGroupedHighlight, nextGroupedHighlight,
 		            renderCache);
 	}
 
@@ -2003,6 +3106,11 @@ void MessageScreen::renderTop(C3D_RenderTarget *target) {
 	if (isMenuOpen) {
 		renderMenu();
 	}
+	if (modalOpen && !picker.open) {
+		renderModal();
+	}
+	renderSelectPicker();
+	renderLinkPopup();
 }
 
 void MessageScreen::renderBottom(C3D_RenderTarget *target) {
@@ -2111,11 +3219,12 @@ void MessageScreen::renderBottom(C3D_RenderTarget *target) {
 	}
 	bool canSend = canSendCached;
 
-	int hintsKey = (isMenuOpen ? 1 : 0) | (pollMode ? 2 : 0) | (isForumView ? 4 : 0) | (canSend ? 8 : 0);
+	int hintsKey = (isMenuOpen ? 1 : 0) | (pollMode ? 2 : 0) | (isForumView ? 4 : 0) | (canSend ? 8 : 0) |
+	               (componentMode ? 16 : 0) | (modalOpen ? 32 : 0) | (picker.open ? 64 : 0);
 	if (hintsKey != cachedHintsKey) {
 		cachedHintsKey = hintsKey;
 		std::string hints = "\uE079\uE07A: " + TR("common.navigate") + "  ";
-		if (isMenuOpen) {
+		if (isMenuOpen || componentMode || modalOpen || picker.open) {
 			hints += "\uE000: " + TR("common.select") + "  \uE001: " + TR("common.close");
 		} else if (pollMode) {
 			hints += "\uE000: " + TR("poll.vote") + "  \uE001: " + TR("common.close");
@@ -2259,20 +3368,27 @@ void MessageScreen::openKeyboard() {
 	}
 }
 
-MessageScreen::KeyboardResult MessageScreen::runKeyboard(const std::string &hint, const std::string &initialText) {
+MessageScreen::KeyboardResult MessageScreen::runKeyboard(const std::string &hint, const std::string &initialText,
+                                                         bool multiline, int maxLength,
+                                                         const std::string &confirmLabel) {
 	SwkbdState swkbd;
 	char mybuf[2000];
 	mybuf[0] = '\0';
-	swkbdInit(&swkbd, SWKBD_TYPE_NORMAL, 2, -1);
-	swkbdSetFeatures(&swkbd, SWKBD_PREDICTIVE_INPUT | SWKBD_DARKEN_TOP_SCREEN | SWKBD_ALLOW_HOME | SWKBD_ALLOW_RESET |
-	                             SWKBD_ALLOW_POWER | SWKBD_MULTILINE);
+	swkbdInit(&swkbd, SWKBD_TYPE_NORMAL, 2, maxLength);
+	u32 features =
+	    SWKBD_PREDICTIVE_INPUT | SWKBD_DARKEN_TOP_SCREEN | SWKBD_ALLOW_HOME | SWKBD_ALLOW_RESET | SWKBD_ALLOW_POWER;
+	if (multiline) {
+		features |= SWKBD_MULTILINE;
+	}
+	swkbdSetFeatures(&swkbd, features);
 
 	if (!initialText.empty()) {
 		swkbdSetInitialText(&swkbd, initialText.c_str());
 	}
 	swkbdSetHintText(&swkbd, hint.c_str());
 	swkbdSetButton(&swkbd, SWKBD_BUTTON_LEFT, TR("common.cancel").c_str(), true);
-	swkbdSetButton(&swkbd, SWKBD_BUTTON_RIGHT, TR("common.send").c_str(), true);
+	const std::string rightLabel = confirmLabel.empty() ? TR("common.send") : confirmLabel;
+	swkbdSetButton(&swkbd, SWKBD_BUTTON_RIGHT, rightLabel.c_str(), true);
 
 	SwkbdButton button = swkbdInputText(&swkbd, mybuf, sizeof(mybuf));
 	std::string content = mybuf;
@@ -2317,21 +3433,38 @@ void MessageScreen::showMessageOptions() {
 	bool canSend = client.canSendMessage(channelId);
 
 	std::string formattedContent = msg.displayContent;
-	if (!formattedContent.empty() && UI::MarkdownRenderer::get(formattedContent, 350.0f, 0.4f)->hasSpoiler) {
+	bool hasSpoiler =
+	    !formattedContent.empty() && UI::MarkdownRenderer::get(formattedContent, 350.0f, 0.4f)->hasSpoiler;
+	hasSpoiler = hasSpoiler || blocksHaveSpoiler(msg.blocks);
+	for (const auto &attach : msg.attachments) {
+		hasSpoiler = hasSpoiler || attach.spoiler;
+	}
+	if (hasSpoiler) {
 		addOption("ToggleSpoiler",
 		          revealedSpoilers.count(msg.id) ? "message.menu.hide_spoiler" : "message.menu.reveal_spoiler");
 	}
 
-	if (canSend) {
-		addOption("Reply", "message.menu.reply");
-	}
+	if (msg.isEphemeral()) {
+		addOption("Dismiss", "message.menu.dismiss");
+	} else {
+		// A takes over the message once it has controls, so reacting needs another way in.
+		const auto controls = selectedControls();
+		if (std::any_of(controls.begin(), controls.end(),
+		                [this](const Discord::MessageControl *control) { return canUseControl(*control); })) {
+			addOption("React", "message.menu.react");
+		}
 
-	if (isMine && canSend) {
-		addOption("Edit", "message.menu.edit");
-	}
+		if (canSend) {
+			addOption("Reply", "message.menu.reply");
+		}
 
-	if (isMine || client.canManageMessages(channelId)) {
-		addOption("Delete", "message.menu.delete");
+		if (isMine && canSend) {
+			addOption("Edit", "message.menu.edit");
+		}
+
+		if (isMine || client.canManageMessages(channelId)) {
+			addOption("Delete", "message.menu.delete");
+		}
 	}
 
 	bool hasFailed = false;
@@ -2381,11 +3514,37 @@ void MessageScreen::showMessageOptions() {
 
 std::string MessageScreen::getLatestRealMessageId() const {
 	for (auto it = messages.rbegin(); it != messages.rend(); ++it) {
-		if (it->id.substr(0, 8) != "pending_") {
+		if (it->id.substr(0, 8) != "pending_" && !it->isEphemeral()) {
 			return it->id;
 		}
 	}
 	return "";
+}
+
+void MessageScreen::replaceHistory(const std::vector<Discord::Message> &newestFirst) {
+	std::vector<Discord::Message> ephemeral;
+	std::copy_if(messages.begin(), messages.end(), std::back_inserter(ephemeral),
+	             [](const Discord::Message &msg) { return msg.isEphemeral(); });
+
+	messages.assign(newestFirst.rbegin(), newestFirst.rend());
+	for (auto &msg : ephemeral) {
+		auto next = std::find_if(messages.begin(), messages.end(), [&msg](const Discord::Message &other) {
+			return MessageUtils::isNewerSnowflake(other.id, msg.id);
+		});
+		messages.insert(next, std::move(msg));
+	}
+}
+
+void MessageScreen::removeSelectedMessage() {
+	messages.erase(messages.begin() + selectedIndex);
+	if (selectedIndex >= (int)messages.size()) {
+		selectedIndex = std::max(0, (int)messages.size() - 1);
+	}
+	rebuildLayoutCache();
+}
+
+bool MessageScreen::selectedIsEphemeral() const {
+	return selectedIndex >= 0 && selectedIndex < (int)messages.size() && messages[selectedIndex].isEphemeral();
 }
 
 void MessageScreen::checkAndMarkChannelRead() {
@@ -2458,10 +3617,10 @@ void MessageScreen::onMessageCreate(const Discord::Message &msg) {
 	}
 	if (!found) {
 		this->messages.push_back(msg);
-		bool atBottom = isAtBottom();
+		bool following = followsNewMessages();
 		rebuildLayoutCache();
-		syncScrollAfterRebuild(atBottom, true);
-		if (!atBottom) {
+		syncScrollAfterRebuild(following, true);
+		if (!following) {
 			showNewMessageIndicator = true;
 			newMessageCount++;
 		}
@@ -2541,8 +3700,10 @@ bool MessageScreen::isAtBottom() const {
 	return targetScrollY >= maxScroll - 5.0f;
 }
 
+bool MessageScreen::followsNewMessages() const { return isAtBottom() && !componentMode; }
+
 void MessageScreen::syncScrollAfterRebuild(bool wasAtBottom, bool updateSelection) {
-	if (!wasAtBottom) {
+	if (!wasAtBottom || componentMode) {
 		return;
 	}
 	if (bottomMode != BottomScreenMode::EMOJI_PICKER) {
@@ -2570,6 +3731,7 @@ void MessageScreen::scrollToBottom() {
 	currentScrollY = maxScroll;
 
 	showNewMessageIndicator = false;
+	newMessageCount = 0;
 }
 
 size_t MessageScreen::messageFingerprint(const Discord::Message &msg) {
@@ -2579,6 +3741,7 @@ size_t MessageScreen::messageFingerprint(const Discord::Message &msg) {
 	mix(std::hash<std::string>{}(msg.timestamp));
 	mix(msg.edited_timestamp.size());
 	mix(msg.type);
+	mix(msg.flags);
 
 	mix(msg.reactions.size());
 	for (const auto &react : msg.reactions) {
@@ -2598,6 +3761,8 @@ size_t MessageScreen::messageFingerprint(const Discord::Message &msg) {
 	}
 
 	mix(msg.stickers.size());
+	mix(msg.interactionName.size());
+	mix(blocksFingerprint(msg.blocks));
 
 	if (msg.hasPoll) {
 		mix(msg.poll.answers.size());
@@ -2622,6 +3787,12 @@ void MessageScreen::buildMessageCache(const Discord::Message &msg, MessageRender
 	cache.isEmojiOnly = MessageUtils::isEmojiOnly(msg.displayContent, cache.emojiCount);
 	if (!cache.isEmojiOnly || cache.emojiCount > 10) {
 		cache.contentLayout = UI::MarkdownRenderer::get(msg.displayContent, 350.0f, 0.4f);
+	}
+
+	if (!msg.blocks.empty()) {
+		BlockPass pass{msg};
+		pass.layouts = &cache.blockLayouts;
+		layoutBlocks(msg.blocks, 0.0f, 0.0f, BLOCK_WIDTH, pass);
 	}
 
 	for (const auto &attach : msg.attachments) {
@@ -3363,8 +4534,7 @@ void MessageScreen::catchUpMessages() {
 
 		    if (latestRealId.empty()) {
 
-			    this->messages = fetched;
-			    std::reverse(this->messages.begin(), this->messages.end());
+			    replaceHistory(fetched);
 			    rebuildLayoutCache();
 			    return;
 		    }
@@ -3395,10 +4565,10 @@ void MessageScreen::catchUpMessages() {
 
 		    if (addedAny) {
 			    Logger::log("[UI] Merged %d new messages from catch-up", addedAny);
-			    bool atBottom = isAtBottom();
+			    bool following = followsNewMessages();
 			    rebuildLayoutCache();
-			    syncScrollAfterRebuild(atBottom, true);
-			    if (!atBottom) {
+			    syncScrollAfterRebuild(following, true);
+			    if (!following) {
 				    showNewMessageIndicator = true;
 				    newMessageCount += addedAny;
 			    }

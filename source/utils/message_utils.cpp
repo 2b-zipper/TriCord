@@ -379,7 +379,7 @@ bool canGroupWithPrevious(const Discord::Message &current, const Discord::Messag
 		return false;
 	}
 
-	if (!current.referencedMessageId.empty()) {
+	if (!current.referencedMessageId.empty() || current.showsCommandLine()) {
 		return false;
 	}
 
@@ -759,6 +759,13 @@ static std::string hideGifLinks(std::string text, const std::vector<Discord::Emb
 }
 
 std::string buildDisplayContent(const Discord::Message &msg) {
+	if (msg.isThinking()) {
+		return Core::I18n::format(TR("message.thinking"),
+		                          msg.author.global_name.empty() ? msg.author.username : msg.author.global_name);
+	}
+	if (msg.isComponentsV2()) {
+		return "";
+	}
 	return hideGifLinks(formatMentions(msg.content, msg), msg.embeds);
 }
 

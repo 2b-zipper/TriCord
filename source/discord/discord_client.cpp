@@ -37,6 +37,9 @@ namespace {
 constexpr int RESUMABLE_CLOSE_CODE = 4000;
 // Heap kept free for everything the app does after login.
 constexpr size_t GUILD_DATA_RESERVE = 4 * 1024 * 1024;
+constexpr int INTERACTION_MESSAGE_COMPONENT = 3;
+constexpr int INTERACTION_MODAL_SUBMIT = 5;
+constexpr size_t MAX_EPHEMERAL_PER_CHANNEL = 20;
 
 bool hasRoomForGuildData() { return Utils::System::heapFreeBytes() >= GUILD_DATA_RESERVE; }
 
@@ -202,6 +205,7 @@ void DiscordClient::logout() {
 	std::lock_guard<std::recursive_mutex> lock(clientMutex);
 	guilds.clear();
 	folders.clear();
+	ephemeralMessages.clear();
 	currentUser = User();
 	self = User();
 	token.clear();
@@ -600,6 +604,168 @@ void DiscordClient::votePoll(const std::string &channelId, const std::string &me
 	    {{"Authorization", getInstance().token}, {"Content-Type", "application/json"}});
 }
 
+std::string DiscordClient::buildComponentInteraction(const Message &msg, const MessageControl &control,
+                                                     const std::vector<std::string> &values, const std::string &nonce) {
+	rapidjson::StringBuffer s;
+	rapidjson::Writer<rapidjson::StringBuffer> writer(s);
+	writer.StartObject();
+	writer.Key("type");
+	writer.Int(INTERACTION_MESSAGE_COMPONENT);
+	writer.Key("nonce");
+	writer.String(nonce.c_str());
+	const std::string guildId = getGuildIdFromChannel(msg.channelId);
+	if (!guildId.empty() && guildId != "DM") {
+		writer.Key("guild_id");
+		writer.String(guildId.c_str());
+	}
+	writer.Key("channel_id");
+	writer.String(msg.channelId.c_str());
+	writer.Key("message_id");
+	writer.String(msg.id.c_str());
+	writer.Key("message_flags");
+	writer.Int(msg.flags);
+	// Only responses and OAuth2 messages carry application_id; a bot's own messages come from its user.
+	writer.Key("application_id");
+	writer.String((msg.applicationId.empty() ? msg.author.id : msg.applicationId).c_str());
+	writer.Key("session_id");
+	writer.String(getSessionId().c_str());
+	writer.Key("data");
+	writer.StartObject();
+	writer.Key("component_type");
+	writer.Int(control.type);
+	writer.Key("custom_id");
+	writer.String(control.customId.c_str());
+	if (!control.isButton()) {
+		writer.Key("values");
+		writer.StartArray();
+		for (const auto &value : values) {
+			writer.String(value.c_str());
+		}
+		writer.EndArray();
+	}
+	writer.EndObject();
+	writer.EndObject();
+	return s.GetString();
+}
+
+void DiscordClient::sendComponentInteraction(const Message &msg, const MessageControl &control,
+                                             const std::vector<std::string> &values, const std::string &nonce,
+                                             SuccessCallback cb) {
+	if (token.empty()) {
+		cb(false);
+		return;
+	}
+
+	Network::NetworkManager::getInstance().enqueue(
+	    "https://discord.com/api/v10/interactions", "POST", buildComponentInteraction(msg, control, values, nonce),
+	    Network::RequestPriority::REALTIME,
+	    [cb](const Network::HttpResponse &resp) {
+		    if (!resp.success) {
+			    Logger::log("[Discord] Failed to create interaction: %ld %s", resp.statusCode, resp.body.c_str());
+		    }
+		    cb(resp.success);
+	    },
+	    {{"Authorization", token}, {"Content-Type", "application/json"}});
+}
+
+std::string DiscordClient::buildModalSubmit(const Modal &modal, const std::string &nonce) {
+	rapidjson::StringBuffer s;
+	rapidjson::Writer<rapidjson::StringBuffer> writer(s);
+	writer.StartObject();
+	writer.Key("type");
+	writer.Int(INTERACTION_MODAL_SUBMIT);
+	writer.Key("nonce");
+	writer.String(nonce.c_str());
+	const std::string guildId = getGuildIdFromChannel(modal.channelId);
+	if (!guildId.empty() && guildId != "DM") {
+		writer.Key("guild_id");
+		writer.String(guildId.c_str());
+	}
+	writer.Key("channel_id");
+	writer.String(modal.channelId.c_str());
+	writer.Key("application_id");
+	writer.String(modal.applicationId.c_str());
+	writer.Key("session_id");
+	writer.String(getSessionId().c_str());
+	writer.Key("data");
+	writer.StartObject();
+	writer.Key("id");
+	writer.String(modal.id.c_str());
+	writer.Key("custom_id");
+	writer.String(modal.customId.c_str());
+	writer.Key("components");
+	writer.StartArray();
+	for (const auto &field : modal.fields) {
+		if (field.wrapperType != ComponentType::ACTION_ROW && field.wrapperType != ComponentType::LABEL) {
+			continue;
+		}
+		writer.StartObject();
+		writer.Key("type");
+		writer.Int(field.wrapperType);
+		if (field.wrapperType == ComponentType::ACTION_ROW) {
+			writer.Key("components");
+			writer.StartArray();
+		} else {
+			writer.Key("component");
+		}
+
+		writer.StartObject();
+		writer.Key("type");
+		writer.Int(field.control.type);
+		writer.Key("custom_id");
+		writer.String(field.control.customId.c_str());
+		if (field.control.type == ComponentType::TEXT_INPUT) {
+			writer.Key("value");
+			writer.String(field.value.c_str());
+		} else if (field.control.type == ComponentType::CHECKBOX) {
+			writer.Key("value");
+			writer.Bool(field.checked);
+		} else if (field.control.type == ComponentType::RADIO_GROUP) {
+			writer.Key("value");
+			if (field.control.chosen.empty()) {
+				writer.Null();
+			} else {
+				writer.String(field.control.chosen[0].c_str());
+			}
+		} else {
+			writer.Key("values");
+			writer.StartArray();
+			for (const auto &val : field.control.chosen) {
+				writer.String(val.c_str());
+			}
+			writer.EndArray();
+		}
+		writer.EndObject();
+
+		if (field.wrapperType == ComponentType::ACTION_ROW) {
+			writer.EndArray();
+		}
+		writer.EndObject();
+	}
+	writer.EndArray();
+	writer.EndObject();
+	writer.EndObject();
+	return s.GetString();
+}
+
+void DiscordClient::sendModalSubmit(const Modal &modal, const std::string &nonce, SuccessCallback cb) {
+	if (token.empty()) {
+		cb(false);
+		return;
+	}
+
+	Network::NetworkManager::getInstance().enqueue(
+	    "https://discord.com/api/v10/interactions", "POST", buildModalSubmit(modal, nonce),
+	    Network::RequestPriority::REALTIME,
+	    [cb](const Network::HttpResponse &resp) {
+		    if (!resp.success) {
+			    Logger::log("[Discord] Failed to submit modal: %ld %s", resp.statusCode, resp.body.c_str());
+		    }
+		    cb(resp.success);
+	    },
+	    {{"Authorization", token}, {"Content-Type", "application/json"}});
+}
+
 void DiscordClient::setState(ConnectionState newState, const std::string &message) {
 	state = newState;
 	setStatus(message);
@@ -952,6 +1118,14 @@ void DiscordClient::handleDispatch(const rapidjson::Document &doc) {
 		handlePollVote(d, true);
 	} else if (t == "MESSAGE_POLL_VOTE_REMOVE") {
 		handlePollVote(d, false);
+	} else if (t == "INTERACTION_SUCCESS") {
+		handleInteractionResult(d, InteractionResult::SUCCESS);
+	} else if (t == "INTERACTION_FAILURE") {
+		handleInteractionResult(d, InteractionResult::FAILURE);
+	} else if (t == "INTERACTION_MODAL_CREATE") {
+		handleModalCreate(d);
+	} else if (t == "INTERACTION_IFRAME_MODAL_CREATE") {
+		handleInteractionResult(d, InteractionResult::MODAL);
 	} else if (t == "PRESENCE_UPDATE") {
 		handlePresenceUpdate(d);
 	} else if (t == "USER_SETTINGS_UPDATE") {
@@ -1817,6 +1991,16 @@ void DiscordClient::handleMessageCreate(const rapidjson::Value &d) {
 		}
 	}
 
+	// Nobody else can see it, so the channel gains nothing to be unread about.
+	if (msg.isEphemeral()) {
+		auto &held = ephemeralMessages[msg.channelId];
+		held.push_back(msg);
+		if (held.size() > MAX_EPHEMERAL_PER_CHANNEL) {
+			held.erase(held.begin());
+		}
+		return;
+	}
+
 	if (!msg.channelId.empty() && !msg.id.empty()) {
 		std::string gId = getGuildIdFromChannel(msg.channelId);
 		bool updatedChannel = false;
@@ -1921,14 +2105,96 @@ void DiscordClient::handleMessageUpdate(const rapidjson::Value &d) {
 	std::lock_guard<std::recursive_mutex> lock(clientMutex);
 	Message msg = parseSingleMessage(d);
 
+	auto held = ephemeralMessages.find(msg.channelId);
+	if (held != ephemeralMessages.end()) {
+		for (auto &m : held->second) {
+			if (m.id == msg.id) {
+				m = msg;
+				break;
+			}
+		}
+	}
+
 	if (messageUpdateCallback) {
 		messageUpdateCallback(msg);
+	}
+}
+
+std::vector<Message> DiscordClient::getEphemeralMessages(const std::string &channelId) {
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	auto held = ephemeralMessages.find(channelId);
+	return held == ephemeralMessages.end() ? std::vector<Message>() : held->second;
+}
+
+void DiscordClient::forgetEphemeralMessage(const std::string &channelId, const std::string &messageId) {
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	auto held = ephemeralMessages.find(channelId);
+	if (held == ephemeralMessages.end()) {
+		return;
+	}
+	auto &list = held->second;
+	list.erase(std::remove_if(list.begin(), list.end(), [&](const Message &m) { return m.id == messageId; }),
+	           list.end());
+	if (list.empty()) {
+		ephemeralMessages.erase(held);
+	}
+}
+
+void DiscordClient::handleInteractionResult(const rapidjson::Value &d, InteractionResult result) {
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	if (interactionCallback) {
+		interactionCallback(Utils::Json::getString(d, "nonce"), result);
+	}
+}
+
+void DiscordClient::handleModalCreate(const rapidjson::Value &d) {
+	std::lock_guard<std::recursive_mutex> lock(clientMutex);
+	Modal modal;
+	modal.id = Utils::Json::getString(d, "id");
+	modal.channelId = Utils::Json::getString(d, "channel_id");
+	modal.customId = Utils::Json::getString(d, "custom_id");
+	modal.title = Utils::Json::getString(d, "title");
+	modal.nonce = Utils::Json::getString(d, "nonce");
+	modal.applicationId = Utils::Json::getString(d, "application_id");
+	if (modal.applicationId.empty() && d.HasMember("application") && d["application"].IsObject()) {
+		modal.applicationId = Utils::Json::getString(d["application"], "id");
+	}
+
+	if (d.HasMember("components") && d["components"].IsArray()) {
+		for (const auto &comp : d["components"].GetArray()) {
+			const int type = Utils::Json::getInt(comp, "type");
+			if (type == ComponentType::TEXT_DISPLAY) {
+				ModalField field;
+				field.wrapperType = ComponentType::TEXT_DISPLAY;
+				field.label = Utils::Json::getString(comp, "content");
+				modal.fields.push_back(std::move(field));
+			} else if (type == ComponentType::ACTION_ROW && comp.HasMember("components") &&
+			           comp["components"].IsArray()) {
+				for (const auto &inner : comp["components"].GetArray()) {
+					ModalField field = parseModalInput(inner);
+					field.wrapperType = ComponentType::ACTION_ROW;
+					modal.fields.push_back(std::move(field));
+				}
+			} else if (type == ComponentType::LABEL && comp.HasMember("component") && comp["component"].IsObject()) {
+				ModalField field = parseModalInput(comp["component"]);
+				field.wrapperType = ComponentType::LABEL;
+				field.label = Utils::Json::getString(comp, "label");
+				field.description = Utils::Json::getString(comp, "description");
+				modal.fields.push_back(std::move(field));
+			}
+		}
+	}
+
+	if (modalCallback) {
+		modalCallback(modal);
 	}
 }
 
 void DiscordClient::handleMessageDelete(const rapidjson::Value &d) {
 	std::lock_guard<std::recursive_mutex> lock(clientMutex);
 	std::string id = Utils::Json::getString(d, "id");
+
+	forgetEphemeralMessage(Utils::Json::getString(d, "channel_id"), id);
 
 	if (messageDeleteCallback) {
 		messageDeleteCallback(id);
@@ -2327,12 +2593,9 @@ Member DiscordClient::parseMemberObject(const rapidjson::Value &mObj, const std:
 
 namespace {
 
-constexpr int MESSAGE_FLAG_COMPONENTS_V2 = 1 << 15;
-constexpr int COMPONENT_SECTION = 9;
-constexpr int COMPONENT_TEXT_DISPLAY = 10;
-constexpr int COMPONENT_MEDIA_GALLERY = 12;
-constexpr int COMPONENT_FILE = 13;
-constexpr int COMPONENT_CONTAINER = 17;
+constexpr int ATTACHMENT_FLAG_SPOILER = 1 << 3;
+constexpr int SEPARATOR_SPACING_LARGE = 2;
+constexpr int CHAT_INPUT_COMMAND_MESSAGE = 20;
 
 bool hasArray(const rapidjson::Value &value, const char *key) { return value.HasMember(key) && value[key].IsArray(); }
 
@@ -2451,6 +2714,9 @@ Attachment DiscordClient::parseAttachmentObject(const rapidjson::Value &aObj) {
 	attachment.width = Utils::Json::getInt(aObj, "width");
 	attachment.height = Utils::Json::getInt(aObj, "height");
 	attachment.content_type = Utils::Json::getString(aObj, "content_type");
+	// The prefix is how clients mark a spoiler on upload; the docs only describe the flag.
+	attachment.spoiler =
+	    (Utils::Json::getInt(aObj, "flags") & ATTACHMENT_FLAG_SPOILER) || attachment.filename.rfind("SPOILER_", 0) == 0;
 	if ((size_t)attachment.size > Utils::Image::maxAnimatedBytes() && Utils::Gif::hasGifPath(attachment.proxy_url)) {
 		attachment.proxy_url = withQuery(attachment.proxy_url, "format=jpeg");
 	}
@@ -2465,37 +2731,175 @@ Emoji DiscordClient::parseEmojiObject(const rapidjson::Value &eObj) {
 	return emoji;
 }
 
-// Spoilered media is left out, since attachments have no way to hide behind a spoiler.
-void DiscordClient::parseComponents(const rapidjson::Value &components, Message &msg, bool spoiler) {
+MessageControl DiscordClient::parseControl(const rapidjson::Value &component, bool hidden) {
+	MessageControl control;
+	control.type = Utils::Json::getInt(component, "type");
+	control.customId = Utils::Json::getString(component, "custom_id");
+	control.disabled = Utils::Json::getBool(component, "disabled");
+	control.hidden = hidden;
+
+	if (control.isButton()) {
+		control.style = Utils::Json::getInt(component, "style");
+		control.label = Utils::Json::getString(component, "label");
+		control.url = Utils::Json::getString(component, "url");
+		if (hasObject(component, "emoji")) {
+			control.emoji = parseEmojiObject(component["emoji"]);
+		}
+		return control;
+	}
+
+	control.label = Utils::Json::getString(component, "placeholder");
+	control.minValues = Utils::Json::getInt(component, "min_values", 1);
+	control.maxValues = Utils::Json::getInt(component, "max_values", 1);
+
+	if (hasArray(component, "options")) {
+		for (const auto &item : component["options"].GetArray()) {
+			SelectOption option;
+			option.label = Utils::Json::getString(item, "label");
+			option.value = Utils::Json::getString(item, "value");
+			option.description = Utils::Json::getString(item, "description");
+			if (hasObject(item, "emoji")) {
+				option.emoji = parseEmojiObject(item["emoji"]);
+			}
+			if (Utils::Json::getBool(item, "default")) {
+				control.chosen.push_back(option.value);
+				control.chosenLabel += (control.chosenLabel.empty() ? "" : ", ") + option.label;
+			}
+			control.options.push_back(option);
+		}
+	}
+	if (hasArray(component, "default_values")) {
+		for (const auto &item : component["default_values"].GetArray()) {
+			control.chosen.push_back(Utils::Json::getString(item, "id"));
+		}
+	}
+	if (hasArray(component, "channel_types")) {
+		for (const auto &item : component["channel_types"].GetArray()) {
+			if (item.IsInt()) {
+				control.channelTypes.push_back(item.GetInt());
+			}
+		}
+	}
+	return control;
+}
+
+ModalField DiscordClient::parseModalInput(const rapidjson::Value &component) {
+	ModalField field;
+	const int type = Utils::Json::getInt(component, "type");
+	field.required = Utils::Json::getBool(component, "required", true);
+
+	if (type == ComponentType::TEXT_INPUT) {
+		field.control.type = ComponentType::TEXT_INPUT;
+		field.control.style = Utils::Json::getInt(component, "style", 1);
+		field.control.customId = Utils::Json::getString(component, "custom_id");
+		field.label = Utils::Json::getString(component, "label");
+		field.placeholder = Utils::Json::getString(component, "placeholder");
+		field.value = Utils::Json::getString(component, "value");
+		field.minLength = Utils::Json::getInt(component, "min_length", 0);
+		field.maxLength = Utils::Json::getInt(component, "max_length", 4000);
+		return field;
+	}
+
+	if (type == ComponentType::CHECKBOX) {
+		field.control.type = ComponentType::CHECKBOX;
+		field.control.customId = Utils::Json::getString(component, "custom_id");
+		field.checked = Utils::Json::getBool(component, "default", false);
+		field.required = false;
+		return field;
+	}
+
+	field.control = parseControl(component, false);
+	field.placeholder = field.control.label;
+	if (type == ComponentType::RADIO_GROUP) {
+		field.control.minValues = field.required ? 1 : 0;
+		field.control.maxValues = 1;
+	} else if (type == ComponentType::CHECKBOX_GROUP) {
+		const int defaultMax = field.control.options.empty() ? 1 : (int)field.control.options.size();
+		field.control.minValues = Utils::Json::getInt(component, "min_values", field.required ? 1 : 0);
+		if (!field.required && !component.HasMember("min_values")) {
+			field.control.minValues = 0;
+		}
+		field.control.maxValues = Utils::Json::getInt(component, "max_values", defaultMax);
+	} else {
+		const int minVals = Utils::Json::getInt(component, "min_values", field.required ? 1 : 0);
+		field.control.minValues = field.required ? std::max(1, minVals) : 0;
+	}
+	return field;
+}
+
+void DiscordClient::parseComponents(const rapidjson::Value &components, Message &msg, std::vector<MessageBlock> &blocks,
+                                    bool spoiler) {
+	const auto addMedia = [&msg](const rapidjson::Value &media, bool hidden, bool image) {
+		Attachment attachment = parseAttachmentObject(media);
+		const std::string path = attachment.url.substr(0, attachment.url.find('?'));
+		attachment.filename = path.substr(path.rfind('/') + 1);
+		attachment.spoiler = attachment.spoiler || hidden;
+		if (image && attachment.content_type.empty()) {
+			attachment.content_type = "image/";
+		}
+		msg.attachments.push_back(attachment);
+		return (int)msg.attachments.size() - 1;
+	};
+	const auto addText = [&msg](MessageBlock &block, const rapidjson::Value &display, bool hidden) {
+		const std::string raw = Utils::Json::getString(display, "content");
+		const std::string text = hidden ? "||" + raw + "||" : raw;
+		block.text += (block.text.empty() ? "" : "\n") + UI::MessageUtils::formatMentions(text, msg);
+		msg.content += (msg.content.empty() ? "" : "\n") + text;
+	};
+
 	for (rapidjson::SizeType c = 0; c < components.Size(); c++) {
 		const rapidjson::Value &component = components[c];
 		const int type = Utils::Json::getInt(component, "type");
 		const bool hidden = spoiler || isSpoiler(component);
 
-		if (type == COMPONENT_TEXT_DISPLAY) {
-			const std::string text = Utils::Json::getString(component, "content");
-			if (!msg.content.empty()) {
-				msg.content += "\n";
+		MessageBlock block;
+		block.spoiler = hidden;
+
+		if (type == ComponentType::TEXT_DISPLAY) {
+			addText(block, component, hidden);
+		} else if (type == ComponentType::SECTION && hasArray(component, "components")) {
+			for (const auto &display : component["components"].GetArray()) {
+				addText(block, display, hidden);
 			}
-			msg.content += hidden ? "||" + text + "||" : text;
-		} else if ((type == COMPONENT_SECTION || type == COMPONENT_CONTAINER) && hasArray(component, "components")) {
-			parseComponents(component["components"], msg, hidden);
-		} else if (type == COMPONENT_MEDIA_GALLERY && hasArray(component, "items")) {
-			const rapidjson::Value &items = component["items"];
-			for (rapidjson::SizeType i = 0; i < items.Size(); i++) {
-				if (hidden || isSpoiler(items[i]) || !hasObject(items[i], "media")) {
-					continue;
+			if (hasObject(component, "accessory")) {
+				const rapidjson::Value &accessory = component["accessory"];
+				const int accessoryType = Utils::Json::getInt(accessory, "type");
+				if (accessoryType == ComponentType::THUMBNAIL && hasObject(accessory, "media")) {
+					block.thumbnail = addMedia(accessory["media"], hidden || isSpoiler(accessory), true);
+				} else if (accessoryType == ComponentType::BUTTON) {
+					block.controls.push_back(parseControl(accessory, hidden));
 				}
-				Attachment attachment = parseAttachmentObject(items[i]["media"]);
-				const std::string path = attachment.url.substr(0, attachment.url.find('?'));
-				attachment.filename = path.substr(path.rfind('/') + 1);
-				msg.attachments.push_back(attachment);
 			}
-		} else if (type == COMPONENT_FILE && !hidden && hasObject(component, "file")) {
-			Attachment attachment = parseAttachmentObject(component["file"]);
-			attachment.filename = Utils::Json::getString(component, "name");
-			msg.attachments.push_back(attachment);
+		} else if (type == ComponentType::ACTION_ROW && hasArray(component, "components")) {
+			block.kind = MessageBlock::Kind::CONTROLS;
+			for (const auto &control : component["components"].GetArray()) {
+				block.controls.push_back(parseControl(control, hidden));
+			}
+		} else if (type == ComponentType::MEDIA_GALLERY && hasArray(component, "items")) {
+			block.kind = MessageBlock::Kind::MEDIA;
+			for (const auto &item : component["items"].GetArray()) {
+				if (hasObject(item, "media")) {
+					block.attachments.push_back(addMedia(item["media"], hidden || isSpoiler(item), true));
+				}
+			}
+		} else if (type == ComponentType::FILE_DISPLAY && hasObject(component, "file")) {
+			block.kind = MessageBlock::Kind::MEDIA;
+			block.attachments.push_back(addMedia(component["file"], hidden, false));
+			msg.attachments.back().filename = Utils::Json::getString(component, "name");
+		} else if (type == ComponentType::SEPARATOR) {
+			block.kind = MessageBlock::Kind::SEPARATOR;
+			block.divider = Utils::Json::getBool(component, "divider", true);
+			block.largeSpacing = Utils::Json::getInt(component, "spacing") == SEPARATOR_SPACING_LARGE;
+		} else if (type == ComponentType::CONTAINER && hasArray(component, "components")) {
+			block.kind = MessageBlock::Kind::CONTAINER;
+			if (component.HasMember("accent_color") && component["accent_color"].IsInt()) {
+				block.accentColor = component["accent_color"].GetInt();
+			}
+			parseComponents(component["components"], msg, block.children, hidden);
+		} else {
+			continue;
 		}
+		blocks.push_back(std::move(block));
 	}
 }
 
@@ -2660,9 +3064,27 @@ Message DiscordClient::parseSingleMessage(const rapidjson::Value &d) {
 
 	msg.type = Utils::Json::getInt(d, "type");
 
-	if ((Utils::Json::getInt(d, "flags") & MESSAGE_FLAG_COMPONENTS_V2) && hasArray(d, "components")) {
-		msg.attachments.clear();
-		parseComponents(d["components"], msg, false);
+	msg.flags = Utils::Json::getInt(d, "flags");
+	msg.applicationId = Utils::Json::getString(d, "application_id");
+
+	if (hasArray(d, "components")) {
+		if (msg.isComponentsV2()) {
+			msg.attachments.clear();
+		}
+		parseComponents(d["components"], msg, msg.blocks, false);
+	}
+
+	const char *interactionKey = hasObject(d, "interaction_metadata") ? "interaction_metadata" : "interaction";
+	if (hasObject(d, interactionKey)) {
+		const rapidjson::Value &interaction = d[interactionKey];
+		const std::string name = Utils::Json::getString(interaction, "name");
+		if (!name.empty()) {
+			msg.interactionName = msg.type == CHAT_INPUT_COMMAND_MESSAGE ? "/" + name : name;
+		}
+		if (hasObject(interaction, "user")) {
+			const User user = parseUserObject(interaction["user"]);
+			msg.interactionUser = user.global_name.empty() ? user.username : user.global_name;
+		}
 	}
 
 	if (d.HasMember("message_snapshots") && d["message_snapshots"].IsArray()) {

@@ -43,6 +43,8 @@ using SuccessCallback = std::function<void(bool success)>;
 using ThreadsCallback = std::function<void(const std::vector<Channel> &)>;
 using TokenCallback = std::function<void(const std::string &token)>;
 using SendMessageCallback = std::function<void(const Message &msg, bool success, int code)>;
+using InteractionCallback = std::function<void(const std::string &nonce, InteractionResult result)>;
+using ModalCallback = std::function<void(const Modal &modal)>;
 using ReactionCallback = std::function<void(const std::string &channelId, const std::string &messageId,
                                             const std::string &userId, const Emoji &emoji)>;
 using PollVoteCallback = std::function<void(const std::string &channelId, const std::string &messageId,
@@ -122,6 +124,14 @@ class DiscordClient {
 		std::lock_guard<std::recursive_mutex> lock(clientMutex);
 		pollVoteCallback = cb;
 	}
+	void setInteractionCallback(InteractionCallback cb) {
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		interactionCallback = cb;
+	}
+	void setModalCallback(ModalCallback cb) {
+		std::lock_guard<std::recursive_mutex> lock(clientMutex);
+		modalCallback = cb;
+	}
 	void setConnectionCallback(std::function<void()> cb) {
 		std::lock_guard<std::recursive_mutex> lock(clientMutex);
 		connectionCallback = cb;
@@ -183,6 +193,9 @@ class DiscordClient {
 	bool deleteMessage(const std::string &channelId, const std::string &messageId);
 	void deleteMessageAsync(const std::string &channelId, const std::string &messageId, SuccessCallback cb);
 	void fetchForumThreads(const std::string &channelId, ThreadsCallback cb);
+	void sendComponentInteraction(const Message &msg, const MessageControl &control,
+	                              const std::vector<std::string> &values, const std::string &nonce, SuccessCallback cb);
+	void sendModalSubmit(const Modal &modal, const std::string &nonce, SuccessCallback cb);
 	void fetchGuildDetails(const std::string &guildId, std::function<void(bool)> cb = nullptr);
 	void fetchUserProfile(const std::string &userId);
 	UserProfile getUserProfile(const std::string &userId);
@@ -192,6 +205,8 @@ class DiscordClient {
 
 	void triggerTypingIndicator(const std::string &channelId);
 	std::vector<TypingUser> getTypingUsers(const std::string &channelId);
+	std::vector<Message> getEphemeralMessages(const std::string &channelId);
+	void forgetEphemeralMessage(const std::string &channelId, const std::string &messageId);
 
 	void ringCall(const std::string &channelId);
 	void stopRinging(const std::string &channelId);
@@ -299,6 +314,11 @@ class DiscordClient {
 	void handleReactionAdd(const rapidjson::Value &d);
 	void handleReactionRemove(const rapidjson::Value &d);
 	void handlePollVote(const rapidjson::Value &d, bool added);
+	void handleInteractionResult(const rapidjson::Value &d, InteractionResult result);
+	void handleModalCreate(const rapidjson::Value &d);
+	std::string buildComponentInteraction(const Message &msg, const MessageControl &control,
+	                                      const std::vector<std::string> &values, const std::string &nonce);
+	std::string buildModalSubmit(const Modal &modal, const std::string &nonce);
 	void handlePresenceUpdate(const rapidjson::Value &d);
 	void handleUserSettingsUpdate(const rapidjson::Value &d);
 	void handleUserGuildSettingsUpdate(const rapidjson::Value &d);
@@ -312,7 +332,10 @@ class DiscordClient {
 	static Embed parseEmbedObject(const rapidjson::Value &eObj);
 	static Attachment parseAttachmentObject(const rapidjson::Value &aObj);
 	static Emoji parseEmojiObject(const rapidjson::Value &eObj);
-	static void parseComponents(const rapidjson::Value &components, Message &msg, bool spoiler);
+	static MessageControl parseControl(const rapidjson::Value &component, bool hidden);
+	static ModalField parseModalInput(const rapidjson::Value &component);
+	static void parseComponents(const rapidjson::Value &components, Message &msg, std::vector<MessageBlock> &blocks,
+	                            bool spoiler);
 
 	struct ReactionRequest {
 		std::string channelId;
@@ -424,6 +447,8 @@ class DiscordClient {
 	ReactionCallback messageReactionAddCallback;
 	ReactionCallback messageReactionRemoveCallback;
 	PollVoteCallback pollVoteCallback;
+	InteractionCallback interactionCallback;
+	ModalCallback modalCallback;
 
 	// One at a time: the network workers would otherwise let a quick add and remove land out of order.
 	std::deque<ReactionRequest> reactionQueue;
@@ -431,6 +456,8 @@ class DiscordClient {
 	uint64_t reactionRetryAt = 0;
 
 	std::map<std::string, std::vector<TypingUser>> typingUsers;
+	// The gateway is the only source of these: REST history never returns them.
+	std::map<std::string, std::vector<Message>> ephemeralMessages;
 	std::map<std::string, UserProfile> profileCache;
 };
 
