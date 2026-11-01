@@ -8,6 +8,7 @@
 
 #include <cstring>
 #include <mbedtls/base64.h>
+#include <mbedtls/bignum.h>
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
 #include <mbedtls/pk.h>
@@ -15,12 +16,135 @@
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
+#include <vector>
 
 namespace Discord {
 
+namespace {
+
+constexpr const char *GATEWAY_URL = "wss://remote-auth-gateway.discord.gg/?v=2";
+constexpr int CLOSE_SESSION_TIMEOUT = 4003;
+
+constexpr int RSA_PUBLIC_EXPONENT = 65537;
+constexpr int RSA_MODULUS_BITS = 2048;
+constexpr int RSA_PRIME_COUNT = 3;
+constexpr int RSA_PRIME_BITS[RSA_PRIME_COUNT] = {683, 683, 682};
+constexpr int PRIME_TEST_ROUNDS = 4;
+constexpr uint32_t SIEVE_PRIME_LIMIT = 65536;
+constexpr size_t SIEVE_SPAN = 4096;
+
+struct Mpi {
+	mbedtls_mpi value;
+
+	Mpi() { mbedtls_mpi_init(&value); }
+	~Mpi() { mbedtls_mpi_free(&value); }
+	operator mbedtls_mpi *() { return &value; }
+};
+
+int consoleEntropy(void *, unsigned char *output, size_t length, size_t *written) {
+	if (R_FAILED(PS_GenerateRandomBytes(output, length))) {
+		return MBEDTLS_ERR_ENTROPY_SOURCE_FAILED;
+	}
+	*written = length;
+	return 0;
+}
+
+std::vector<uint16_t> oddPrimesBelow(uint32_t limit) {
+	std::vector<bool> composite(limit);
+	std::vector<uint16_t> primes;
+	for (uint32_t i = 3; i < limit; i += 2) {
+		if (composite[i]) {
+			continue;
+		}
+		primes.push_back(i);
+		for (uint32_t j = i * i; j < limit && i < limit / i; j += 2 * i) {
+			composite[j] = true;
+		}
+	}
+	return primes;
+}
+
+int findPrime(mbedtls_mpi *prime, int bits, const std::vector<uint16_t> &sievePrimes, mbedtls_ctr_drbg_context *drbg) {
+	const size_t bytes = (bits + 7) / 8;
+	Mpi start;
+	std::vector<bool> composite;
+	int ret = 0;
+
+	while (true) {
+		MBEDTLS_MPI_CHK(mbedtls_mpi_fill_random(start, bytes, mbedtls_ctr_drbg_random, drbg));
+		MBEDTLS_MPI_CHK(mbedtls_mpi_shift_r(start, bytes * 8 - bits));
+		for (int bit : {0, bits - 3, bits - 2, bits - 1}) {
+			MBEDTLS_MPI_CHK(mbedtls_mpi_set_bit(start, bit, 1));
+		}
+
+		composite.assign(SIEVE_SPAN, false);
+		for (uint16_t divisor : sievePrimes) {
+			mbedtls_mpi_uint remainder = 0;
+			MBEDTLS_MPI_CHK(mbedtls_mpi_mod_int(&remainder, start, divisor));
+			size_t offset = remainder == 0 ? 0 : remainder % 2 ? (divisor - remainder) / 2 : divisor - remainder / 2;
+			for (; offset < SIEVE_SPAN; offset += divisor) {
+				composite[offset] = true;
+			}
+		}
+
+		for (size_t i = 0; i < SIEVE_SPAN; i++) {
+			if (composite[i]) {
+				continue;
+			}
+			MBEDTLS_MPI_CHK(mbedtls_mpi_add_int(prime, start, 2 * i));
+
+			mbedtls_mpi_uint remainder = 0;
+			MBEDTLS_MPI_CHK(mbedtls_mpi_mod_int(&remainder, prime, RSA_PUBLIC_EXPONENT));
+			if (remainder == 1) {
+				continue;
+			}
+
+			ret = mbedtls_mpi_is_prime_ext(prime, PRIME_TEST_ROUNDS, mbedtls_ctr_drbg_random, drbg);
+			if (ret != MBEDTLS_ERR_MPI_NOT_ACCEPTABLE) {
+				return ret;
+			}
+		}
+	}
+
+cleanup:
+	return ret;
+}
+
+// Three primes take an eighth of the time two do, and the server only ever sees N. mbedTLS's
+// CRT needs just two coprime factors, so P holds the product of two primes.
+int generateKey(mbedtls_rsa_context *rsa, mbedtls_ctr_drbg_context *drbg) {
+	const std::vector<uint16_t> sievePrimes = oddPrimesBelow(SIEVE_PRIME_LIMIT);
+	Mpi primes[RSA_PRIME_COUNT];
+	Mpi minusOne[RSA_PRIME_COUNT];
+	Mpi e, p, n, phiP;
+	int ret = 0;
+
+	do {
+		for (int i = 0; i < RSA_PRIME_COUNT; i++) {
+			MBEDTLS_MPI_CHK(findPrime(primes[i], RSA_PRIME_BITS[i], sievePrimes, drbg));
+			MBEDTLS_MPI_CHK(mbedtls_mpi_sub_int(minusOne[i], primes[i], 1));
+		}
+		MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(p, primes[0], primes[1]));
+		MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(n, p, primes[2]));
+	} while (mbedtls_mpi_bitlen(n) != RSA_MODULUS_BITS);
+
+	MBEDTLS_MPI_CHK(mbedtls_mpi_lset(e, RSA_PUBLIC_EXPONENT));
+	MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(phiP, minusOne[0], minusOne[1]));
+	MBEDTLS_MPI_CHK(mbedtls_rsa_import(rsa, n, p, primes[2], nullptr, e));
+	MBEDTLS_MPI_CHK(mbedtls_mpi_inv_mod(&rsa->DP, e, phiP));
+	MBEDTLS_MPI_CHK(mbedtls_mpi_inv_mod(&rsa->DQ, e, minusOne[2]));
+	MBEDTLS_MPI_CHK(mbedtls_mpi_inv_mod(&rsa->QP, primes[2], p));
+	rsa->len = mbedtls_mpi_size(&rsa->N);
+
+cleanup:
+	return ret;
+}
+
+} // namespace
+
 RemoteAuth::RemoteAuth()
-    : state(RemoteAuthState::IDLE), heartbeatInterval(41250), lastHeartbeat(0), lastRetryTime(0), rsaContext(nullptr),
-      ctrDrbgContext(nullptr), entropyContext(nullptr), isInitializing(false), initSuccess(false) {}
+    : state(RemoteAuthState::IDLE), heartbeatInterval(0), lastHeartbeat(0), retryAt(0), rsaContext(nullptr),
+      keyReady(false), sessionWanted(false), workerRunning(false), retryImmediately(false) {}
 
 RemoteAuth::~RemoteAuth() {
 	cancel();
@@ -31,135 +155,121 @@ RemoteAuth::~RemoteAuth() {
 }
 
 bool RemoteAuth::start() {
-	if (state != RemoteAuthState::IDLE && state != RemoteAuthState::FAILED && state != RemoteAuthState::CANCELLED &&
-	    state != RemoteAuthState::COMPLETED) {
-		Logger::log("[RemoteAuth] Already in progress (state: %d)", (int)state);
+	if (sessionWanted && (state == RemoteAuthState::CONNECTING || state == RemoteAuthState::WAITING_FOR_SCAN ||
+	                      state == RemoteAuthState::WAITING_FOR_CONFIRM)) {
+		Logger::log("[RemoteAuth] Already in progress (state: %d)", (int)state.load());
 		return false;
 	}
 
 	Logger::log("[RemoteAuth] Starting remote auth");
 	fingerprint = "";
-	ticket = "";
-
-	if (initSuccess) {
-		Logger::log("[RemoteAuth] Keys already generated, proceeding to connect");
-		setState(RemoteAuthState::CONNECTING, Core::I18n::getInstance().get("login.status.connecting_auth"));
-	}
-
-	if (!initSuccess) {
-		setState(RemoteAuthState::CONNECTING, Core::I18n::getInstance().get("login.status.generating_keys"));
-		prepare();
-	} else {
-		setState(RemoteAuthState::CONNECTING, Core::I18n::getInstance().get("login.status.connecting_auth"));
-	}
-
+	sessionWanted = true;
+	setState(RemoteAuthState::CONNECTING,
+	         Core::I18n::getInstance().get(keyReady ? "login.status.connecting_auth" : "login.status.generating_keys"));
+	launchWorker();
 	return true;
 }
 
-void RemoteAuth::prepare() {
-	if (isInitializing) {
-		Logger::log("[RemoteAuth] Setup already in progress");
-		return;
+void RemoteAuth::launchWorker() {
+	if (!workerRunning.exchange(true)) {
+		workerThread.start([this] { runSession(); }, 2, 32 * 1024, true);
 	}
-
-	Logger::log("[RemoteAuth] Preparing RSA keys (Background)...");
-	isInitializing = true;
-	initSuccess = false;
-
-	if (workerThread.joinable()) {
-		workerThread.join();
-	}
-
-	workerThread.start([this] { runInit(); }, 2);
 }
 
-void RemoteAuth::runInit() {
-	Logger::log("[RemoteAuth] Init started (Background)");
-
-	if (initRSA()) {
-		Logger::log("[RemoteAuth] RSA initialization successful");
-		initSuccess = true;
-	} else {
-		Logger::log("[RemoteAuth] RSA initialization failed");
-		initSuccess = false;
-	}
-
-	isInitializing = false;
-}
-
-void RemoteAuth::cancel() {
-	Logger::log("[RemoteAuth] cancel() called, state: %d", (int)state);
-
-	if (state == RemoteAuthState::IDLE || state == RemoteAuthState::COMPLETED || state == RemoteAuthState::FAILED) {
-		Logger::log("[RemoteAuth] cancel() early return due to state");
-		return;
-	}
-
-	Logger::log("[RemoteAuth] cancel() calling ws.disconnect()");
-	ws.disconnect();
-	Logger::log("[RemoteAuth] cancel() ws.disconnect() completed");
-
-	Logger::log("[RemoteAuth] cancel() calling setState()");
-	fingerprint = "";
-	setState(RemoteAuthState::CANCELLED, Core::I18n::getInstance().get("login.status.mobile_cancelled"));
-	lastRetryTime = osGetTime();
-	Logger::log("[RemoteAuth] cancel() setState() completed");
-}
-
-void RemoteAuth::poll() {
-	ws.poll();
-
-	if (state == RemoteAuthState::CONNECTING && !isInitializing) {
-		if (!initSuccess) {
-			setState(RemoteAuthState::FAILED, Core::I18n::getInstance().get("login.status.init_rsa_failed"));
-			return;
-		}
-
-		if (ws.getState() == Network::WebSocketState::DISCONNECTED ||
-		    ws.getState() == Network::WebSocketState::CLOSED) {
-
+void RemoteAuth::runSession() {
+	if (!keyReady) {
+		keyReady = initRSA();
+		if (keyReady && sessionWanted) {
 			setState(RemoteAuthState::CONNECTING, Core::I18n::getInstance().get("login.status.connecting_auth"));
-
-			ws.setOnMessage([this](std::string &message) { handleMessage(message); });
-
-			ws.setOnError([this](const std::string &error) {
-				Logger::log("[RemoteAuth] Error: %s", error.c_str());
-				setState(RemoteAuthState::FAILED,
-				         Core::I18n::getInstance().get("login.status.connection_error") + error);
-			});
-
-			ws.setOnClose([this](int code, const std::string &reason) {
-				Logger::log("[RemoteAuth] Connection closed: %d - %s", code, reason.c_str());
-				if (state != RemoteAuthState::COMPLETED && state != RemoteAuthState::CANCELLED) {
-					setState(RemoteAuthState::FAILED, Core::I18n::getInstance().get("login.status.connection_closed"));
-					lastRetryTime = osGetTime();
-				}
-			});
-
-			std::string url = "wss://remote-auth-gateway.discord.gg/?v=2";
-			Logger::log("[RemoteAuth] Connecting to %s", url.c_str());
-
-			bool connected = ws.connect(url);
-			if (!connected) {
-				setState(RemoteAuthState::FAILED, Core::I18n::getInstance().get("login.status.failed_connect"));
-			}
 		}
 	}
 
-	if (state == RemoteAuthState::FAILED || state == RemoteAuthState::CANCELLED) {
-		uint64_t now = osGetTime();
-		if (now - lastRetryTime >= retryDelay) {
-			Logger::log("[RemoteAuth] Auto-retrying...");
-			start();
-		}
+	if (!keyReady) {
+		setState(RemoteAuthState::FAILED, Core::I18n::getInstance().get("login.status.init_rsa_failed"));
+	} else if (sessionWanted) {
+		serve();
 	}
 
-	if (heartbeatInterval > 0) {
-		uint64_t now = osGetTime();
-		if (now - lastHeartbeat >= heartbeatInterval) {
+	workerRunning = false;
+}
+
+void RemoteAuth::serve() {
+	heartbeatInterval = 0;
+
+	ws.setOnMessage([this](std::string &message) { handleMessage(message); });
+
+	ws.setOnError([this](const std::string &error) {
+		Logger::log("[RemoteAuth] Error: %s", error.c_str());
+		setState(RemoteAuthState::FAILED, Core::I18n::getInstance().get("login.status.connection_error") + error);
+	});
+
+	ws.setOnClose([this](int code, const std::string &reason) {
+		Logger::log("[RemoteAuth] Connection closed: %d - %s", code, reason.c_str());
+		if (state != RemoteAuthState::COMPLETED && state != RemoteAuthState::CANCELLED) {
+			retryImmediately = code == CLOSE_SESSION_TIMEOUT;
+			setState(RemoteAuthState::FAILED, Core::I18n::getInstance().get("login.status.connection_closed"));
+		}
+	});
+
+	if (!ws.connect(GATEWAY_URL)) {
+		setState(RemoteAuthState::FAILED, Core::I18n::getInstance().get("login.status.failed_connect"));
+		return;
+	}
+
+	while (sessionWanted && ws.isConnected()) {
+		const bool received = ws.poll();
+
+		const uint64_t now = osGetTime();
+		if (heartbeatInterval > 0 && now - lastHeartbeat >= heartbeatInterval) {
 			sendHeartbeat();
 			lastHeartbeat = now;
 		}
+
+		svcSleepThread(received ? Network::WebSocketClient::BUSY_POLL_NS : Network::WebSocketClient::IDLE_POLL_NS);
+	}
+
+	ws.disconnect();
+}
+
+void RemoteAuth::cancel() {
+	Logger::log("[RemoteAuth] cancel() called, state: %d", (int)state.load());
+	sessionWanted = false;
+
+	if (state == RemoteAuthState::IDLE || state == RemoteAuthState::COMPLETED || state == RemoteAuthState::FAILED) {
+		return;
+	}
+
+	fingerprint = "";
+	setState(RemoteAuthState::CANCELLED, Core::I18n::getInstance().get("login.status.mobile_cancelled"));
+	ws.disconnect();
+}
+
+void RemoteAuth::poll() {
+	std::deque<std::function<void()>> pending;
+	{
+		std::lock_guard<std::mutex> lock(eventMutex);
+		pending.swap(events);
+	}
+	for (const std::function<void()> &event : pending) {
+		event();
+	}
+
+	if (state == RemoteAuthState::CONNECTING && sessionWanted) {
+		launchWorker();
+	}
+
+	if (state != RemoteAuthState::FAILED && state != RemoteAuthState::CANCELLED) {
+		retryAt = 0;
+		return;
+	}
+
+	const uint64_t now = osGetTime();
+	if (retryAt == 0) {
+		retryAt = now + (retryImmediately.exchange(false) ? 0 : retryDelay);
+	}
+	if (now >= retryAt) {
+		Logger::log("[RemoteAuth] Auto-retrying...");
+		start();
 	}
 }
 
@@ -230,8 +340,9 @@ void RemoteAuth::handleMessage(std::string &message) {
 		ws.send(proofBuffer.GetString());
 
 	} else if (op == "pending_remote_init") {
-		fingerprint = Utils::Json::getString(doc, "fingerprint");
-		if (!fingerprint.empty()) {
+		const std::string received = Utils::Json::getString(doc, "fingerprint");
+		if (!received.empty()) {
+			post([this, received] { fingerprint = received; });
 			setState(RemoteAuthState::WAITING_FOR_SCAN, Core::I18n::getInstance().get("login.status.login"));
 		}
 
@@ -239,20 +350,21 @@ void RemoteAuth::handleMessage(std::string &message) {
 		if (doc.HasMember("encrypted_user_payload") && doc["encrypted_user_payload"].IsString()) {
 			setState(RemoteAuthState::WAITING_FOR_CONFIRM, Core::I18n::getInstance().get("login.status.user_scanned"));
 
-			if (onUserScanned) {
-				Discord::RemoteAuthUser user;
-				user.username = "User";
-				user.discriminator = "";
-				user.id = "";
-				onUserScanned(user);
-			}
+			post([this] {
+				if (onUserScanned) {
+					Discord::RemoteAuthUser user;
+					user.username = "User";
+					user.discriminator = "";
+					user.id = "";
+					onUserScanned(user);
+				}
+			});
 		}
 
 	} else if (op == "pending_login") {
-		ticket = Utils::Json::getString(doc, "ticket");
-		if (!ticket.empty() && onTokenReceived) {
-			setState(RemoteAuthState::COMPLETED, Core::I18n::getInstance().get("login.status.auth_completed"));
-			onTokenReceived(ticket);
+		const std::string ticket = Utils::Json::getString(doc, "ticket");
+		if (!ticket.empty()) {
+			finish(ticket);
 		}
 
 	} else if (op == "pending_finish") {
@@ -260,19 +372,29 @@ void RemoteAuth::handleMessage(std::string &message) {
 			setState(RemoteAuthState::WAITING_FOR_CONFIRM, "Confirming...");
 		}
 
-		ticket = Utils::Json::getString(doc, "encrypted_token");
+		std::string ticket = Utils::Json::getString(doc, "encrypted_token");
 		if (ticket.empty()) {
 			ticket = Utils::Json::getString(doc, "ticket");
 		}
 
-		if (!ticket.empty() && onTokenReceived) {
-			setState(RemoteAuthState::COMPLETED, Core::I18n::getInstance().get("login.status.auth_completed"));
-			onTokenReceived(ticket);
+		if (!ticket.empty()) {
+			finish(ticket);
 		}
 
 	} else if (op == "cancel") {
+		retryImmediately = true;
 		setState(RemoteAuthState::CANCELLED, Core::I18n::getInstance().get("login.status.mobile_cancelled"));
+		ws.disconnect();
 	}
+}
+
+void RemoteAuth::finish(const std::string &ticket) {
+	setState(RemoteAuthState::COMPLETED, Core::I18n::getInstance().get("login.status.auth_completed"));
+	post([this, ticket] {
+		if (onTokenReceived) {
+			onTokenReceived(ticket);
+		}
+	});
 }
 
 void RemoteAuth::sendHeartbeat() {
@@ -287,59 +409,56 @@ void RemoteAuth::sendHeartbeat() {
 	ws.send(buffer.GetString());
 }
 
+void RemoteAuth::post(std::function<void()> event) {
+	std::lock_guard<std::mutex> lock(eventMutex);
+	events.push_back(std::move(event));
+}
+
 void RemoteAuth::setState(RemoteAuthState newState, const std::string &info) {
 	state = newState;
-	if (onStateChange) {
-		onStateChange(state, info);
-	}
+	post([this, newState, info] {
+		if (onStateChange) {
+			onStateChange(newState, info);
+		}
+	});
 }
 
 bool RemoteAuth::initRSA() {
-	Logger::log("[RemoteAuth] Initializing unique RSA-2048");
+	Logger::log("[RemoteAuth] Generating new RSA-2048 key...");
 
 	rsaContext = new mbedtls_pk_context();
-	ctrDrbgContext = new mbedtls_ctr_drbg_context();
-	entropyContext = new mbedtls_entropy_context();
-
 	mbedtls_pk_context *pk = (mbedtls_pk_context *)rsaContext;
-	mbedtls_ctr_drbg_context *ctr_drbg = (mbedtls_ctr_drbg_context *)ctrDrbgContext;
-	mbedtls_entropy_context *entropy = (mbedtls_entropy_context *)entropyContext;
-
 	mbedtls_pk_init(pk);
-	mbedtls_ctr_drbg_init(ctr_drbg);
-	mbedtls_entropy_init(entropy);
 
-	const char *pers = "discord_remote_auth";
-	std::string dynamic_pers = pers + std::to_string(osGetTime());
+	mbedtls_ctr_drbg_context ctr_drbg;
+	mbedtls_entropy_context entropy;
+	mbedtls_ctr_drbg_init(&ctr_drbg);
+	mbedtls_entropy_init(&entropy);
 
-	int ret = mbedtls_ctr_drbg_seed(ctr_drbg, mbedtls_entropy_func, entropy,
-	                                (const unsigned char *)dynamic_pers.c_str(), dynamic_pers.length());
-	if (ret != 0) {
-		cleanupRSA();
-		return false;
-	}
-
-	bool generated = false;
-
-	Logger::log("[RemoteAuth] Generating new RSA-2048 key...");
-	ret = mbedtls_pk_setup(pk, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA));
+	const std::string pers = "discord_remote_auth" + std::to_string(osGetTime());
+	int ret = mbedtls_entropy_add_source(&entropy, consoleEntropy, nullptr, MBEDTLS_ENTROPY_MAX_GATHER,
+	                                     MBEDTLS_ENTROPY_SOURCE_STRONG);
 	if (ret == 0) {
-		ret = mbedtls_rsa_gen_key(mbedtls_pk_rsa(*pk), mbedtls_ctr_drbg_random, ctr_drbg, 2048, 65537);
-		if (ret == 0) {
-			Logger::log("[RemoteAuth] RSA key generation successful");
-			generated = true;
-		} else {
-			Logger::log("[RemoteAuth] RSA key generation failed: -0x%x", -ret);
-		}
+		ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, (const unsigned char *)pers.c_str(),
+		                            pers.length());
+	}
+	if (ret == 0) {
+		ret = mbedtls_pk_setup(pk, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA));
+	}
+	if (ret == 0) {
+		ret = generateKey(mbedtls_pk_rsa(*pk), &ctr_drbg);
 	}
 
-	if (!generated) {
+	mbedtls_ctr_drbg_free(&ctr_drbg);
+	mbedtls_entropy_free(&entropy);
+
+	if (ret != 0) {
+		Logger::log("[RemoteAuth] RSA key generation failed: -0x%x", -ret);
 		cleanupRSA();
 		return false;
 	}
 
-	mbedtls_rsa_context *rsa = mbedtls_pk_rsa(*pk);
-	mbedtls_rsa_set_padding(rsa, MBEDTLS_RSA_PKCS_V21, MBEDTLS_MD_SHA256);
+	mbedtls_rsa_set_padding(mbedtls_pk_rsa(*pk), MBEDTLS_RSA_PKCS_V21, MBEDTLS_MD_SHA256);
 
 	publicKeyBase64 = exportPublicKeyBase64();
 	if (publicKeyBase64.empty()) {
@@ -355,16 +474,6 @@ void RemoteAuth::cleanupRSA() {
 		mbedtls_pk_free((mbedtls_pk_context *)rsaContext);
 		delete (mbedtls_pk_context *)rsaContext;
 		rsaContext = nullptr;
-	}
-	if (ctrDrbgContext) {
-		mbedtls_ctr_drbg_free((mbedtls_ctr_drbg_context *)ctrDrbgContext);
-		delete (mbedtls_ctr_drbg_context *)ctrDrbgContext;
-		ctrDrbgContext = nullptr;
-	}
-	if (entropyContext) {
-		mbedtls_entropy_free((mbedtls_entropy_context *)entropyContext);
-		delete (mbedtls_entropy_context *)entropyContext;
-		entropyContext = nullptr;
 	}
 }
 
@@ -384,32 +493,37 @@ std::string RemoteAuth::exportPublicKeyBase64() {
 	return Utils::Base64::encode(der_start, ret);
 }
 
-std::string RemoteAuth::decryptNonce(const std::string &encryptedNonceBase64) {
+std::string RemoteAuth::decrypt(const std::string &encryptedBase64) {
 	if (!rsaContext) {
 		return "";
 	}
 
-	std::vector<unsigned char> encrypted = Utils::Base64::decode(encryptedNonceBase64);
-	if (encrypted.empty()) {
+	mbedtls_rsa_context *rsa = mbedtls_pk_rsa(*(mbedtls_pk_context *)rsaContext);
+	std::vector<unsigned char> encrypted = Utils::Base64::decode(encryptedBase64);
+	if (encrypted.size() != mbedtls_rsa_get_len(rsa)) {
 		return "";
 	}
-
-	mbedtls_pk_context *pk = (mbedtls_pk_context *)rsaContext;
-	mbedtls_ctr_drbg_context *ctr_drbg = (mbedtls_ctr_drbg_context *)ctrDrbgContext;
-
-	mbedtls_rsa_context *rsa = mbedtls_pk_rsa(*pk);
-	mbedtls_rsa_set_padding(rsa, MBEDTLS_RSA_PKCS_V21, MBEDTLS_MD_SHA256);
 
 	unsigned char decrypted[256];
 	size_t olen = 0;
 
-	int ret = mbedtls_pk_decrypt(pk, encrypted.data(), encrypted.size(), decrypted, &olen, sizeof(decrypted),
-	                             mbedtls_ctr_drbg_random, ctr_drbg);
+	// No RNG: exponent blinding assumes P is prime, and here it is not.
+	int ret = mbedtls_rsa_rsaes_oaep_decrypt(rsa, nullptr, nullptr, MBEDTLS_RSA_PRIVATE, nullptr, 0, &olen,
+	                                         encrypted.data(), decrypted, sizeof(decrypted));
 	if (ret != 0) {
 		return "";
 	}
 
-	std::string encoded = Utils::Base64::encode(decrypted, olen);
+	return std::string((char *)decrypted, olen);
+}
+
+std::string RemoteAuth::decryptNonce(const std::string &encryptedNonceBase64) {
+	const std::string nonce = decrypt(encryptedNonceBase64);
+	if (nonce.empty()) {
+		return "";
+	}
+
+	std::string encoded = Utils::Base64::encode((const unsigned char *)nonce.data(), nonce.size());
 	for (char &c : encoded) {
 		if (c == '+') {
 			c = '-';
@@ -425,32 +539,6 @@ std::string RemoteAuth::decryptNonce(const std::string &encryptedNonceBase64) {
 	return encoded;
 }
 
-std::string RemoteAuth::decryptToken(const std::string &encryptedTokenBase64) {
-	if (!rsaContext || encryptedTokenBase64.empty()) {
-		return "";
-	}
-
-	std::vector<unsigned char> encrypted = Utils::Base64::decode(encryptedTokenBase64);
-	if (encrypted.empty()) {
-		return "";
-	}
-
-	mbedtls_pk_context *pk = (mbedtls_pk_context *)rsaContext;
-	mbedtls_ctr_drbg_context *ctr_drbg = (mbedtls_ctr_drbg_context *)ctrDrbgContext;
-
-	mbedtls_rsa_context *rsa = mbedtls_pk_rsa(*pk);
-	mbedtls_rsa_set_padding(rsa, MBEDTLS_RSA_PKCS_V21, MBEDTLS_MD_SHA256);
-
-	unsigned char decrypted[256];
-	size_t olen = 0;
-
-	int ret = mbedtls_pk_decrypt(pk, encrypted.data(), encrypted.size(), decrypted, &olen, sizeof(decrypted),
-	                             mbedtls_ctr_drbg_random, ctr_drbg);
-	if (ret != 0) {
-		return "";
-	}
-
-	return std::string((char *)decrypted, olen);
-}
+std::string RemoteAuth::decryptToken(const std::string &encryptedTokenBase64) { return decrypt(encryptedTokenBase64); }
 
 } // namespace Discord
