@@ -130,9 +130,6 @@ class Config {
 	bool isDisclaimerAccepted() const { return disclaimerAccepted; }
 	void setDisclaimerAccepted(bool accepted);
 
-	bool isSslVerificationDisabled() const { return sslVerificationDisabled; }
-	void setSslVerificationDisabled(bool disabled);
-
 	void loadTheme();
 
 	std::vector<std::string> getAvailableThemes();
@@ -151,7 +148,6 @@ class Config {
 	bool echoCancellation;
 	bool fileLoggingEnabled;
 	bool disclaimerAccepted;
-	bool sslVerificationDisabled;
 	bool showAvatars;
 	bool showServerIcons;
 	bool showHiddenChannels;

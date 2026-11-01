@@ -23,7 +23,7 @@
 Config::Config()
     : currentAccountIndex(-1), timezoneOffset(0), language("en_US"), themeType(0), typingIndicatorEnabled(true),
       notificationSound(true), echoCancellation(true), fileLoggingEnabled(false), disclaimerAccepted(false),
-      sslVerificationDisabled(false), showAvatars(true), showServerIcons(true), showHiddenChannels(false),
+      showAvatars(true), showServerIcons(true), showHiddenChannels(false),
       customThemeEnabled(false), selectedThemeName("") {
 	customTheme = getDarkPreset();
 	customTheme.name = "Custom Theme";
@@ -230,9 +230,6 @@ void Config::loadSettings() {
 			if (doc.HasMember("disclaimer_accepted") && doc["disclaimer_accepted"].IsBool()) {
 				disclaimerAccepted = doc["disclaimer_accepted"].GetBool();
 			}
-			if (doc.HasMember("ssl_verification_disabled") && doc["ssl_verification_disabled"].IsBool()) {
-				sslVerificationDisabled = doc["ssl_verification_disabled"].GetBool();
-			}
 			if (doc.HasMember("custom_theme_enabled") && doc["custom_theme_enabled"].IsBool()) {
 				customThemeEnabled = doc["custom_theme_enabled"].GetBool();
 			}
@@ -283,8 +280,6 @@ void Config::saveSettings() {
 	writer.Bool(fileLoggingEnabled);
 	writer.Key("disclaimer_accepted");
 	writer.Bool(disclaimerAccepted);
-	writer.Key("ssl_verification_disabled");
-	writer.Bool(sslVerificationDisabled);
 	writer.Key("custom_theme_enabled");
 	writer.Bool(customThemeEnabled);
 	writer.Key("selected_theme_name");
@@ -309,11 +304,6 @@ void Config::setFileLoggingEnabled(bool enabled) {
 
 void Config::setDisclaimerAccepted(bool accepted) {
 	disclaimerAccepted = accepted;
-	saveSettings();
-}
-
-void Config::setSslVerificationDisabled(bool disabled) {
-	sslVerificationDisabled = disabled;
 	saveSettings();
 }
 

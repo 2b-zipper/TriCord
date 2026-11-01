@@ -216,14 +216,11 @@ curl_slist *prepareTransfer(CURL *easy, const HttpRequest &request, HttpResponse
 	curl_easy_setopt(easy, CURLOPT_DNS_CACHE_TIMEOUT, DNS_CACHE_SECONDS);
 	curl_easy_setopt(easy, CURLOPT_MAXAGE_CONN, CONNECTION_MAX_AGE_SECONDS);
 
-	const bool verify = !Config::getInstance().isSslVerificationDisabled();
-	curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, verify ? 1L : 0L);
-	curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, verify ? 2L : 0L);
+	curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 1L);
+	curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, 2L);
 	curl_easy_setopt(easy, CURLOPT_CAINFO, nullptr);
 	curl_easy_setopt(easy, CURLOPT_CAPATH, nullptr);
-	if (verify) {
-		curl_easy_setopt(easy, CURLOPT_SSL_CTX_FUNCTION, useSharedCaChain);
-	}
+	curl_easy_setopt(easy, CURLOPT_SSL_CTX_FUNCTION, useSharedCaChain);
 
 	const std::string &method = request.method;
 	if (method == "POST") {

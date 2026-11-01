@@ -242,18 +242,6 @@ void SettingsScreen::onEnter() {
 	fileLogging.isDeveloper = true;
 	allItems.push_back(fileLogging);
 
-	SettingItem sslVerify;
-	sslVerify.label = "SSL Verification";
-	sslVerify.description = "Enable or disable SSL certificate validation";
-	sslVerify.type = SettingItemType::TOGGLE;
-	sslVerify.value = Config::getInstance().isSslVerificationDisabled() ? 0 : 1;
-	sslVerify.min = 0;
-	sslVerify.max = 1;
-	sslVerify.valueFormatter = [](int val) { return (val == 0) ? TR("common.disabled") : TR("common.enabled"); };
-	sslVerify.onUpdate = [](int val) { Config::getInstance().setSslVerificationDisabled(val == 0); };
-	sslVerify.isDeveloper = true;
-	allItems.push_back(sslVerify);
-
 	refreshVisibleItems();
 }
 

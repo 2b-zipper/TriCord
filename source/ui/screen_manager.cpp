@@ -624,8 +624,7 @@ void ScreenManager::renderStatsOverlay() {
 	    Utils::WorkerThread::extraCoreAvailable() ? "yes" : "no", extraThreads);
 	add(kDim, "AVATAR %s  TYPE %s", config.isShowAvatarsEnabled() ? "on" : "off",
 	    config.isTypingIndicatorEnabled() ? "on" : "off");
-	add(config.isSslVerificationDisabled() ? kBad : kDim, "SSL %s  FLOG %s",
-	    config.isSslVerificationDisabled() ? "OFF" : "on", config.isFileLoggingEnabled() ? "on" : "off");
+	add(kDim, "FLOG %s", config.isFileLoggingEnabled() ? "on" : "off");
 
 	const float scale = 0.4f;
 	const float lineHeight = 10.0f;

@@ -203,11 +203,8 @@ bool WebSocketClient::startTls(Tls &session, uint64_t deadline) {
 		return false;
 	}
 
-	const bool verify = !Config::getInstance().isSslVerificationDisabled();
-	mbedtls_ssl_conf_authmode(&session.config, verify ? MBEDTLS_SSL_VERIFY_REQUIRED : MBEDTLS_SSL_VERIFY_NONE);
-	if (verify) {
-		mbedtls_ssl_conf_ca_chain(&session.config, sharedCaChain(), nullptr);
-	}
+	mbedtls_ssl_conf_authmode(&session.config, MBEDTLS_SSL_VERIFY_REQUIRED);
+	mbedtls_ssl_conf_ca_chain(&session.config, sharedCaChain(), nullptr);
 	mbedtls_ssl_conf_rng(&session.config, mbedtls_ctr_drbg_random, &session.drbg);
 
 	result = mbedtls_ssl_setup(&session.ssl, &session.config);
