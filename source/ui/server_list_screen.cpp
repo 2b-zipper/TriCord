@@ -1277,6 +1277,7 @@ void ServerListScreen::update() {
 			state = State::TRANSITION_TO_SERVER;
 			sm.setLastChannelIndex(sm.getSelectedGuildId(), -1);
 			sm.setLastChannelScroll(sm.getSelectedGuildId(), 0);
+			sm.setSelectedGuildId("");
 		} else if (kDown & KEY_A) {
 			if (selectedChannelIndex >= 0 && selectedChannelIndex < (int)sortedChannels.size()) {
 				const auto &ch = sortedChannels[selectedChannelIndex];

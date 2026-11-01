@@ -116,6 +116,7 @@ void HamburgerMenu::update() {
 				ScreenManager &sm = ScreenManager::getInstance();
 				switch (item.type) {
 				case MenuItemType::SERVER_LIST:
+					sm.setSelectedGuildId("");
 					sm.setScreen(ScreenType::GUILD_LIST);
 					close();
 					return;
