@@ -2327,6 +2327,21 @@ Member DiscordClient::parseMemberObject(const rapidjson::Value &mObj, const std:
 
 namespace {
 
+constexpr int MESSAGE_FLAG_COMPONENTS_V2 = 1 << 15;
+constexpr int COMPONENT_SECTION = 9;
+constexpr int COMPONENT_TEXT_DISPLAY = 10;
+constexpr int COMPONENT_MEDIA_GALLERY = 12;
+constexpr int COMPONENT_FILE = 13;
+constexpr int COMPONENT_CONTAINER = 17;
+
+bool hasArray(const rapidjson::Value &value, const char *key) { return value.HasMember(key) && value[key].IsArray(); }
+
+bool hasObject(const rapidjson::Value &value, const char *key) { return value.HasMember(key) && value[key].IsObject(); }
+
+bool isSpoiler(const rapidjson::Value &value) {
+	return value.HasMember("spoiler") && value["spoiler"].IsBool() && value["spoiler"].GetBool();
+}
+
 std::string withQuery(const std::string &url, const char *query) {
 	return url + (url.find('?') == std::string::npos ? "?" : "&") + query;
 }
@@ -2448,6 +2463,40 @@ Emoji DiscordClient::parseEmojiObject(const rapidjson::Value &eObj) {
 	emoji.name = Utils::Json::getString(eObj, "name");
 	emoji.animated = eObj.HasMember("animated") && eObj["animated"].IsBool() && eObj["animated"].GetBool();
 	return emoji;
+}
+
+// Spoilered media is left out, since attachments have no way to hide behind a spoiler.
+void DiscordClient::parseComponents(const rapidjson::Value &components, Message &msg, bool spoiler) {
+	for (rapidjson::SizeType c = 0; c < components.Size(); c++) {
+		const rapidjson::Value &component = components[c];
+		const int type = Utils::Json::getInt(component, "type");
+		const bool hidden = spoiler || isSpoiler(component);
+
+		if (type == COMPONENT_TEXT_DISPLAY) {
+			const std::string text = Utils::Json::getString(component, "content");
+			if (!msg.content.empty()) {
+				msg.content += "\n";
+			}
+			msg.content += hidden ? "||" + text + "||" : text;
+		} else if ((type == COMPONENT_SECTION || type == COMPONENT_CONTAINER) && hasArray(component, "components")) {
+			parseComponents(component["components"], msg, hidden);
+		} else if (type == COMPONENT_MEDIA_GALLERY && hasArray(component, "items")) {
+			const rapidjson::Value &items = component["items"];
+			for (rapidjson::SizeType i = 0; i < items.Size(); i++) {
+				if (hidden || isSpoiler(items[i]) || !hasObject(items[i], "media")) {
+					continue;
+				}
+				Attachment attachment = parseAttachmentObject(items[i]["media"]);
+				const std::string path = attachment.url.substr(0, attachment.url.find('?'));
+				attachment.filename = path.substr(path.rfind('/') + 1);
+				msg.attachments.push_back(attachment);
+			}
+		} else if (type == COMPONENT_FILE && !hidden && hasObject(component, "file")) {
+			Attachment attachment = parseAttachmentObject(component["file"]);
+			attachment.filename = Utils::Json::getString(component, "name");
+			msg.attachments.push_back(attachment);
+		}
+	}
 }
 
 Message DiscordClient::parseSingleMessage(const rapidjson::Value &d) {
@@ -2610,6 +2659,11 @@ Message DiscordClient::parseSingleMessage(const rapidjson::Value &d) {
 	}
 
 	msg.type = Utils::Json::getInt(d, "type");
+
+	if ((Utils::Json::getInt(d, "flags") & MESSAGE_FLAG_COMPONENTS_V2) && hasArray(d, "components")) {
+		msg.attachments.clear();
+		parseComponents(d["components"], msg, false);
+	}
 
 	if (d.HasMember("message_snapshots") && d["message_snapshots"].IsArray()) {
 		const rapidjson::Value &snapshots = d["message_snapshots"];

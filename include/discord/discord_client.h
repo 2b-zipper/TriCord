@@ -312,6 +312,7 @@ class DiscordClient {
 	static Embed parseEmbedObject(const rapidjson::Value &eObj);
 	static Attachment parseAttachmentObject(const rapidjson::Value &aObj);
 	static Emoji parseEmojiObject(const rapidjson::Value &eObj);
+	static void parseComponents(const rapidjson::Value &components, Message &msg, bool spoiler);
 
 	struct ReactionRequest {
 		std::string channelId;

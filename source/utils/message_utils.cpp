@@ -371,10 +371,7 @@ bool isEmojiOnly(const std::string &text, int &count) {
 }
 
 bool canGroupWithPrevious(const Discord::Message &current, const Discord::Message &previous) {
-	bool isCurrentSystem = (current.type != 0 && current.type != 19);
-	bool isPreviousSystem = (previous.type != 0 && previous.type != 19);
-
-	if (isCurrentSystem != isPreviousSystem) {
+	if (current.showsContent() != previous.showsContent()) {
 		return false;
 	}
 

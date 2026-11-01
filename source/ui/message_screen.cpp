@@ -789,7 +789,7 @@ float MessageScreen::calculateMessageHeight(const Discord::Message &msg, bool sh
 		return 45.0f;
 	}
 
-	if (msg.type != 0 && msg.type != 19) {
+	if (!msg.showsContent()) {
 		totalH = 22.0f;
 		if (msg.hasPollResult) {
 			totalH += 26.0f;
@@ -911,7 +911,7 @@ float MessageScreen::calculateMessageHeight(const Discord::Message &msg, bool sh
 		totalH += currentReactionsH + 7.0f;
 	}
 
-	if (showHeader && (msg.type == 0 || msg.type == 19)) {
+	if (showHeader && msg.showsContent()) {
 		if (totalH < 28.0f) {
 			totalH = 28.0f;
 		}
@@ -1775,7 +1775,7 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y, float max
 		}
 	}
 
-	if (msg.type != 0 && msg.type != 19) {
+	if (!msg.showsContent()) {
 		drawSystemMessage(msg, y, topMargin, height, isSelected);
 		float reactionsY = y + topMargin + (msg.hasPollResult ? 50.0f : 18.0f);
 		drawReactions(msg, textOffsetX, reactionsY, isSelected);
@@ -2299,7 +2299,7 @@ void MessageScreen::showMessageOptions() {
 	}
 
 	const Discord::Message &msg = this->messages[selectedIndex];
-	if (msg.type != 0 && msg.type != 19 && msg.type != 7) {
+	if (!msg.showsContent() && msg.type != 7) {
 		return;
 	}
 

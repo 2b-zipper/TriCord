@@ -259,6 +259,9 @@ struct Message {
 	int type = 0;
 	std::string edited_timestamp;
 
+	// The types Discord renders as their content rather than as a system line.
+	bool showsContent() const { return type == 0 || type == 19 || type == 20 || type == 23 || type == 26; }
+
 	bool isForwarded = false;
 	std::string originalAuthorName;
 	std::string originalAuthorAvatar;
