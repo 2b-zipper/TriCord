@@ -4074,6 +4074,34 @@ void DiscordClient::fetchForumThreads(const std::string &channelId, ThreadsCallb
 	performFetch(true);
 }
 
+void DiscordClient::hasArchivedThreads(const std::string &channelId, std::function<void(bool)> cb) {
+	if (token.empty() || channelId.empty()) {
+		if (cb) {
+			cb(false);
+		}
+		return;
+	}
+
+	std::string url = "https://discord.com/api/v10/channels/" + channelId +
+	                  "/threads/search?archived=true&sort_by=last_message_time&sort_order=desc&limit=1&offset=0";
+
+	Network::NetworkManager::getInstance().enqueue(
+	    url, "GET", "", Network::RequestPriority::INTERACTIVE,
+	    [cb](const Network::HttpResponse &resp) {
+		    bool found = false;
+		    if (resp.success) {
+			    rapidjson::Document doc;
+			    doc.Parse(resp.body.c_str());
+			    found = !doc.HasParseError() && doc.IsObject() && doc.HasMember("threads") &&
+			            doc["threads"].IsArray() && !doc["threads"].Empty();
+		    }
+		    if (cb) {
+			    cb(found);
+		    }
+	    },
+	    {{"Authorization", token}});
+}
+
 bool DiscordClient::deleteMessage(const std::string &channelId, const std::string &messageId) {
 	if (token.empty() || channelId.empty() || messageId.empty()) {
 		return false;

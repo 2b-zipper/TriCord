@@ -4,6 +4,8 @@
 #include "discord/types.h"
 #include "screen_manager.h"
 #include <map>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_set>
 #include <unordered_map>
@@ -138,6 +140,17 @@ class ServerListScreen : public Screen {
 	void openMuteMenu(const std::string &guildId);
 	void openChannelMuteMenu(const std::string &channelId, int channelType);
 	void drawMuteMenu();
+
+	// Archived threads are absent from the guild channel list, so they need a REST lookup.
+	struct ThreadProbeResults {
+		std::mutex mutex;
+		std::vector<std::pair<std::string, bool>> done;
+	};
+	std::shared_ptr<ThreadProbeResults> threadProbeResults = std::make_shared<ThreadProbeResults>();
+	std::unordered_map<std::string, bool> archivedThreadsKnown;
+	std::unordered_set<std::string> threadProbesInFlight;
+	void probeArchivedThreads(const std::string &channelId);
+	void applyThreadProbeResults();
 
 	float bottomScrollY = 0.0f;
 	touchPosition lastTouch = {0, 0};

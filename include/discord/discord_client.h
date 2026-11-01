@@ -193,6 +193,7 @@ class DiscordClient {
 	bool deleteMessage(const std::string &channelId, const std::string &messageId);
 	void deleteMessageAsync(const std::string &channelId, const std::string &messageId, SuccessCallback cb);
 	void fetchForumThreads(const std::string &channelId, ThreadsCallback cb);
+	void hasArchivedThreads(const std::string &channelId, std::function<void(bool)> cb);
 	void sendComponentInteraction(const Message &msg, const MessageControl &control,
 	                              const std::vector<std::string> &values, const std::string &nonce, SuccessCallback cb);
 	void sendModalSubmit(const Modal &modal, const std::string &nonce, SuccessCallback cb);

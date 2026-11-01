@@ -640,6 +640,14 @@ void ServerListScreen::openChannelMuteMenu(const std::string &channelId, int cha
 			}
 			break;
 		}
+		if (!muteMenuHasThreads) {
+			auto known = archivedThreadsKnown.find(channelId);
+			if (known != archivedThreadsKnown.end()) {
+				muteMenuHasThreads = known->second;
+			} else {
+				probeArchivedThreads(channelId);
+			}
+		}
 	}
 
 	bool currentlyMuted = false;
@@ -691,6 +699,53 @@ void ServerListScreen::openChannelMuteMenu(const std::string &channelId, int cha
 	muteMenuParentIdx = -1;
 	muteMenuIsLevelSubmenu = false;
 	isMuteMenuOpen = true;
+}
+
+void ServerListScreen::probeArchivedThreads(const std::string &channelId) {
+	if (!threadProbesInFlight.insert(channelId).second) {
+		return;
+	}
+	auto results = threadProbeResults;
+	Discord::DiscordClient::getInstance().hasArchivedThreads(channelId, [results, channelId](bool found) {
+		{
+			std::lock_guard<std::mutex> lock(results->mutex);
+			results->done.emplace_back(channelId, found);
+		}
+		Utils::requestRedraw();
+	});
+}
+
+void ServerListScreen::applyThreadProbeResults() {
+	std::vector<std::pair<std::string, bool>> done;
+	{
+		std::lock_guard<std::mutex> lock(threadProbeResults->mutex);
+		done.swap(threadProbeResults->done);
+	}
+
+	for (const auto &entry : done) {
+		threadProbesInFlight.erase(entry.first);
+		archivedThreadsKnown[entry.first] = entry.second;
+
+		if (!entry.second || !isMuteMenuOpen || !muteMenuIsChannel || muteMenuHasThreads ||
+		    muteMenuTargetId != entry.first) {
+			continue;
+		}
+
+		muteMenuHasThreads = true;
+		bool currentlyMuted =
+		    std::find(muteMenuL0Windows.begin(), muteMenuL0Windows.end(), 0) != muteMenuL0Windows.end();
+		// Rebuilding level 0 overwrites the live option list, which may be an open submenu.
+		auto options = muteMenuOptions;
+		auto windows = muteMenuTimeWindows;
+		buildTopLevelMenu(currentlyMuted, muteMenuHasUnread);
+		if (muteMenuLevel == 0) {
+			muteMenuIndex++;
+		} else {
+			muteMenuOptions = options;
+			muteMenuTimeWindows = windows;
+			muteMenuParentIdx++;
+		}
+	}
 }
 
 void ServerListScreen::drawMuteMenu() {
@@ -1026,6 +1081,8 @@ void ServerListScreen::update() {
 		}
 		return;
 	}
+
+	applyThreadProbeResults();
 
 	if (isMuteMenuOpen) {
 		if (kDown & KEY_DOWN && muteMenuIndex < (int)muteMenuOptions.size() - 1) {
