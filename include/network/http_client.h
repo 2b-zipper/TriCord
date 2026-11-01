@@ -8,21 +8,27 @@
 namespace Network {
 
 struct HttpResponse {
-	long statusCode;
+	long statusCode = 0;
 	std::string body;
-	std::map<std::string, std::string> headers;
-	bool success;
+	std::string date;
+	std::string retryAfter;
+	bool success = false;
 	std::string error;
 };
 
+struct HttpRequest {
+	std::string url;
+	std::string method;
+	std::string body;
+	std::map<std::string, std::string> headers;
+	long timeoutSeconds;
+};
+
+void initHttpDefaults();
+curl_slist *prepareTransfer(CURL *easy, const HttpRequest &request, HttpResponse &response);
+
 class HttpClient {
   public:
-	HttpClient();
-	~HttpClient();
-
-	HttpClient(const HttpClient &) = delete;
-	HttpClient &operator=(const HttpClient &) = delete;
-
 	HttpResponse get(const std::string &url, const std::map<std::string, std::string> &extraHeaders = {});
 	HttpResponse post(const std::string &url, const std::string &body,
 	                  const std::map<std::string, std::string> &extraHeaders = {});
@@ -32,32 +38,15 @@ class HttpClient {
 	                 const std::map<std::string, std::string> &extraHeaders = {});
 	HttpResponse del(const std::string &url, const std::map<std::string, std::string> &extraHeaders = {});
 
-	void setHeader(const std::string &key, const std::string &value);
-	void removeHeader(const std::string &key);
-	void setAuthToken(const std::string &token);
-	void setTimeout(long seconds);
-	void setVerifySSL(bool verify);
-	void setShareHandle(CURLSH *share);
-
-	void clearHeaders();
-	void updateSuperProperties();
+	void setAuthToken(const std::string &token) { authToken = token; }
+	void setTimeout(long seconds) { timeout = seconds; }
 
   private:
-	CURL *curl;
-	CURLSH *share;
-	std::map<std::string, std::string> defaultHeaders;
+	HttpResponse perform(const std::string &url, const std::string &method, const std::string &body,
+	                     const std::map<std::string, std::string> &extraHeaders);
+
 	std::string authToken;
-	long timeout;
-	bool verifySSL;
-
-	HttpResponse performRequest(const std::string &url, const std::string &method, const std::string &body = "",
-	                            const std::map<std::string, std::string> &extraHeaders = {});
-	void setupCurl(const std::string &url);
-	void setupHeaders(const std::string &url, struct curl_slist **headers,
-	                  const std::map<std::string, std::string> &extraHeaders);
-
-	static size_t writeCallback(void *contents, size_t size, size_t nmemb, void *userp);
-	static size_t headerCallback(char *buffer, size_t size, size_t nitems, void *userdata);
+	long timeout = 0;
 };
 
 } // namespace Network

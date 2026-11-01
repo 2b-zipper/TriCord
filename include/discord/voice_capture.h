@@ -32,6 +32,8 @@ class VoiceCapture {
 
 	bool readFrame(int16_t *pcm);
 
+	uint64_t nanosUntilFrame();
+
 	int backlogFrames() const { return backlog; }
 
 	int encode(const int16_t *pcm, uint8_t *out, size_t outSize);
@@ -39,6 +41,9 @@ class VoiceCapture {
   private:
 	static constexpr uint32_t STEP_Q20 = (uint32_t)(MIC_RATE * 1048576.0 / ENCODE_RATE + 0.5);
 	static constexpr uint32_t SRC_PER_FRAME = ((uint32_t)FRAME_SAMPLES * STEP_Q20 >> 20) + 2;
+	static constexpr uint64_t NANOS_PER_SAMPLE = (uint64_t)(1000000000.0 / MIC_RATE);
+
+	uint32_t availableSamples() const;
 
 	bool running = false;
 	std::atomic<bool> muted{false};

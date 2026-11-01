@@ -106,8 +106,8 @@ int main(int argc, char **argv) {
 	Network::HttpClient timeClient;
 	timeClient.setTimeout(3);
 	Network::HttpResponse resp = timeClient.get("http://detectportal.firefox.com/success.txt", {});
-	if (resp.headers.count("Date")) {
-		UI::MessageUtils::syncClock(resp.headers["Date"]);
+	if (!resp.date.empty()) {
+		UI::MessageUtils::syncClock(resp.date);
 	}
 
 	UI::ImageManager::getInstance().init();

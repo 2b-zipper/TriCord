@@ -131,6 +131,7 @@ class VoiceClient {
 	static constexpr int ECHO_GATE_PERCENT = 25;
 	static constexpr int ECHO_GATE_MAX = 6000;
 	static constexpr int MAX_MIC_FRAMES_PER_PASS = 3;
+	static constexpr int MAX_PACKETS_PER_PASS = 8;
 	void markSpeaking(const std::string &userId);
 	void clearSpeaking(const std::string &userId);
 	void expireSpeaking();
@@ -150,6 +151,7 @@ class VoiceClient {
 	int invalidGroupRetries = 0;
 	static constexpr int MAX_INVALID_GROUP_RETRIES = 3;
 	uint32_t packetsSent = 0;
+	uint32_t micFramesDropped = 0;
 	uint32_t sendNonce = 0;
 	uint16_t sendSequence = 0;
 	uint32_t sendTimestamp = 0;

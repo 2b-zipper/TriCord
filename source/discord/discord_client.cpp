@@ -24,7 +24,6 @@
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
 #include <sstream>
-#include <strings.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unordered_map>
@@ -128,10 +127,8 @@ std::optional<double> retryAfterSeconds(const Network::HttpResponse &resp) {
 	if (!doc.HasParseError() && doc.IsObject() && doc.HasMember("retry_after") && doc["retry_after"].IsNumber()) {
 		return doc["retry_after"].GetDouble();
 	}
-	for (const auto &[name, value] : resp.headers) {
-		if (strcasecmp(name.c_str(), "Retry-After") == 0) {
-			return strtod(value.c_str(), nullptr);
-		}
+	if (!resp.retryAfter.empty()) {
+		return strtod(resp.retryAfter.c_str(), nullptr);
 	}
 	return std::nullopt;
 }
@@ -319,7 +316,7 @@ void DiscordClient::runNetworkThread(const std::string &token) {
 				break;
 			}
 
-			ws.poll();
+			const bool received = ws.poll();
 
 			std::string msgToSend;
 			bool hasMsg = false;
@@ -350,7 +347,8 @@ void DiscordClient::runNetworkThread(const std::string &token) {
 				}
 			}
 
-			svcSleepThread(5ULL * 1000 * 1000);
+			svcSleepThread(received || hasMsg ? Network::WebSocketClient::BUSY_POLL_NS
+			                                  : Network::WebSocketClient::IDLE_POLL_NS);
 		}
 
 		if (state == ConnectionState::DISCONNECTED) {
@@ -3362,7 +3360,6 @@ bool DiscordClient::editMessage(const std::string &channelId, const std::string 
 
 	Network::HttpClient http;
 	http.setAuthToken(token);
-	http.setVerifySSL(true);
 
 	Network::HttpResponse resp = http.patch(url, s.GetString());
 	return resp.success;
@@ -3554,7 +3551,6 @@ bool DiscordClient::deleteMessage(const std::string &channelId, const std::strin
 
 	Network::HttpClient http;
 	http.setAuthToken(token);
-	http.setVerifySSL(true);
 
 	Network::HttpResponse resp = http.del(url);
 	return resp.success;

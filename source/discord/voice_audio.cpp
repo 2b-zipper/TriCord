@@ -1,5 +1,6 @@
 #include "discord/voice_audio.h"
 #include "log.h"
+#include "utils/system_utils.h"
 
 #include <cstring>
 #include <malloc.h>
@@ -46,12 +47,14 @@ bool VoiceAudio::start() {
 		waveBufs[i].status = NDSP_WBUF_DONE;
 	}
 
+	// Each pass takes an Old 3DS about three times as long, which comes out of the refill margin.
+	outQueue = Utils::System::isNew3DS() ? 2 : 3;
 	nextWaveBuf = 0;
 	ticks = 0;
 	level = 0;
 	stats = Stats();
 	running = true;
-	Logger::log("[VoiceAudio] started (%d Hz, queue %d x %d ms)", SAMPLE_RATE, OUT_QUEUE, FRAME_MS);
+	Logger::log("[VoiceAudio] started (%d Hz, queue %d x %d ms)", SAMPLE_RATE, outQueue, FRAME_MS);
 	return true;
 }
 
@@ -310,7 +313,11 @@ void VoiceAudio::pump() {
 		}
 	}
 
-	while (queued < OUT_QUEUE) {
+	if (queued == 0 && ticks > 0) {
+		stats.dry++;
+	}
+
+	while (queued < outQueue) {
 		ndspWaveBuf &buf = waveBufs[nextWaveBuf];
 		if (slotBusy(buf)) {
 			break;
@@ -334,9 +341,10 @@ void VoiceAudio::logStats() {
 	if (!running) {
 		return;
 	}
-	Logger::log("[VoiceAudio] speakers=%u played=%lu concealed=%lu underrun=%lu skipped=%lu late=%lu",
+	Logger::log("[VoiceAudio] speakers=%u played=%lu concealed=%lu underrun=%lu dry=%lu skipped=%lu late=%lu",
 	            (unsigned)speakers.size(), (unsigned long)stats.played, (unsigned long)stats.concealed,
-	            (unsigned long)stats.underruns, (unsigned long)stats.skipped, (unsigned long)stats.late);
+	            (unsigned long)stats.underruns, (unsigned long)stats.dry, (unsigned long)stats.skipped,
+	            (unsigned long)stats.late);
 	stats = Stats();
 }
 

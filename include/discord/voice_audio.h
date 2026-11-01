@@ -40,8 +40,7 @@ class VoiceAudio {
 	void logStats();
 
   private:
-	static constexpr int OUT_BUFFERS = 3;
-	static constexpr int OUT_QUEUE = 2;
+	static constexpr int OUT_BUFFERS = 4;
 	static constexpr int QUEUE_SLOTS = 8;
 	static constexpr int MAX_PACKET = 512;
 	static constexpr int JITTER_START = 2;
@@ -72,6 +71,7 @@ class VoiceAudio {
 		uint32_t played = 0;
 		uint32_t concealed = 0;
 		uint32_t underruns = 0;
+		uint32_t dry = 0;
 		uint32_t skipped = 0;
 		uint32_t late = 0;
 	};
@@ -90,6 +90,7 @@ class VoiceAudio {
 	ndspWaveBuf waveBufs[OUT_BUFFERS];
 	int16_t *waveData = nullptr;
 	int nextWaveBuf = 0;
+	int outQueue = 2;
 	unsigned ticks = 0;
 
 	Stats stats;

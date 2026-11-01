@@ -1,8 +1,10 @@
 #ifndef WEBSOCKET_CLIENT_H
 #define WEBSOCKET_CLIENT_H
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -26,6 +28,9 @@ class WebSocketClient {
 	using ErrorCallback = std::function<void(const std::string &)>;
 	using CloseCallback = std::function<void(int code, const std::string &reason)>;
 
+	static constexpr int64_t BUSY_POLL_NS = 1000000LL;
+	static constexpr int64_t IDLE_POLL_NS = 20000000LL;
+
 	WebSocketClient();
 	~WebSocketClient();
 
@@ -45,42 +50,52 @@ class WebSocketClient {
 	void setOnError(ErrorCallback callback);
 	void setOnClose(CloseCallback callback);
 
-	void poll();
+	bool poll();
 
   private:
-	int sockfd;
-	WebSocketState state;
+	struct Tls;
+	enum class ReadStep { IDLE, PROGRESS, FRAME, FAILED };
+
+	static constexpr size_t MAX_RX_HEADER = 10;
+
+	bool parseUrl(const std::string &url);
+	bool openSocket(Tls &session, uint64_t deadline);
+	bool startTls(Tls &session, uint64_t deadline);
+	bool upgrade(Tls &session, uint64_t deadline);
+
+	bool sendFrame(WebSocketOpcode opcode, const void *data, size_t len);
+	bool writeFrame(WebSocketOpcode opcode, const void *data, size_t len, uint64_t timeoutMs);
+
+	size_t rxHeaderNeeded() const;
+	bool beginPayload(std::string &error);
+	ReadStep readEnded(int result, std::string &error) const;
+	ReadStep readSome(std::string &error);
+	void resetRx();
+	void dispatch(WebSocketOpcode opcode, std::string &payload);
+
+	bool beginClose();
+	void finishClose(int code, const std::string &reason);
+	void fail(const std::string &error);
+
+	std::atomic<WebSocketState> state{WebSocketState::DISCONNECTED};
 	std::string host;
-	int port;
+	int port = 443;
 	std::string path;
-	bool useTLS;
 
 	MessageCallback onMessage;
 	MessageCallback onBinaryMessage;
-	bool lastFrameBinary = false;
 	ErrorCallback onError;
 	CloseCallback onClose;
 
-	void *sslContext;
-	void *sslConfig;
-	void *ctrDrbg;
-	void *entropy;
-	void *serverFd;
+	std::unique_ptr<Tls> tls;
+	std::mutex ioMutex;
+	bool writeBroken = false;
 
-	bool parseUrl(const std::string &url);
-	bool performHandshake();
-	void cleanupTLS();
-
-	int rawSend(const void *data, size_t len);
-	int rawRecv(void *data, size_t len);
-	bool recvExact(void *data, size_t len);
-
-	bool sendFrame(WebSocketOpcode opcode, const void *data, size_t len);
-	bool receiveFrame(std::string &message);
-
-	std::mutex sendMutex;
-
-	std::string generateWebSocketKey();
+	uint8_t rxHeader[MAX_RX_HEADER];
+	size_t rxHeaderSize = 0;
+	bool rxInPayload = false;
+	std::string rxPayload;
+	size_t rxPayloadSize = 0;
 };
 
 } // namespace Network
