@@ -1,11 +1,13 @@
 #ifndef EMOJI_MANAGER_H
 #define EMOJI_MANAGER_H
 
+#include "ui/image_manager.h"
 #include "utils/image_utils.h"
 #include "utils/worker_thread.h"
 #include <citro2d.h>
 #include <condition_variable>
 #include <deque>
+#include <memory>
 #include <shared_mutex>
 #include <string>
 #include <unordered_map>
@@ -40,12 +42,13 @@ class EmojiManager {
 		uint64_t retryAt = 0;
 		int attempts = 0;
 		bool isLoading = false;
+		std::shared_ptr<ImageManager::Animation> animation;
 	};
 
-	EmojiInfo getEmojiInfo(const std::string &emojiId);
+	EmojiInfo getEmojiInfo(const std::string &emojiId, bool animated = false);
 	EmojiInfo getTwemojiInfo(const std::string &codepointHex);
 
-	void prefetchEmoji(const std::string &emojiId, bool visible = true);
+	void prefetchEmoji(const std::string &emojiId, bool animated = false);
 	void prefetchEmojisFromText(const std::string &text);
 
 	size_t getTwemojiCount();

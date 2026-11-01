@@ -28,6 +28,8 @@ bool isDiscordMedia(const std::string &url) {
 	       url.find("media.discordapp.net") != std::string::npos || url.find("images-ext-") != std::string::npos;
 }
 
+bool isEmoji(const std::string &url) { return url.find("/emojis/") != std::string::npos; }
+
 } // namespace
 
 struct ImageManager::Animation {
@@ -370,6 +372,12 @@ void ImageManager::prefetch(const std::string &url, int origW, int origH, Networ
 			    req.sessionId = sessionId;
 			    req.priority = priority;
 
+			    // TLS handshakes can hold the decoder's core for seconds, and an emoji frame is cheap.
+			    if (isEmoji(url)) {
+				    decode(req);
+				    return;
+			    }
+
 			    std::lock_guard<std::mutex> lock(decodeMutex);
 			    decodeQueue.push_back(std::move(req));
 			    decodeCv.notify_one();
@@ -389,7 +397,8 @@ void ImageManager::prefetch(const std::string &url, int origW, int origH, Networ
 }
 
 bool ImageManager::retryAsStill(const std::string &url, Network::RequestPriority priority) {
-	if (!isDiscordMedia(url) || !Utils::Gif::hasGifPath(url)) {
+	// A JPEG would lose an emoji's transparency, and EmojiManager falls back to its PNG instead.
+	if (!isDiscordMedia(url) || !Utils::Gif::hasGifPath(url) || isEmoji(url)) {
 		return false;
 	}
 	{
@@ -425,6 +434,37 @@ void ImageManager::runOnDecoder(std::function<void()> job) {
 		jobQueue.push_back(std::move(job));
 	}
 	decodeCv.notify_one();
+}
+
+void ImageManager::decode(DecodeRequest &req) {
+	Utils::Image::TiledData tiled;
+	std::shared_ptr<Animation> animation;
+	if (Utils::Gif::isGif(req.body)) {
+		animation = decodeGif(std::move(req.body), tiled);
+	} else {
+		tiled = Utils::Image::decodeToTiled((const unsigned char *)req.body.data(), req.body.size());
+	}
+
+	if (!tiled.pixels && retryAsStill(req.url, req.priority)) {
+		return;
+	}
+
+	PendingTexture pending;
+	pending.url = req.url;
+	pending.tiled = tiled;
+	pending.animation = std::move(animation);
+	pending.success = (tiled.pixels != nullptr);
+	pending.width = tiled.w;
+	pending.height = tiled.h;
+
+	std::lock_guard<std::mutex> lock(cacheMutex);
+	if (currentSessionId != req.sessionId) {
+		if (tiled.pixels) {
+			free(tiled.pixels);
+		}
+		return;
+	}
+	pendingTextures.push_back(pending);
 }
 
 void ImageManager::decoderWorker() {
@@ -463,34 +503,7 @@ void ImageManager::decoderWorker() {
 			continue;
 		}
 
-		Utils::Image::TiledData tiled;
-		std::shared_ptr<Animation> animation;
-		if (Utils::Gif::isGif(req.body)) {
-			animation = decodeGif(std::move(req.body), tiled);
-		} else {
-			tiled = Utils::Image::decodeToTiled((const unsigned char *)req.body.data(), req.body.size());
-		}
-
-		if (!tiled.pixels && retryAsStill(req.url, req.priority)) {
-			continue;
-		}
-
-		PendingTexture pending;
-		pending.url = req.url;
-		pending.tiled = tiled;
-		pending.animation = std::move(animation);
-		pending.success = (tiled.pixels != nullptr);
-		pending.width = tiled.w;
-		pending.height = tiled.h;
-
-		std::lock_guard<std::mutex> lock(cacheMutex);
-		if (currentSessionId != req.sessionId) {
-			if (tiled.pixels) {
-				free(tiled.pixels);
-			}
-			continue;
-		}
-		pendingTextures.push_back(pending);
+		decode(req);
 	}
 }
 
@@ -545,13 +558,13 @@ void ImageManager::uploadAnimationFrames() {
 	}
 }
 
-void ImageManager::markDrawn(const ImageInfo &info) {
-	if (!info.animation || info.animation->drawn) {
+void ImageManager::markDrawn(const std::shared_ptr<Animation> &animation) {
+	if (!animation || animation->drawn) {
 		return;
 	}
 	{
 		std::lock_guard<std::mutex> lock(animationMutex);
-		info.animation->drawn = true;
+		animation->drawn = true;
 	}
 	animationCv.notify_one();
 }

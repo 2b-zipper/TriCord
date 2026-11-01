@@ -2537,9 +2537,7 @@ Message DiscordClient::parseSingleMessage(const rapidjson::Value &d) {
 			reaction.me = rObj.HasMember("me") && rObj["me"].IsBool() ? rObj["me"].GetBool() : false;
 
 			if (rObj.HasMember("emoji") && rObj["emoji"].IsObject()) {
-				const rapidjson::Value &eObj = rObj["emoji"];
-				reaction.emoji.id = Utils::Json::getString(eObj, "id");
-				reaction.emoji.name = Utils::Json::getString(eObj, "name");
+				reaction.emoji = parseEmojiObject(rObj["emoji"]);
 			}
 			msg.reactions.push_back(reaction);
 		}
@@ -2564,8 +2562,7 @@ Message DiscordClient::parseSingleMessage(const rapidjson::Value &d) {
 					const rapidjson::Value &mObj = aObj["poll_media"];
 					answer.text = Utils::Json::getString(mObj, "text");
 					if (mObj.HasMember("emoji") && mObj["emoji"].IsObject()) {
-						answer.emoji.id = Utils::Json::getString(mObj["emoji"], "id");
-						answer.emoji.name = Utils::Json::getString(mObj["emoji"], "name");
+						answer.emoji = parseEmojiObject(mObj["emoji"]);
 					}
 				}
 				msg.poll.answers.push_back(answer);

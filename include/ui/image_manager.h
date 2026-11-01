@@ -49,7 +49,7 @@ class ImageManager {
 
 	// A frame only advances once the previous one reached the screen, which is
 	// what stops a GIF that has scrolled away.
-	void markDrawn(const ImageInfo &info);
+	void markDrawn(const std::shared_ptr<Animation> &animation);
 
 	void runOnDecoder(std::function<void()> job);
 
@@ -118,6 +118,7 @@ class ImageManager {
 	bool retryAsStill(const std::string &url, Network::RequestPriority priority);
 	std::shared_ptr<Animation> decodeGif(std::string body, Utils::Image::TiledData &tiled);
 	void uploadAnimationFrames();
+	void decode(DecodeRequest &req);
 	void decoderWorker();
 	void animationWorker();
 };

@@ -61,7 +61,7 @@ bool isImageAttachment(const Discord::Attachment &attach) {
 
 void markDrawnIfVisible(const UI::ImageManager::ImageInfo &info, float y, float height) {
 	if (y + height > 0.0f && y < 240.0f) {
-		UI::ImageManager::getInstance().markDrawn(info);
+		UI::ImageManager::getInstance().markDrawn(info.animation);
 	}
 }
 
@@ -1482,7 +1482,7 @@ bool drawEmojiGlyph(const Discord::Emoji &emoji, float x, float y, float box, fl
 		}
 		info = mgr.getTwemojiInfo(emoji.hex);
 	} else {
-		info = mgr.getEmojiInfo(emoji.id);
+		info = mgr.getEmojiInfo(emoji.id, emoji.animated);
 	}
 
 	if (info.tex) {
@@ -1493,11 +1493,12 @@ bool drawEmojiGlyph(const Discord::Emoji &emoji, float x, float y, float box, fl
 		float dx = x + (box - info.originalW * scale) / 2.0f;
 		float dy = y + (box - info.originalH * scale) / 2.0f;
 		C2D_DrawImageAt({info.tex, &subtex}, dx, dy, z, nullptr, scale, scale);
+		UI::ImageManager::getInstance().markDrawn(info.animation);
 		return true;
 	}
 
 	if (!emoji.id.empty()) {
-		mgr.prefetchEmoji(emoji.id);
+		mgr.prefetchEmoji(emoji.id, emoji.animated);
 	}
 	return false;
 }
@@ -1770,7 +1771,7 @@ float MessageScreen::drawMessage(const Discord::Message &msg, float y, float max
 
 	for (const auto &react : msg.reactions) {
 		if (!react.emoji.id.empty()) {
-			EmojiManager::getInstance().prefetchEmoji(react.emoji.id, true);
+			EmojiManager::getInstance().prefetchEmoji(react.emoji.id, react.emoji.animated);
 		}
 	}
 

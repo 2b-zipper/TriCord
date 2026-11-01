@@ -1,7 +1,6 @@
 #include "ui/emoji_manager.h"
 #include "log.h"
 #include "network/network_manager.h"
-#include "ui/image_manager.h"
 #include "utils/image_utils.h"
 #include "utils/redraw.h"
 #include "utils/system_utils.h"
@@ -15,6 +14,14 @@
 #include <unordered_set>
 
 namespace UI {
+
+namespace {
+
+std::string emojiUrl(const std::string &emojiId, const char *extension) {
+	return "https://media.discordapp.net/emojis/" + emojiId + extension + "?size=32";
+}
+
+} // namespace
 
 EmojiManager &EmojiManager::getInstance() {
 	static EmojiManager instance;
@@ -360,7 +367,19 @@ size_t EmojiManager::getCustomCount() {
 	return emojiCache.size();
 }
 
-EmojiManager::EmojiInfo EmojiManager::getEmojiInfo(const std::string &emojiId) {
+EmojiManager::EmojiInfo EmojiManager::getEmojiInfo(const std::string &emojiId, bool animated) {
+	if (animated) {
+		const ImageManager::ImageInfo gif = ImageManager::getInstance().getImageInfo(emojiUrl(emojiId, ".gif"));
+		if (!gif.failed) {
+			EmojiInfo info;
+			info.tex = gif.tex;
+			info.originalW = gif.originalW;
+			info.originalH = gif.originalH;
+			info.animation = gif.animation;
+			return info;
+		}
+	}
+
 	std::shared_lock<std::shared_mutex> lock(cacheMutex);
 	auto it = emojiCache.find(emojiId);
 	if (it != emojiCache.end()) {
@@ -372,9 +391,18 @@ EmojiManager::EmojiInfo EmojiManager::getEmojiInfo(const std::string &emojiId) {
 	return EmojiInfo();
 }
 
-void EmojiManager::prefetchEmoji(const std::string &emojiId, bool /*visible*/) {
+void EmojiManager::prefetchEmoji(const std::string &emojiId, bool animated) {
 	if (emojiId.empty()) {
 		return;
+	}
+
+	if (animated) {
+		ImageManager &images = ImageManager::getInstance();
+		const std::string url = emojiUrl(emojiId, ".gif");
+		if (!images.getImageInfo(url).failed) {
+			images.prefetch(url, 0, 0, Network::RequestPriority::INTERACTIVE);
+			return;
+		}
 	}
 
 	{
@@ -394,9 +422,9 @@ void EmojiManager::prefetchEmoji(const std::string &emojiId, bool /*visible*/) {
 		}
 	}
 
-	std::string url = "https://media.discordapp.net/emojis/" + emojiId + ".png?size=32";
 	Network::NetworkManager::getInstance().enqueue(
-	    url, "GET", "", Network::RequestPriority::INTERACTIVE, [this, emojiId](Network::HttpResponse &resp) {
+	    emojiUrl(emojiId, ".png"), "GET", "", Network::RequestPriority::INTERACTIVE,
+	    [this, emojiId](Network::HttpResponse &resp) {
 		    Utils::Image::TiledData tiled;
 		    if (resp.statusCode == 200 && !resp.body.empty()) {
 			    tiled = Utils::Image::decodeToTiled((const unsigned char *)resp.body.data(), resp.body.size(),
@@ -432,7 +460,7 @@ void EmojiManager::prefetchEmojisFromText(const std::string &text) {
 		}
 		std::string emojiId = text.substr(secondColon + 1, closeBracket - secondColon - 1);
 		if (!emojiId.empty()) {
-			prefetchEmoji(emojiId, false);
+			prefetchEmoji(emojiId, isAnimated);
 		}
 		cursor = closeBracket;
 	}
