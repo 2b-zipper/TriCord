@@ -254,6 +254,12 @@ void ScreenManager::shutdown() {
 }
 
 void ScreenManager::setScreen(ScreenType type) {
+	// Switching inside the current screen's update would destroy that screen while its update still runs.
+	if (updatingScreen) {
+		pendingScreen = type;
+		return;
+	}
+
 	if (currentScreen) {
 		currentScreen->onExit();
 	}
@@ -426,7 +432,14 @@ void ScreenManager::update() {
 
 	if (!shouldBlockScreen) {
 		if (currentScreen) {
+			updatingScreen = true;
 			currentScreen->update();
+			updatingScreen = false;
+		}
+		if (pendingScreen) {
+			ScreenType next = *pendingScreen;
+			pendingScreen.reset();
+			setScreen(next);
 		}
 	}
 

@@ -6,6 +6,7 @@
 #include <citro2d.h>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -150,6 +151,8 @@ class ScreenManager {
 
 	std::unique_ptr<Screen> currentScreen;
 	ScreenType currentType;
+	bool updatingScreen = false;
+	std::optional<ScreenType> pendingScreen;
 	std::vector<ScreenType> screenHistory;
 	std::string selectedGuildId;
 	bool debugOverlayEnabled;
