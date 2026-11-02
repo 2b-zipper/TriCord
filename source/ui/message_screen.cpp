@@ -321,6 +321,7 @@ MessageScreen::MessageScreen(const std::string &channelId, const std::string &ch
 
 MessageScreen::~MessageScreen() {
 	*aliveToken = false;
+	std::lock_guard<std::recursive_mutex> clientLock(Discord::DiscordClient::getInstance().getMutex());
 	std::lock_guard<std::recursive_mutex> lock(messageMutex);
 	Discord::DiscordClient::getInstance().setMessageCallback(nullptr);
 	Discord::DiscordClient::getInstance().setMessageUpdateCallback(nullptr);
@@ -2974,6 +2975,7 @@ void MessageScreen::renderTop(C3D_RenderTarget *target) {
 		return;
 	}
 
+	std::lock_guard<std::recursive_mutex> clientLock(Discord::DiscordClient::getInstance().getMutex());
 	std::lock_guard<std::recursive_mutex> lock(messageMutex);
 
 	if (isHiddenChannel) {
