@@ -10,6 +10,7 @@
 #include <3ds.h>
 #include <algorithm>
 #include <arpa/inet.h>
+#include <cmath>
 #include <cstring>
 #include <malloc.h>
 #include <mbedtls/gcm.h>
@@ -181,9 +182,7 @@ bool VoiceClient::isSpeaking(const std::string &userId) const {
 int VoiceClient::getMicLevel() const { return capture.lastPeak(); }
 
 int VoiceClient::getMicGateThreshold() const {
-	int sensitivity = Config::getInstance().getMicSensitivity();
-	return (sensitivity <= 50) ? 3500 - (int)((float)sensitivity / 50.0f * (3500 - 1200))
-	                           : 1200 - (int)((float)(sensitivity - 50) / 50.0f * (1200 - 100));
+	return (int)(32768.0f * powf(10.0f, (float)Config::getInstance().getMicThreshold() / 20.0f));
 }
 
 void VoiceClient::setUserVolume(const std::string &userId, int volumePercent) {

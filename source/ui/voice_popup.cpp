@@ -36,6 +36,12 @@ constexpr float CLOSE_H = 22.0f;
 constexpr float CLOSE_X = (320.0f - CLOSE_W) / 2.0f;
 constexpr float CLOSE_Y = POPUP_Y + 82.0f;
 
+constexpr int THRESHOLD_STEP_DB = 2;
+
+float barRatio(float db) {
+	return std::clamp(1.0f - db / (float)Config::MIC_THRESHOLD_MIN_DB, 0.0f, 1.0f);
+}
+
 } // namespace
 
 VoicePopup &VoicePopup::getInstance() {
@@ -82,8 +88,8 @@ void VoicePopup::render() {
 	Discord::VoiceClient &voice = Discord::VoiceClient::getInstance();
 
 	if (isSelf) {
-		int sens = Config::getInstance().getMicSensitivity();
-		std::string valStr = std::to_string(sens) + "%";
+		int threshold = Config::getInstance().getMicThreshold();
+		std::string valStr = std::to_string(threshold) + " dB";
 		drawCenteredText(POPUP_Y + 32.0f, 0.92f, 0.42f, 0.42f, ScreenManager::colorSelection(), valStr, 320.0f);
 
 		drawRoundedRect(MINUS_BTN_X, STEP_BTN_Y, 0.92f, STEP_BTN_W, STEP_BTN_H, 4.0f,
@@ -93,17 +99,15 @@ void VoicePopup::render() {
 		drawRoundedRect(BAR_X, BAR_Y, 0.91f, BAR_W, BAR_H, 4.0f, ScreenManager::colorInput());
 
 		int micPeak = voice.getMicLevel();
-		float levelNorm = std::min(1.0f, (float)micPeak / 4000.0f);
-		float fillW = BAR_W * levelNorm;
-		int threshold = voice.getMicGateThreshold();
-		bool active = micPeak >= threshold && !voice.isMuted();
+		float fillW = micPeak > 0 ? BAR_W * barRatio(20.0f * log10f((float)micPeak / 32768.0f)) : 0.0f;
+		bool active = micPeak >= voice.getMicGateThreshold() && !voice.isMuted();
 		if (fillW > 2.0f) {
 			drawRoundedRect(BAR_X, BAR_Y, 0.92f, fillW, BAR_H, 4.0f,
 			                active ? C2D_Color32(59, 165, 93, 255) : C2D_Color32(40, 95, 55, 200));
 		}
 
-		float sensPos = BAR_X + BAR_W * ((float)sens / 100.0f);
-		C2D_DrawRectSolid(sensPos - 1.0f, BAR_Y - 2.0f, 0.93f, 2.0f, BAR_H + 4.0f, ScreenManager::colorWhite());
+		float thresholdX = BAR_X + BAR_W * barRatio((float)threshold);
+		C2D_DrawRectSolid(thresholdX - 1.0f, BAR_Y - 2.0f, 0.93f, 2.0f, BAR_H + 4.0f, ScreenManager::colorWhite());
 
 		drawRoundedRect(PLUS_BTN_X, STEP_BTN_Y, 0.92f, STEP_BTN_W, STEP_BTN_H, 4.0f,
 		                ScreenManager::colorBackgroundLight());
@@ -159,8 +163,9 @@ bool VoicePopup::handleTouch(const touchPosition &touch, bool isDown, bool isHel
 	if (isDown && touch.px >= MINUS_BTN_X && touch.px <= MINUS_BTN_X + STEP_BTN_W && touch.py >= STEP_BTN_Y &&
 	    touch.py <= STEP_BTN_Y + STEP_BTN_H) {
 		if (isSelf) {
-			int sens = Config::getInstance().getMicSensitivity();
-			Config::getInstance().setMicSensitivity(std::max(0, sens - 5));
+			int threshold = Config::getInstance().getMicThreshold();
+			Config::getInstance().setMicThreshold(
+			    std::max(Config::MIC_THRESHOLD_MIN_DB, threshold - THRESHOLD_STEP_DB));
 		} else {
 			int vol = voice.getUserVolume(userId);
 			voice.setUserVolume(userId, std::max(0, vol - 10));
@@ -172,8 +177,8 @@ bool VoicePopup::handleTouch(const touchPosition &touch, bool isDown, bool isHel
 	if (isDown && touch.px >= PLUS_BTN_X && touch.px <= PLUS_BTN_X + STEP_BTN_W && touch.py >= STEP_BTN_Y &&
 	    touch.py <= STEP_BTN_Y + STEP_BTN_H) {
 		if (isSelf) {
-			int sens = Config::getInstance().getMicSensitivity();
-			Config::getInstance().setMicSensitivity(std::min(100, sens + 5));
+			int threshold = Config::getInstance().getMicThreshold();
+			Config::getInstance().setMicThreshold(std::min(0, threshold + THRESHOLD_STEP_DB));
 		} else {
 			int vol = voice.getUserVolume(userId);
 			voice.setUserVolume(userId, std::min(200, vol + 10));
@@ -186,7 +191,7 @@ bool VoicePopup::handleTouch(const touchPosition &touch, bool isDown, bool isHel
 	    touch.py <= BAR_Y + BAR_H + 5.0f) {
 		float r = std::clamp(((float)touch.px - BAR_X) / BAR_W, 0.0f, 1.0f);
 		if (isSelf) {
-			Config::getInstance().setMicSensitivity((int)(r * 100.0f + 0.5f));
+			Config::getInstance().setMicThreshold((int)lroundf((1.0f - r) * Config::MIC_THRESHOLD_MIN_DB));
 		} else {
 			voice.setUserVolume(userId, (int)(r * 200.0f + 0.5f));
 		}
