@@ -245,7 +245,7 @@ TreeKEMPublicKey::dump() const
     const auto known = nodes.count(i) > 0;
     const auto blank = known && node_at(i).blank();
 
-    printf("  %03d : ", i.val); // NOLINT
+    printf("  %03d : ", static_cast<int>(i.val)); // NOLINT
     if (!known) {
       std::cout << "????????";
     } else if (!blank) {
