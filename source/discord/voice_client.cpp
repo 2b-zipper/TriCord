@@ -10,7 +10,6 @@
 #include <3ds.h>
 #include <algorithm>
 #include <arpa/inet.h>
-#include <cmath>
 #include <cstring>
 #include <malloc.h>
 #include <mbedtls/gcm.h>
@@ -179,12 +178,6 @@ bool VoiceClient::isSpeaking(const std::string &userId) const {
 	return it != speakingUntil.end() && osGetTime() < it->second;
 }
 
-int VoiceClient::getMicLevel() const { return capture.lastPeak(); }
-
-int VoiceClient::getMicGateThreshold() const {
-	return (int)(32768.0f * powf(10.0f, (float)Config::getInstance().getMicThreshold() / 20.0f));
-}
-
 void VoiceClient::setUserVolume(const std::string &userId, int volumePercent) {
 	Config::getInstance().setUserVolume(userId, volumePercent);
 	float factor = (float)volumePercent / 100.0f;
@@ -197,6 +190,13 @@ void VoiceClient::setUserVolume(const std::string &userId, int volumePercent) {
 }
 
 int VoiceClient::getUserVolume(const std::string &userId) const { return Config::getInstance().getUserVolume(userId); }
+
+void VoiceClient::setMicVolume(int volumePercent) {
+	Config::getInstance().setMicVolume(volumePercent);
+	capture.setVolume(Config::getInstance().getMicVolume());
+}
+
+int VoiceClient::getMicVolume() const { return Config::getInstance().getMicVolume(); }
 
 void VoiceClient::setMuted(bool m) {
 	if (capture.isMuted() == m) {
@@ -924,12 +924,13 @@ void VoiceClient::pumpMicrophone(const std::string &selfId) {
 		}
 
 		// The echo canceller's residue must not count as the user speaking.
-		int gate = getMicGateThreshold();
+		int gate = MIC_GATE;
 		if (echo.isRunning() && echo.isEnabled()) {
 			int farGate = audio.farLevel() * ECHO_GATE_PERCENT / 100;
 			if (farGate > ECHO_GATE_MAX) {
 				farGate = ECHO_GATE_MAX;
 			}
+			farGate = farGate * capture.getVolume() / 100;
 			if (farGate > gate) {
 				gate = farGate;
 			}
@@ -1214,6 +1215,7 @@ void VoiceClient::handlePayload(const std::string &message) {
 		}
 
 		capture.setMuted(true);
+		capture.setVolume(Config::getInstance().getMicVolume());
 		if (!capture.start()) {
 			Logger::log("[Voice] Capture unavailable; receive only");
 		}

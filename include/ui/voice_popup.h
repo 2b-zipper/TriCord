@@ -29,6 +29,9 @@ class VoicePopup {
 	std::string userName;
 	std::string userAvatar;
 	bool isSelf = false;
+
+	int volume() const;
+	void setVolume(int percent);
 };
 
 } // namespace UI

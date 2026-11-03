@@ -1,6 +1,7 @@
 #include "discord/voice_capture.h"
 #include "log.h"
 
+#include <algorithm>
 #include <cstring>
 #include <malloc.h>
 #include <opus.h>
@@ -175,6 +176,14 @@ bool VoiceCapture::readFrame(int16_t *pcm) {
 	// Ahead of the peak, so the speaking indicator ignores the speaker's output.
 	if (echo) {
 		echo->process(pcm, FRAME_SAMPLES);
+	}
+
+	// After the echo canceller, so its echo path estimate does not move with the volume.
+	const int gain = volume;
+	if (gain != 100) {
+		for (int i = 0; i < FRAME_SAMPLES; i++) {
+			pcm[i] = (int16_t)std::clamp(pcm[i] * gain / 100, -32768, 32767);
+		}
 	}
 
 	int peak = 0;
