@@ -1,8 +1,10 @@
 #include "ui/image_manager.h"
 #include "log.h"
 #include "network/network_manager.h"
+#include "utils/apng_decoder.h"
 #include "utils/gif_decoder.h"
 #include "utils/image_utils.h"
+#include "utils/lottie_player.h"
 #include "utils/redraw.h"
 #include "utils/system_utils.h"
 
@@ -14,6 +16,7 @@ namespace UI {
 namespace {
 
 constexpr size_t ANIMATION_STACK = 8 * 1024;
+constexpr size_t LOTTIE_STACK = 16 * 1024;
 constexpr s64 ANIMATION_POLL_NS = 16 * 1000000LL;
 
 // GIFs often run faster than the screen is worth redrawing for. Frames are
@@ -33,9 +36,35 @@ bool isEmoji(const std::string &url) { return url.find("/emojis/") != std::strin
 } // namespace
 
 struct ImageManager::Animation {
-	Animation(std::string body, int maxDim) : gif(std::move(body), maxDim) {}
+	explicit Animation(std::unique_ptr<Utils::Gif::Decoder> decoder) : gif(std::move(decoder)) {}
+	explicit Animation(std::unique_ptr<Utils::Apng::Decoder> decoder) : apng(std::move(decoder)) {}
+	explicit Animation(std::unique_ptr<Utils::Lottie::Player> player) : lottie(std::move(player)) {}
+	~Animation() {
+		if (lottie) {
+			ImageManager::getInstance().retire(std::move(lottie));
+		}
+	}
 
-	Utils::Gif::Decoder gif;
+	int next() {
+		if (lottie) {
+			return lottie->next(minFrameMs());
+		}
+		int shownMs = 0;
+		do {
+			shownMs += gif ? gif->next() : apng->next();
+		} while (shownMs < minFrameMs());
+		return shownMs;
+	}
+
+	const void *pixels() const { return lottie ? lottie->pixels() : gif ? gif->pixels() : apng->pixels(); }
+	size_t pixelBytes() const { return lottie ? lottie->pixelBytes() : gif ? gif->pixelBytes() : apng->pixelBytes(); }
+	size_t memoryBytes() const {
+		return lottie ? lottie->memoryBytes() : gif ? gif->memoryBytes() : apng->memoryBytes();
+	}
+
+	std::unique_ptr<Utils::Gif::Decoder> gif;
+	std::unique_ptr<Utils::Apng::Decoder> apng;
+	std::unique_ptr<Utils::Lottie::Player> lottie;
 	C3D_Tex *tex = nullptr;
 	u64 dueAt = 0;
 	std::atomic<bool> frameReady{false};
@@ -65,7 +94,9 @@ void ImageManager::init() {
 	}
 	if (!animationThread.joinable()) {
 		stopAnimation = false;
-		animationThread.start([this] { animationWorker(); }, 3, ANIMATION_STACK, true);
+		animationThread.start([this] { animationWorker(false); }, 3, ANIMATION_STACK, true);
+		// Below the decoder, so a long parse or render never holds up image loading.
+		lottieThread.start([this] { animationWorker(true); }, 4, LOTTIE_STACK, true);
 	}
 }
 
@@ -86,10 +117,15 @@ void ImageManager::shutdown() {
 	{
 		std::lock_guard<std::mutex> lock(animationMutex);
 		stopAnimation = true;
+		lottieLoads.clear();
 	}
 	animationCv.notify_all();
+	lottieCv.notify_all();
 	if (animationThread.joinable()) {
 		animationThread.join();
+	}
+	if (lottieThread.joinable()) {
+		lottieThread.join();
 	}
 
 	clear();
@@ -302,9 +338,13 @@ void ImageManager::prefetch(const std::string &url, int origW, int origH, Networ
 		    !stillFallback.count(url) && (Utils::Gif::hasGifPath(url) || url.find("format=gif") != std::string::npos);
 	}
 
+	const bool lottie = Utils::Lottie::hasLottiePath(url);
+	const int animatedDim = std::max(origW, origH) > 0 ? std::min(std::max(origW, origH), Utils::Image::maxAnimatedDim())
+	                                                  : Utils::Image::maxAnimatedDim();
 	std::string optimizedUrl = url;
 
-	if (optimizedUrl.find("cdn.discordapp.com") != std::string::npos) {
+	// media.discordapp.net answers 400 for Lottie stickers.
+	if (!lottie && optimizedUrl.find("cdn.discordapp.com") != std::string::npos) {
 		size_t pos = optimizedUrl.find("cdn.discordapp.com");
 		optimizedUrl.replace(pos, 18, "media.discordapp.net");
 	}
@@ -360,7 +400,7 @@ void ImageManager::prefetch(const std::string &url, int origW, int origH, Networ
 
 	int sessionId = currentSessionId;
 	Network::NetworkManager::getInstance().enqueue(
-	    optimizedUrl, "GET", "", priority, [this, url, sessionId, priority](Network::HttpResponse &resp) {
+	    optimizedUrl, "GET", "", priority, [this, url, sessionId, priority, animatedDim](Network::HttpResponse &resp) {
 		    if (currentSessionId != sessionId) {
 			    return;
 		    }
@@ -371,6 +411,7 @@ void ImageManager::prefetch(const std::string &url, int origW, int origH, Networ
 			    req.body = std::move(resp.body);
 			    req.sessionId = sessionId;
 			    req.priority = priority;
+			    req.animatedDim = animatedDim;
 
 			    // TLS handshakes can hold the decoder's core for seconds, and an emoji frame is cheap.
 			    if (isEmoji(url)) {
@@ -414,18 +455,74 @@ bool ImageManager::retryAsStill(const std::string &url, Network::RequestPriority
 
 std::shared_ptr<ImageManager::Animation> ImageManager::decodeGif(std::string body, Utils::Image::TiledData &tiled) {
 	const bool tooLarge = body.size() > Utils::Image::maxAnimatedBytes();
-	auto animation = std::make_shared<Animation>(std::move(body), Utils::Image::maxAnimatedDim());
-	if (!animation->gif.valid()) {
+	auto animation = std::make_shared<Animation>(
+	    std::make_unique<Utils::Gif::Decoder>(std::move(body), Utils::Image::maxAnimatedDim()));
+	if (!animation->gif->valid()) {
 		return nullptr;
 	}
 
-	const int delayMs = animation->gif.next();
-	tiled = animation->gif.copyPixels();
-	if (tooLarge || animation->gif.frameCount() < 2) {
+	const int delayMs = animation->gif->next();
+	tiled = animation->gif->copyPixels();
+	if (tooLarge || animation->gif->frameCount() < 2) {
 		return nullptr;
 	}
 	animation->dueAt = osGetTime() + delayMs;
 	return animation;
+}
+
+std::shared_ptr<ImageManager::Animation> ImageManager::decodeApng(std::string body, int maxDim,
+                                                                  Utils::Image::TiledData &tiled) {
+	auto animation = std::make_shared<Animation>(std::make_unique<Utils::Apng::Decoder>(std::move(body), maxDim));
+	if (!animation->apng->valid()) {
+		return nullptr;
+	}
+
+	const int delayMs = animation->apng->next();
+	tiled = animation->apng->copyPixels();
+	if (animation->apng->memoryBytes() > Utils::Image::maxAnimatedBytes() || animation->apng->frameCount() < 2) {
+		return nullptr;
+	}
+	animation->dueAt = osGetTime() + delayMs;
+	return animation;
+}
+
+void ImageManager::loadLottie(DecodeRequest &req) {
+	if (currentSessionId != req.sessionId) {
+		return;
+	}
+
+	auto player = std::make_unique<Utils::Lottie::Player>(std::move(req.body), req.animatedDim);
+	PendingTexture pending;
+	pending.url = req.url;
+	if (player->valid()) {
+		pending.tiled = player->copyPixels();
+		pending.success = pending.tiled.pixels != nullptr;
+		pending.width = pending.tiled.w;
+		pending.height = pending.tiled.h;
+		if (pending.success) {
+			pending.animation = std::make_shared<Animation>(std::move(player));
+		}
+	}
+
+	std::lock_guard<std::mutex> lock(cacheMutex);
+	if (currentSessionId != req.sessionId) {
+		if (pending.tiled.pixels) {
+			free(pending.tiled.pixels);
+		}
+		return;
+	}
+	pendingTextures.push_back(pending);
+}
+
+void ImageManager::retire(std::unique_ptr<Utils::Lottie::Player> player) {
+	{
+		std::lock_guard<std::mutex> lock(animationMutex);
+		if (stopAnimation) {
+			return;
+		}
+		retiredPlayers.push_back(std::move(player));
+	}
+	lottieCv.notify_one();
 }
 
 void ImageManager::runOnDecoder(std::function<void()> job) {
@@ -437,10 +534,21 @@ void ImageManager::runOnDecoder(std::function<void()> job) {
 }
 
 void ImageManager::decode(DecodeRequest &req) {
+	if (Utils::Lottie::hasLottiePath(req.url)) {
+		{
+			std::lock_guard<std::mutex> lock(animationMutex);
+			lottieLoads.push_back(std::move(req));
+		}
+		lottieCv.notify_one();
+		return;
+	}
+
 	Utils::Image::TiledData tiled;
 	std::shared_ptr<Animation> animation;
 	if (Utils::Gif::isGif(req.body)) {
 		animation = decodeGif(std::move(req.body), tiled);
+	} else if (Utils::Apng::isApng(req.body)) {
+		animation = decodeApng(std::move(req.body), req.animatedDim, tiled);
 	} else {
 		tiled = Utils::Image::decodeToTiled((const unsigned char *)req.body.data(), req.body.size());
 	}
@@ -507,22 +615,40 @@ void ImageManager::decoderWorker() {
 	}
 }
 
-void ImageManager::animationWorker() {
-	const auto waitingForFrame = [](const std::shared_ptr<Animation> &animation) {
-		return animation->drawn && !animation->frameReady;
+void ImageManager::animationWorker(bool lottie) {
+	std::condition_variable &cv = lottie ? lottieCv : animationCv;
+	const auto waitingForFrame = [lottie](const std::shared_ptr<Animation> &animation) {
+		return (animation->lottie != nullptr) == lottie && animation->drawn && !animation->frameReady;
 	};
 
 	while (true) {
 		std::vector<std::shared_ptr<Animation>> playing;
+		std::vector<std::unique_ptr<Utils::Lottie::Player>> retired;
+		DecodeRequest load;
+		bool loading = false;
 		{
 			std::unique_lock<std::mutex> lock(animationMutex);
-			animationCv.wait(lock, [&] {
-				return stopAnimation || std::any_of(animations.begin(), animations.end(), waitingForFrame);
+			cv.wait(lock, [&] {
+				return stopAnimation || (lottie && (!retiredPlayers.empty() || !lottieLoads.empty())) ||
+				       std::any_of(animations.begin(), animations.end(), waitingForFrame);
 			});
+			if (lottie) {
+				retired.swap(retiredPlayers);
+			}
 			if (stopAnimation) {
-				return;
+				break;
 			}
 			playing = animations;
+			if (lottie && !lottieLoads.empty()) {
+				load = std::move(lottieLoads.front());
+				lottieLoads.pop_front();
+				loading = true;
+			}
+		}
+
+		retired.clear();
+		if (loading) {
+			loadLottie(load);
 		}
 
 		const u64 now = osGetTime();
@@ -530,13 +656,7 @@ void ImageManager::animationWorker() {
 			if (!waitingForFrame(animation) || now < animation->dueAt) {
 				continue;
 			}
-
-			int shownMs = 0;
-			do {
-				shownMs += animation->gif.next();
-			} while (shownMs < minFrameMs());
-
-			animation->dueAt = std::max(animation->dueAt + shownMs, now);
+			animation->dueAt = std::max(animation->dueAt + animation->next(), now);
 			animation->frameReady = true;
 		}
 		svcSleepThread(ANIMATION_POLL_NS);
@@ -549,8 +669,8 @@ void ImageManager::uploadAnimationFrames() {
 		if (!animation->frameReady) {
 			continue;
 		}
-		memcpy(animation->tex->data, animation->gif.pixels(), animation->gif.pixelBytes());
-		GSPGPU_FlushDataCache(animation->tex->data, animation->gif.pixelBytes());
+		memcpy(animation->tex->data, animation->pixels(), animation->pixelBytes());
+		GSPGPU_FlushDataCache(animation->tex->data, animation->pixelBytes());
 
 		animation->drawn = false;
 		animation->frameReady = false;
@@ -566,7 +686,7 @@ void ImageManager::markDrawn(const std::shared_ptr<Animation> &animation) {
 		std::lock_guard<std::mutex> lock(animationMutex);
 		animation->drawn = true;
 	}
-	animationCv.notify_one();
+	(animation->lottie ? lottieCv : animationCv).notify_one();
 }
 
 void ImageManager::update() {
@@ -584,7 +704,7 @@ void ImageManager::update() {
 	pendingCv.notify_one();
 
 	bool decoded = p.success && p.tiled.pixels;
-	const size_t imageBytes = p.tiled.vramSize + (p.animation ? p.animation->gif.memoryBytes() : 0);
+	const size_t imageBytes = p.tiled.vramSize + (p.animation ? p.animation->memoryBytes() : 0);
 
 	if (decoded) {
 		std::lock_guard<std::mutex> lock(cacheMutex);

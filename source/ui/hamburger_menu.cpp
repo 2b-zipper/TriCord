@@ -218,12 +218,27 @@ void HamburgerMenu::update() {
 			const auto &accounts = Config::getInstance().getAccounts();
 			if (accountSelectionIndex < (int)accounts.size()) {
 				Logger::log("[HamburgerMenu] Deleting account %d", accountSelectionIndex);
+				const std::string token = accounts[accountSelectionIndex].token;
+				const bool wasCurrent = accountSelectionIndex == Config::getInstance().getCurrentAccountIndex();
 				Config::getInstance().removeAccount(accountSelectionIndex);
 
 				const auto &newAccounts = Config::getInstance().getAccounts();
+				const bool leaving = wasCurrent || newAccounts.empty();
 
-				if (newAccounts.empty()) {
-					Discord::DiscordClient::getInstance().disconnect();
+				auto &client = Discord::DiscordClient::getInstance();
+				// Disconnect first: the revoked token would close the gateway with 4004, and the login screen
+				// answers that by removing the current account, which is now another one.
+				if (leaving) {
+					client.disconnect();
+				}
+				client.revokeToken(token);
+
+				if (leaving) {
+					UI::ImageManager::getInstance().clear();
+					Discord::AvatarCache::getInstance().clear();
+					ScreenManager::getInstance().setSelectedGuildId("");
+					ScreenManager::getInstance().setLastServerIndex(0);
+					ScreenManager::getInstance().setLastServerScroll(0);
 					ScreenManager::getInstance().setScreen(ScreenType::LOGIN);
 					close();
 					return;

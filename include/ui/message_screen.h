@@ -51,7 +51,8 @@ class MessageScreen : public Screen {
 		std::vector<UI::MarkdownRenderer::LayoutRef> blockLayouts;
 		std::vector<EmbedRenderCache> embeds;
 		bool canGroupWithPrev = false;
-		// Resolved in renderTop: isUserMentioned locks the client mutex, which messageMutex holders must not.
+		// Resolved in renderTop: rebuildLayoutCache also runs on threads holding only messageMutex, which must not
+		// take the client mutex.
 		int8_t mentionState = -1;
 		std::string headerTimestamp;
 		float pollHeight = 0.0f;

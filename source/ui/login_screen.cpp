@@ -9,9 +9,52 @@
 #include "utils/redraw.h"
 #include "utils/string_utils.h"
 #include <3ds.h>
+#include <cctype>
 #include <cmath>
 
 namespace UI {
+
+namespace {
+constexpr int ERROR_ACCOUNT_SCHEDULED_FOR_DELETION = 20011;
+constexpr int ERROR_ACCOUNT_DISABLED = 20013;
+constexpr int ERROR_PHONE_LOGIN_UNVERIFIED = 70007;
+
+constexpr float FIELD_W = 280.0f;
+constexpr float FIELD_X = (BOTTOM_SCREEN_WIDTH - FIELD_W) / 2.0f;
+constexpr float FIELD_H = 28.0f;
+constexpr float LABEL_Y = 28.0f;
+constexpr float COUNTRY_Y = 46.0f;
+constexpr float COUNTRY_H = 24.0f;
+constexpr float LOGIN_BUTTON_H = 34.0f;
+
+constexpr float PROMPT_W = 260.0f;
+constexpr float PROMPT_H = 170.0f;
+constexpr float PROMPT_X = (BOTTOM_SCREEN_WIDTH - PROMPT_W) / 2.0f;
+constexpr float PROMPT_Y = (BOTTOM_SCREEN_HEIGHT - PROMPT_H) / 2.0f;
+constexpr float PROMPT_FIELD_X = PROMPT_X + 20.0f;
+constexpr float PROMPT_FIELD_W = PROMPT_W - 40.0f;
+constexpr float PROMPT_INPUT_Y = PROMPT_Y + 52.0f;
+constexpr float PROMPT_BUTTON_Y = PROMPT_Y + 92.0f;
+constexpr float PROMPT_LINK_Y = PROMPT_Y + 130.0f;
+
+bool touched(const touchPosition &touch, float x, float y, float w, float h) {
+	return touch.px >= x && touch.px <= x + w && touch.py >= y && touch.py <= y + h;
+}
+
+struct FormLayout {
+	float identifierY;
+	float passwordY;
+	float loginButtonY;
+};
+
+FormLayout formLayout(bool phoneLogin) {
+	const float identifierY = phoneLogin ? COUNTRY_Y + COUNTRY_H + 4.0f : COUNTRY_Y;
+	const float passwordY = identifierY + FIELD_H + 22.0f;
+	return {identifierY, passwordY, passwordY + FIELD_H + 12.0f};
+}
+
+std::string loginModeSwitchText(bool phoneLogin) { return TR(phoneLogin ? "login.use_email" : "login.use_phone"); }
+} // namespace
 
 LoginScreen::LoginScreen() : qrCodeSize(0), qrCodeGenerated(false), loadingAngle(0.0f), animTimer(0.0f) {
 	statusMessage = Core::I18n::getInstance().get("login.status.initializing");
@@ -62,7 +105,7 @@ void LoginScreen::onExit() {
 void LoginScreen::update() {
 	u32 kDown = hidKeysDown();
 
-	if (kDown & KEY_TOUCH) {
+	if ((kDown & KEY_TOUCH) && !countryPicker.isOpen()) {
 		touchPosition touch;
 		hidTouchRead(&touch);
 		if (touch.px < 35 && touch.py < 35) {
@@ -142,6 +185,22 @@ void LoginScreen::update() {
 
 	Discord::RemoteAuth::getInstance().poll();
 
+	if (prompt != Prompt::NONE) {
+		if (kDown & KEY_B) {
+			prompt = Prompt::NONE;
+		} else if (kDown & KEY_TOUCH) {
+			touchPosition touch;
+			hidTouchRead(&touch);
+			updatePrompt(touch);
+		}
+		return;
+	}
+
+	if (countryPicker.isOpen()) {
+		countryPicker.update();
+		return;
+	}
+
 	if ((kDown & KEY_B) && ScreenManager::getInstance().getCurrentType() == ScreenType::ADD_ACCOUNT) {
 		if (Discord::DiscordClient::getInstance().getState() == Discord::ConnectionState::READY) {
 			ScreenManager::getInstance().setScreen(ScreenType::GUILD_LIST);
@@ -153,91 +212,49 @@ void LoginScreen::update() {
 		touchPosition touch;
 		hidTouchRead(&touch);
 
-		if (showMFAInput) {
+		const FormLayout layout = formLayout(phoneLogin);
+		const float switchW = measureText(loginModeSwitchText(phoneLogin), 0.45f, 0.45f);
 
-			float dialogW = 260.0f;
-			float dialogH = 140.0f;
-			float dX = (BOTTOM_SCREEN_WIDTH - dialogW) / 2.0f;
-			float dY = (BOTTOM_SCREEN_HEIGHT - dialogH) / 2.0f;
-
-			float inputY = dY + 50.0f;
-			float btnY = dY + 90.0f;
-
-			if (touch.px >= dX + 20 && touch.px <= dX + dialogW - 20 && touch.py >= inputY && touch.py <= inputY + 30) {
-				SwkbdState swkbd;
-				swkbdInit(&swkbd, SWKBD_TYPE_NUMPAD, 1, 8);
-				swkbdSetHintText(&swkbd, TR("login.swkbd.mfa").c_str());
-				char buf[16];
-				swkbdInputText(&swkbd, buf, sizeof(buf));
-				mfaCode = buf;
+		if (touched(touch, FIELD_X + FIELD_W - switchW - 8.0f, LABEL_Y - 6.0f, switchW + 8.0f, 22.0f)) {
+			phoneLogin = !phoneLogin;
+		} else if (phoneLogin && touched(touch, FIELD_X, COUNTRY_Y, FIELD_W, COUNTRY_H)) {
+			countryPicker.show();
+		} else if (phoneLogin && touched(touch, FIELD_X, layout.identifierY, FIELD_W, FIELD_H)) {
+			SwkbdState swkbd;
+			swkbdInit(&swkbd, SWKBD_TYPE_NUMPAD, 2, 16);
+			swkbdSetNumpadKeys(&swkbd, '+', 0);
+			swkbdSetHintText(&swkbd, TR("login.swkbd.phone").c_str());
+			swkbdSetInitialText(&swkbd, phone.c_str());
+			swkbdSetFeatures(&swkbd, SWKBD_DARKEN_TOP_SCREEN);
+			char buf[32];
+			if (swkbdInputText(&swkbd, buf, sizeof(buf)) == SWKBD_BUTTON_CONFIRM) {
+				phone = buf;
 			}
-
-			if (touch.px >= dX + 20 && touch.px <= dX + dialogW - 20 && touch.py >= btnY && touch.py <= btnY + 30) {
-				if (!mfaCode.empty()) {
-					statusMessage = TR("login.mfa.verifying");
-					client.submitMFA(mfaTicket, mfaCode,
-					                 [this](bool success, const std::string &token, bool mfa, const std::string &ticket,
-					                        const std::string &error) {
-						                 if (success) {
-							                 onLoginSuccess(token);
-						                 } else {
-							                 statusMessage = TR("login.status.failed") + ": " + error;
-						                 }
-					                 });
-				}
+		} else if (touched(touch, FIELD_X, layout.identifierY, FIELD_W, FIELD_H)) {
+			SwkbdState swkbd;
+			swkbdInit(&swkbd, SWKBD_TYPE_WESTERN, 2, -1);
+			swkbdSetHintText(&swkbd, TR("login.swkbd.email").c_str());
+			swkbdSetInitialText(&swkbd, email.c_str());
+			swkbdSetFeatures(&swkbd, SWKBD_DARKEN_TOP_SCREEN | SWKBD_DEFAULT_QWERTY);
+			char buf[256];
+			if (swkbdInputText(&swkbd, buf, sizeof(buf)) == SWKBD_BUTTON_CONFIRM) {
+				email = buf;
 			}
-		} else {
-
-			float fieldW = 280.0f;
-			float fieldX = (BOTTOM_SCREEN_WIDTH - fieldW) / 2.0f;
-			float emailY = 50.0f;
-			float passY = emailY + 50.0f;
-			float btnY = passY + 50.0f;
-
-			if (touch.px >= fieldX && touch.px <= fieldX + fieldW && touch.py >= emailY && touch.py <= emailY + 30) {
-				SwkbdState swkbd;
-				swkbdInit(&swkbd, SWKBD_TYPE_WESTERN, 2, -1);
-				swkbdSetHintText(&swkbd, TR("login.swkbd.email").c_str());
-				swkbdSetInitialText(&swkbd, email.c_str());
-				swkbdSetFeatures(&swkbd, SWKBD_DARKEN_TOP_SCREEN | SWKBD_DEFAULT_QWERTY);
-				char buf[256];
-				if (swkbdInputText(&swkbd, buf, sizeof(buf)) == SWKBD_BUTTON_CONFIRM) {
-					email = buf;
-				}
+		} else if (touched(touch, FIELD_X, layout.passwordY, FIELD_W, FIELD_H)) {
+			SwkbdState swkbd;
+			swkbdInit(&swkbd, SWKBD_TYPE_WESTERN, 2, -1);
+			swkbdSetHintText(&swkbd, TR("login.swkbd.password").c_str());
+			swkbdSetFeatures(&swkbd, SWKBD_DARKEN_TOP_SCREEN | SWKBD_DEFAULT_QWERTY);
+			swkbdSetPasswordMode(&swkbd, SWKBD_PASSWORD_HIDE_DELAY);
+			char buf[256];
+			if (swkbdInputText(&swkbd, buf, sizeof(buf)) == SWKBD_BUTTON_CONFIRM) {
+				password = buf;
 			}
-
-			if (touch.px >= fieldX && touch.px <= fieldX + fieldW && touch.py >= passY && touch.py <= passY + 30) {
-				SwkbdState swkbd;
-				swkbdInit(&swkbd, SWKBD_TYPE_WESTERN, 2, -1);
-				swkbdSetHintText(&swkbd, TR("login.swkbd.password").c_str());
-				swkbdSetFeatures(&swkbd, SWKBD_DARKEN_TOP_SCREEN | SWKBD_DEFAULT_QWERTY);
-				swkbdSetPasswordMode(&swkbd, SWKBD_PASSWORD_HIDE_DELAY);
-				char buf[256];
-				if (swkbdInputText(&swkbd, buf, sizeof(buf)) == SWKBD_BUTTON_CONFIRM) {
-					password = buf;
-				}
-			}
-
-			if (touch.px >= fieldX && touch.px <= fieldX + fieldW && touch.py >= btnY && touch.py <= btnY + 35) {
-				if (!email.empty() && !password.empty()) {
-					statusMessage = TR("login.status.logging_in");
-					client.performLogin(email, password,
-					                    [this](bool success, const std::string &token, bool mfaRequired,
-					                           const std::string &ticket, const std::string &error) {
-						                    if (success) {
-							                    onLoginSuccess(token);
-						                    } else if (mfaRequired) {
-							                    statusMessage = TR("login.mfa.required");
-							                    mfaTicket = ticket;
-							                    showMFAInput = true;
-							                    mfaCode = "";
-						                    } else {
-							                    statusMessage = TR("login.status.failed") + ": " + error;
-						                    }
-					                    });
-				} else {
-					statusMessage = TR("login.error.empty");
-				}
+		} else if (touched(touch, FIELD_X, layout.loginButtonY, FIELD_W, LOGIN_BUTTON_H)) {
+			if (!(phoneLogin ? phone : email).empty() && !password.empty()) {
+				submitLogin(false);
+			} else {
+				statusMessage = TR(phoneLogin ? "login.error.empty_phone" : "login.error.empty");
 			}
 		}
 	}
@@ -369,60 +386,52 @@ void LoginScreen::renderBottom(C3D_RenderTarget *target) {
 
 	if (!isLoading) {
 
-		if (showMFAInput) {
-
-			float dialogW = 260.0f;
-			float dialogH = 140.0f;
-			float dX = (BOTTOM_SCREEN_WIDTH - dialogW) / 2.0f;
-			float dY = (BOTTOM_SCREEN_HEIGHT - dialogH) / 2.0f;
-
-			drawOverlay(0.4f);
-			drawPopupBackground(dX, dY, dialogW, dialogH, 0.5f);
-
-			drawCenteredText(dY + 12.0f, 0.6f, 0.55f, 0.55f, ScreenManager::colorText(), TR("login.mfa.title"),
-			                 BOTTOM_SCREEN_WIDTH);
-			drawCenteredText(dY + 32.0f, 0.6f, 0.4f, 0.4f, ScreenManager::colorTextMuted(), TR("login.mfa.desc"),
-			                 BOTTOM_SCREEN_WIDTH);
-
-			float inputY = dY + 52.0f;
-			drawRoundedRect(dX + 20, inputY, 0.6f, dialogW - 40, 30.0f, 6.0f, ScreenManager::colorBackgroundLight());
-			std::string codeDisplay = mfaCode.empty() ? TR("login.mfa.hint") : mfaCode;
-			drawText(dX + 25, inputY + 7.5f, 0.7f, 0.45f, 0.45f, ScreenManager::colorText(), codeDisplay);
-
-			float btnY = dY + 92.0f;
-			drawRoundedRect(dX + 20, btnY, 0.6f, dialogW - 40, 32.0f, 6.0f, ScreenManager::colorSelection());
-			drawCenteredText(btnY + 8.5f, 0.7f, 0.5f, 0.5f, ScreenManager::colorWhite(), TR("login.mfa.verify"),
-			                 BOTTOM_SCREEN_WIDTH);
-
-			drawCenteredText(dY + dialogH + 10.0f, 0.5f, 0.4f, 0.4f, ScreenManager::colorTextMuted(),
-			                 TR("login.mfa.cancel"), BOTTOM_SCREEN_WIDTH);
-
+		if (prompt != Prompt::NONE) {
+			renderPrompt();
+		} else if (countryPicker.isOpen()) {
+			countryPicker.render();
 		} else {
 
-			float fieldW = 280.0f;
-			float fieldX = (BOTTOM_SCREEN_WIDTH - fieldW) / 2.0f;
-			float emailY = 45.0f;
+			const FormLayout layout = formLayout(phoneLogin);
 
-			drawRoundedRect(fieldX, emailY, 0.5f, fieldW, 30.0f, 6.0f, ScreenManager::colorInput());
-			drawText(fieldX, emailY - 18.0f, 0.5f, 0.45f, 0.45f, ScreenManager::colorTextMuted(),
-			         TR("login.field.email"));
-			std::string emailDisplay = email.empty() ? TR("login.field.email_hint") : email;
-			u32 emailColor = email.empty() ? ScreenManager::colorTextMuted() : ScreenManager::colorText();
-			drawText(fieldX + 8.0f, emailY + 7.5f, 0.5f, 0.45f, 0.45f, emailColor, emailDisplay);
+			drawText(FIELD_X, LABEL_Y, 0.5f, 0.45f, 0.45f, ScreenManager::colorTextMuted(),
+			         TR(phoneLogin ? "login.field.phone" : "login.field.email"));
+			const std::string switchText = loginModeSwitchText(phoneLogin);
+			drawText(FIELD_X + FIELD_W - measureText(switchText, 0.45f, 0.45f), LABEL_Y, 0.5f, 0.45f, 0.45f,
+			         ScreenManager::colorSelection(), switchText);
 
-			float passY = emailY + 50.0f;
-			drawRoundedRect(fieldX, passY, 0.5f, fieldW, 30.0f, 6.0f, ScreenManager::colorInput());
-			drawText(fieldX, passY - 18.0f, 0.5f, 0.45f, 0.45f, ScreenManager::colorTextMuted(),
+			if (phoneLogin) {
+				const Country &country = countryPicker.selected();
+				const std::string dialCode = std::string("+") + country.dialCode;
+				const float dialCodeW = measureText(dialCode, 0.45f, 0.45f);
+				const float arrowX = FIELD_X + FIELD_W - 18.0f;
+				drawRoundedRect(FIELD_X, COUNTRY_Y, 0.5f, FIELD_W, COUNTRY_H, 6.0f, ScreenManager::colorInput());
+				drawText(FIELD_X + 8.0f, COUNTRY_Y + 5.0f, 0.5f, 0.45f, 0.45f, ScreenManager::colorText(), dialCode);
+				drawText(FIELD_X + 16.0f + dialCodeW, COUNTRY_Y + 5.0f, 0.5f, 0.45f, 0.45f,
+				         ScreenManager::colorTextMuted(),
+				         getTruncatedText(country.name, arrowX - FIELD_X - 24.0f - dialCodeW, 0.45f, 0.45f));
+				drawText(arrowX, COUNTRY_Y + 6.0f, 0.5f, 0.4f, 0.4f, ScreenManager::colorTextMuted(), "\u25BC");
+			}
+
+			const std::string &identifier = phoneLogin ? phone : email;
+			drawRoundedRect(FIELD_X, layout.identifierY, 0.5f, FIELD_W, FIELD_H, 6.0f, ScreenManager::colorInput());
+			std::string identifierDisplay =
+			    identifier.empty() ? TR(phoneLogin ? "login.field.phone_hint" : "login.field.email_hint") : identifier;
+			u32 identifierColor = identifier.empty() ? ScreenManager::colorTextMuted() : ScreenManager::colorText();
+			drawText(FIELD_X + 8.0f, layout.identifierY + 6.5f, 0.5f, 0.45f, 0.45f, identifierColor, identifierDisplay);
+
+			drawRoundedRect(FIELD_X, layout.passwordY, 0.5f, FIELD_W, FIELD_H, 6.0f, ScreenManager::colorInput());
+			drawText(FIELD_X, layout.passwordY - 18.0f, 0.5f, 0.45f, 0.45f, ScreenManager::colorTextMuted(),
 			         TR("login.field.password"));
 			std::string passDisplay =
 			    password.empty() ? TR("login.field.password_hint") : std::string(password.length(), '*');
 			u32 passColor = password.empty() ? ScreenManager::colorTextMuted() : ScreenManager::colorText();
-			drawText(fieldX + 8.0f, passY + 7.5f, 0.5f, 0.45f, 0.45f, passColor, passDisplay);
+			drawText(FIELD_X + 8.0f, layout.passwordY + 6.5f, 0.5f, 0.45f, 0.45f, passColor, passDisplay);
 
-			float btnY = passY + 50.0f;
-			drawRoundedRect(fieldX, btnY, 0.5f, fieldW, 38.0f, 8.0f, ScreenManager::colorSelection());
-			drawCenteredText(btnY + 11.0f, 0.5f, 0.55f, 0.55f, ScreenManager::colorWhite(), TR("login.button.login"),
-			                 BOTTOM_SCREEN_WIDTH);
+			drawRoundedRect(FIELD_X, layout.loginButtonY, 0.5f, FIELD_W, LOGIN_BUTTON_H, 8.0f,
+			                ScreenManager::colorSelection());
+			drawCenteredText(layout.loginButtonY + 9.0f, 0.5f, 0.55f, 0.55f, ScreenManager::colorWhite(),
+			                 TR("login.button.login"), BOTTOM_SCREEN_WIDTH);
 
 			if (ScreenManager::getInstance().getCurrentType() == ScreenType::LOGIN) {
 				C3D_Tex *settingTex =
@@ -505,7 +514,187 @@ void LoginScreen::onStateChange(Discord::RemoteAuthState state, const std::strin
 
 void LoginScreen::onUserScanned(const Discord::RemoteAuthUser &user) {
 	Utils::requestRedraw();
-	statusMessage = Core::I18n::getInstance().get("login.status.scan_complete");
+	statusMessage = user.username.empty() ? Core::I18n::getInstance().get("login.status.scan_complete")
+	                                      : Core::I18n::format(TR("login.status.scanned_by"), user.username);
+}
+
+bool LoginScreen::offersSms() const { return prompt == Prompt::MFA && mfaMethod != "sms" && mfaSmsAvailable; }
+
+// QR login keeps writing statusMessage underneath an open prompt.
+void LoginScreen::setLoginStatus(const std::string &message) {
+	if (prompt != Prompt::NONE) {
+		promptStatus = message;
+	} else {
+		statusMessage = message;
+	}
+}
+
+// Discord only takes phone numbers in E.164.
+std::string LoginScreen::loginIdentifier() const {
+	if (!phoneLogin) {
+		return email;
+	}
+	std::string digits;
+	for (char c : phone) {
+		if (isdigit((unsigned char)c)) {
+			digits += c;
+		}
+	}
+	if (!phone.empty() && phone[0] == '+') {
+		return "+" + digits;
+	}
+	// The trunk prefix dialled before national numbers, as in 090 for +81 90.
+	if (!digits.empty() && digits[0] == '0') {
+		digits.erase(0, 1);
+	}
+	return std::string("+") + countryPicker.selected().dialCode + digits;
+}
+
+void LoginScreen::submitLogin(bool undelete) {
+	setLoginStatus(TR("login.status.logging_in"));
+	Discord::DiscordClient::getInstance().performLogin(
+	    loginIdentifier(), password, undelete,
+	    [this](const Discord::LoginResult &result) { handleLoginResult(result); });
+}
+
+void LoginScreen::handleLoginResult(const Discord::LoginResult &result) {
+	if (result.success) {
+		prompt = Prompt::NONE;
+		onLoginSuccess(result.token);
+		return;
+	}
+
+	promptCode.clear();
+	if (result.mfaRequired) {
+		prompt = Prompt::MFA;
+		mfaTicket = result.ticket;
+		mfaLoginInstanceId = result.loginInstanceId;
+		mfaSmsAvailable = result.sms;
+		mfaPhone.clear();
+		mfaMethod = "totp";
+		setLoginStatus(TR("login.mfa.required"));
+		if (result.sms && !result.totp) {
+			requestMfaSms();
+		}
+	} else if (result.errorCode == ERROR_ACCOUNT_SCHEDULED_FOR_DELETION || result.errorCode == ERROR_ACCOUNT_DISABLED) {
+		prompt = Prompt::UNDELETE;
+		setLoginStatus(result.error);
+	} else if (result.errorCode == ERROR_PHONE_LOGIN_UNVERIFIED) {
+		prompt = Prompt::PHONE_CODE;
+		setLoginStatus(result.error);
+	} else {
+		prompt = Prompt::NONE;
+		setLoginStatus(TR("login.status.failed") + ": " + result.error);
+	}
+}
+
+void LoginScreen::requestMfaSms() {
+	setLoginStatus(TR("login.mfa.sending_sms"));
+	Discord::DiscordClient::getInstance().sendMfaSms(mfaTicket, [this](bool success, const std::string &phoneOrError) {
+		if (success) {
+			mfaMethod = "sms";
+			mfaPhone = phoneOrError;
+			promptCode.clear();
+			setLoginStatus("");
+		} else {
+			setLoginStatus(TR("login.status.failed") + ": " + phoneOrError);
+		}
+	});
+}
+
+void LoginScreen::submitPrompt() {
+	auto &client = Discord::DiscordClient::getInstance();
+	if (prompt == Prompt::UNDELETE) {
+		submitLogin(true);
+		return;
+	}
+	if (promptCode.empty()) {
+		return;
+	}
+
+	setLoginStatus(TR(prompt == Prompt::MFA ? "login.mfa.verifying" : "login.phone.verifying"));
+	if (prompt == Prompt::MFA) {
+		client.submitMFA(mfaMethod, mfaTicket, mfaLoginInstanceId, promptCode,
+		                 [this](const Discord::LoginResult &result) {
+			                 if (result.success) {
+				                 prompt = Prompt::NONE;
+				                 onLoginSuccess(result.token);
+			                 } else {
+				                 setLoginStatus(TR("login.status.failed") + ": " + result.error);
+			                 }
+		                 });
+	} else {
+		client.authorizeLoginByPhone(loginIdentifier(), promptCode, [this](const std::string &error) {
+			if (error.empty()) {
+				submitLogin(false);
+			} else {
+				setLoginStatus(TR("login.status.failed") + ": " + error);
+			}
+		});
+	}
+}
+
+void LoginScreen::updatePrompt(const touchPosition &touch) {
+	if (prompt != Prompt::UNDELETE && touched(touch, PROMPT_FIELD_X, PROMPT_INPUT_Y, PROMPT_FIELD_W, 30.0f)) {
+		SwkbdState swkbd;
+		swkbdInit(&swkbd, SWKBD_TYPE_NUMPAD, 1, 8);
+		swkbdSetHintText(&swkbd, TR(prompt == Prompt::MFA ? "login.swkbd.mfa" : "login.swkbd.code").c_str());
+		char buf[16];
+		if (swkbdInputText(&swkbd, buf, sizeof(buf)) == SWKBD_BUTTON_CONFIRM) {
+			promptCode = buf;
+		}
+	} else if (touched(touch, PROMPT_FIELD_X, PROMPT_BUTTON_Y, PROMPT_FIELD_W, 32.0f)) {
+		submitPrompt();
+	} else if (offersSms() && touched(touch, PROMPT_FIELD_X, PROMPT_LINK_Y - 4.0f, PROMPT_FIELD_W, 20.0f)) {
+		requestMfaSms();
+	}
+}
+
+void LoginScreen::renderPrompt() {
+	std::string title;
+	std::string desc;
+	std::string button = TR("login.mfa.verify");
+	if (prompt == Prompt::MFA) {
+		title = TR("login.mfa.title");
+		desc = mfaMethod == "sms" ? Core::I18n::format(TR("login.mfa.desc_sms"), mfaPhone) : TR("login.mfa.desc");
+	} else if (prompt == Prompt::PHONE_CODE) {
+		title = TR("login.phone.title");
+		desc = TR("login.phone.desc");
+	} else {
+		title = TR("login.undelete.title");
+		desc = TR("login.undelete.desc");
+		button = TR("login.undelete.button");
+	}
+
+	drawOverlay(0.4f);
+	drawPopupBackground(PROMPT_X, PROMPT_Y, PROMPT_W, PROMPT_H, 0.5f);
+
+	drawCenteredText(PROMPT_Y + 12.0f, 0.6f, 0.55f, 0.55f, ScreenManager::colorText(), title, BOTTOM_SCREEN_WIDTH);
+	drawCenteredText(PROMPT_Y + 32.0f, 0.6f, 0.4f, 0.4f, ScreenManager::colorTextMuted(), desc, BOTTOM_SCREEN_WIDTH);
+
+	if (prompt != Prompt::UNDELETE) {
+		drawRoundedRect(PROMPT_FIELD_X, PROMPT_INPUT_Y, 0.6f, PROMPT_FIELD_W, 30.0f, 6.0f,
+		                ScreenManager::colorBackgroundLight());
+		std::string codeDisplay = promptCode.empty() ? TR("login.mfa.hint") : promptCode;
+		drawText(PROMPT_FIELD_X + 5.0f, PROMPT_INPUT_Y + 7.5f, 0.7f, 0.45f, 0.45f, ScreenManager::colorText(),
+		         codeDisplay);
+	}
+
+	drawRoundedRect(PROMPT_FIELD_X, PROMPT_BUTTON_Y, 0.6f, PROMPT_FIELD_W, 32.0f, 6.0f,
+	                ScreenManager::colorSelection());
+	drawCenteredText(PROMPT_BUTTON_Y + 8.5f, 0.7f, 0.5f, 0.5f, ScreenManager::colorWhite(), button,
+	                 BOTTOM_SCREEN_WIDTH);
+
+	if (offersSms()) {
+		drawCenteredText(PROMPT_LINK_Y, 0.7f, 0.4f, 0.4f, ScreenManager::colorSelection(), TR("login.mfa.use_sms"),
+		                 BOTTOM_SCREEN_WIDTH);
+	}
+
+	drawCenteredText(PROMPT_Y + 150.0f, 0.7f, 0.4f, 0.4f, ScreenManager::colorError(),
+	                 getTruncatedText(promptStatus, PROMPT_W - 20.0f, 0.4f, 0.4f), BOTTOM_SCREEN_WIDTH);
+
+	drawCenteredText(PROMPT_Y + PROMPT_H + 10.0f, 0.5f, 0.4f, 0.4f, ScreenManager::colorTextMuted(),
+	                 TR("login.mfa.cancel"), BOTTOM_SCREEN_WIDTH);
 }
 
 void LoginScreen::onTokenReceived(const std::string &ticket) {

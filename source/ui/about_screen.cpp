@@ -153,7 +153,7 @@ void AboutScreen::renderBottom(C3D_RenderTarget *target) {
 	drawLib("libctru, citro3d, citro2d");
 	drawLib("libcurl, mbedtls, zlib");
 	drawLib("libopus, mlspp, libdave");
-	drawLib("WebRTC AECM");
+	drawLib("WebRTC AECM, ThorVG");
 	drawLib("RapidJSON, stb_image, qrcodegen");
 	drawLib("Twemoji Assets");
 

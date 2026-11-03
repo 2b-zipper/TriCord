@@ -39,12 +39,14 @@ SOURCES		:=	source source/core source/network source/discord source/ui source/ui
 			library/webrtc-aecm/common_audio/third_party/spl_sqrt_floor \
 			library/webrtc-aecm/modules/audio_processing/aecm \
 			library/webrtc-aecm/modules/audio_processing/utility \
-			library/opus/celt library/opus/celt/arm library/opus/silk library/opus/silk/fixed library/opus/src
+			library/opus/celt library/opus/celt/arm library/opus/silk library/opus/silk/fixed library/opus/src \
+			library/thorvg/src/common library/thorvg/src/renderer library/thorvg/src/renderer/cpu_engine \
+			library/thorvg/src/loaders/lottie library/thorvg/src/loaders/raw
 DATA		:=	data
 INCLUDES	:=	include include/core include/ui library library/stb_image library/qrcodegen \
 			library/libdave/includes library/libdave/src \
 			library/mlspp/include library/mlspp/gen library/mlspp/hpke_src \
-			library/webrtc-aecm library/opus/include
+			library/webrtc-aecm library/opus/include library/thorvg/inc
 GRAPHICS	:=	gfx
 GFXBUILD	:=	$(BUILD)
 ROMFS		:=	romfs
@@ -250,6 +252,10 @@ $(MLSPP_OBJS): CXXFLAGS := $(subst -O3,-Os,$(filter-out -fno-rtti -fno-exception
 OPUS_DIRS := $(addprefix $(TOPDIR)/library/opus/,celt silk silk/fixed src)
 OPUS_OBJS := $(notdir $(patsubst %.c,%.o,$(foreach dir,$(OPUS_DIRS),$(wildcard $(dir)/*.c))))
 $(OPUS_OBJS): CFLAGS := $(addprefix -I,$(TOPDIR)/library/opus $(OPUS_DIRS)) $(CFLAGS) -DHAVE_CONFIG_H -Wno-stringop-overflow -Wno-stringop-overread
+
+THORVG_DIRS := $(addprefix $(TOPDIR)/library/thorvg/src/,common renderer renderer/cpu_engine loaders/lottie loaders/raw)
+THORVG_OBJS := $(notdir $(patsubst %.cpp,%.o,$(foreach dir,$(THORVG_DIRS),$(wildcard $(dir)/*.cpp))))
+$(THORVG_OBJS): CXXFLAGS := $(addprefix -I,$(THORVG_DIRS)) $(CXXFLAGS) -fno-math-errno -Wno-unknown-pragmas -Wno-format
 
 ifneq ("$(wildcard $(TOPDIR)/$(BANNER_IMAGE).cgfx)","")
 	BANNER_IMAGE_FILE := $(TOPDIR)/$(BANNER_IMAGE).cgfx

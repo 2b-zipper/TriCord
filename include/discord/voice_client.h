@@ -127,7 +127,6 @@ class VoiceClient {
 	std::unordered_map<std::string, uint64_t> speakingUntil;
 	static constexpr uint64_t SPEAKING_HOLD_MS = 200;
 	static constexpr uint64_t TRANSMIT_HOLD_MS = 200;
-	static constexpr int SPEAKING_PEAK_THRESHOLD = 1200;
 	static constexpr int ECHO_GATE_PERCENT = 25;
 	static constexpr int ECHO_GATE_MAX = 6000;
 	static constexpr int MAX_MIC_FRAMES_PER_PASS = 3;

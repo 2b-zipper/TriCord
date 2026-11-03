@@ -17,6 +17,12 @@
 #include <string_view>
 #include <vector>
 
+namespace Utils {
+namespace Lottie {
+class Player;
+} // namespace Lottie
+} // namespace Utils
+
 namespace UI {
 
 class ImageManager {
@@ -81,6 +87,7 @@ class ImageManager {
 		std::string body;
 		int sessionId = 0;
 		Network::RequestPriority priority;
+		int animatedDim = 0;
 	};
 
 	std::map<std::string, ImageInfo, std::less<>> textureCache;
@@ -105,6 +112,11 @@ class ImageManager {
 	Utils::WorkerThread animationThread;
 	bool stopAnimation = false;
 
+	std::deque<DecodeRequest> lottieLoads;
+	std::vector<std::unique_ptr<Utils::Lottie::Player>> retiredPlayers;
+	std::condition_variable lottieCv;
+	Utils::WorkerThread lottieThread;
+
 	std::atomic<int> currentSessionId{0};
 	std::atomic<uint32_t> generation{0};
 
@@ -117,10 +129,13 @@ class ImageManager {
 	void freePendingLocked();
 	bool retryAsStill(const std::string &url, Network::RequestPriority priority);
 	std::shared_ptr<Animation> decodeGif(std::string body, Utils::Image::TiledData &tiled);
+	std::shared_ptr<Animation> decodeApng(std::string body, int maxDim, Utils::Image::TiledData &tiled);
+	void loadLottie(DecodeRequest &req);
+	void retire(std::unique_ptr<Utils::Lottie::Player> player);
 	void uploadAnimationFrames();
 	void decode(DecodeRequest &req);
 	void decoderWorker();
-	void animationWorker();
+	void animationWorker(bool lottie);
 };
 
 } // namespace UI

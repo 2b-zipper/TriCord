@@ -49,8 +49,22 @@ using ReactionCallback = std::function<void(const std::string &channelId, const 
                                             const std::string &userId, const Emoji &emoji)>;
 using PollVoteCallback = std::function<void(const std::string &channelId, const std::string &messageId,
                                             const std::string &userId, int answerId, bool added)>;
-using LoginCallback = std::function<void(bool success, const std::string &token, bool mfaRequired,
-                                         const std::string &ticket, const std::string &error)>;
+
+struct LoginResult {
+	bool success = false;
+	std::string token;
+	bool mfaRequired = false;
+	std::string ticket;
+	std::string loginInstanceId;
+	bool totp = false;
+	bool sms = false;
+	int errorCode = 0;
+	std::string error;
+};
+
+using LoginCallback = std::function<void(const LoginResult &result)>;
+using MfaSmsCallback = std::function<void(bool success, const std::string &phoneOrError)>;
+using ErrorCallback = std::function<void(const std::string &error)>;
 using JsonPull = Utils::Json::Pull<Network::JsonInputStream>;
 
 struct TypingUser {
@@ -218,8 +232,13 @@ class DiscordClient {
 	void addReaction(const std::string &channelId, const std::string &messageId, const Emoji &emoji);
 	void removeReaction(const std::string &channelId, const std::string &messageId, const Emoji &emoji);
 
-	void performLogin(const std::string &email, const std::string &password, LoginCallback cb);
-	void submitMFA(const std::string &ticket, const std::string &code, LoginCallback cb);
+	void performLogin(const std::string &login, const std::string &password, bool undelete, LoginCallback cb);
+	void submitMFA(const std::string &method, const std::string &ticket, const std::string &loginInstanceId,
+	               const std::string &code, LoginCallback cb);
+	void sendMfaSms(const std::string &ticket, MfaSmsCallback cb);
+	// Verifies the SMS code sent for a phone login from a new location, then authorizes the IP for a retry.
+	void authorizeLoginByPhone(const std::string &phone, const std::string &code, ErrorCallback cb);
+	void revokeToken(const std::string &token);
 
 	void sendLazyRequest(const std::string &guildId, const std::string &channelId);
 
@@ -288,7 +307,6 @@ class DiscordClient {
 
 	bool parseReady(JsonPull &p, ReadyData &ready, rapidjson::Document &voiceStates);
 	bool parseReadyGuilds(JsonPull &p, ReadyData &ready, rapidjson::Document &voiceStates);
-	bool parseReadySupplemental(JsonPull &p, rapidjson::Document &voiceStates);
 	bool parseGuildFields(JsonPull &p, Guild &guild, const std::string &userId, rapidjson::Document *voiceStates,
 	                      bool keepDetails, bool *unavailable = nullptr);
 	bool parseChannelArray(JsonPull &p, rapidjson::Document &item, std::vector<Channel> &out, bool &fits);
@@ -391,6 +409,7 @@ class DiscordClient {
 	std::string resumeGatewayUrl;
 	std::atomic<uint64_t> lastSequence;
 	std::atomic<bool> reconnectRequested{false};
+	std::atomic<bool> reconnectLater{false};
 
 	bool isConnecting;
 	bool stopWorker;
@@ -423,6 +442,11 @@ class DiscordClient {
 
 	std::string statusMessage;
 	std::mutex statusMutex;
+
+	std::string fingerprint;
+	std::mutex fingerprintMutex;
+	void postUnauthenticated(const std::string &path, const std::string &body,
+	                         std::function<void(Network::HttpResponse &)> cb);
 
 	std::string selectedGuildId;
 	std::string selectedChannelId;

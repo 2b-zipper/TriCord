@@ -66,6 +66,26 @@ std::string base64UrlEncode(const unsigned char *data, size_t length) {
 	return encoded;
 }
 
+// "id:discriminator:avatar:username", with an avatar of "0" for none.
+RemoteAuthUser parseUserPayload(const std::string &payload) {
+	RemoteAuthUser user;
+	std::string *fields[] = {&user.id, &user.discriminator, &user.avatar};
+	size_t pos = 0;
+	for (std::string *field : fields) {
+		const size_t colon = payload.find(':', pos);
+		if (colon == std::string::npos) {
+			return RemoteAuthUser();
+		}
+		*field = payload.substr(pos, colon - pos);
+		pos = colon + 1;
+	}
+	user.username = payload.substr(pos);
+	if (user.avatar == "0") {
+		user.avatar.clear();
+	}
+	return user;
+}
+
 std::vector<uint16_t> oddPrimesBelow(uint32_t limit) {
 	std::vector<bool> composite(limit);
 	std::vector<uint16_t> primes;
@@ -160,8 +180,8 @@ cleanup:
 } // namespace
 
 RemoteAuth::RemoteAuth()
-    : state(RemoteAuthState::IDLE), heartbeatInterval(0), lastHeartbeat(0), retryAt(0), rsaContext(nullptr),
-      keyReady(false), sessionWanted(false), workerRunning(false), retryImmediately(false) {}
+    : state(RemoteAuthState::IDLE), heartbeatInterval(0), lastHeartbeat(0), awaitingHeartbeatAck(false), retryAt(0),
+      rsaContext(nullptr), keyReady(false), sessionWanted(false), workerRunning(false), retryImmediately(false) {}
 
 RemoteAuth::~RemoteAuth() {
 	cancel();
@@ -212,6 +232,7 @@ void RemoteAuth::runSession() {
 
 void RemoteAuth::serve() {
 	heartbeatInterval = 0;
+	awaitingHeartbeatAck = false;
 
 	ws.setOnMessage([this](std::string &message) { handleMessage(message); });
 
@@ -223,7 +244,10 @@ void RemoteAuth::serve() {
 	ws.setOnClose([this](int code, const std::string &reason) {
 		Logger::log("[RemoteAuth] Connection closed: %d - %s", code, reason.c_str());
 		if (state != RemoteAuthState::COMPLETED && state != RemoteAuthState::CANCELLED) {
-			retryImmediately = code == CLOSE_SESSION_TIMEOUT;
+			// Never cleared here: a missed heartbeat ACK raises it just before this close.
+			if (code == CLOSE_SESSION_TIMEOUT) {
+				retryImmediately = true;
+			}
 			setState(RemoteAuthState::FAILED, Core::I18n::getInstance().get("login.status.connection_closed"));
 		}
 	});
@@ -238,6 +262,11 @@ void RemoteAuth::serve() {
 
 		const uint64_t now = osGetTime();
 		if (heartbeatInterval > 0 && now - lastHeartbeat >= heartbeatInterval) {
+			if (awaitingHeartbeatAck) {
+				Logger::log("[RemoteAuth] Heartbeat ACK missing, reconnecting");
+				retryImmediately = true;
+				break;
+			}
 			sendHeartbeat();
 			lastHeartbeat = now;
 		}
@@ -368,37 +397,20 @@ void RemoteAuth::handleMessage(std::string &message) {
 		post([this, received] { fingerprint = received; });
 		setState(RemoteAuthState::WAITING_FOR_SCAN, Core::I18n::getInstance().get("login.status.login"));
 
-	} else if (op == "pending_ticket") {
-		if (doc.HasMember("encrypted_user_payload") && doc["encrypted_user_payload"].IsString()) {
-			setState(RemoteAuthState::WAITING_FOR_CONFIRM, Core::I18n::getInstance().get("login.status.user_scanned"));
+	} else if (op == "heartbeat_ack") {
+		awaitingHeartbeatAck = false;
 
-			post([this] {
-				if (onUserScanned) {
-					Discord::RemoteAuthUser user;
-					user.username = "User";
-					user.discriminator = "";
-					user.id = "";
-					onUserScanned(user);
-				}
-			});
-		}
+	} else if (op == "pending_ticket") {
+		const RemoteAuthUser user = parseUserPayload(decrypt(Utils::Json::getString(doc, "encrypted_user_payload")));
+		setState(RemoteAuthState::WAITING_FOR_CONFIRM, Core::I18n::getInstance().get("login.status.user_scanned"));
+		post([this, user] {
+			if (onUserScanned) {
+				onUserScanned(user);
+			}
+		});
 
 	} else if (op == "pending_login") {
 		const std::string ticket = Utils::Json::getString(doc, "ticket");
-		if (!ticket.empty()) {
-			finish(ticket);
-		}
-
-	} else if (op == "pending_finish") {
-		if (doc.HasMember("encrypted_user_payload") && doc["encrypted_user_payload"].IsString()) {
-			setState(RemoteAuthState::WAITING_FOR_CONFIRM, "Confirming...");
-		}
-
-		std::string ticket = Utils::Json::getString(doc, "encrypted_token");
-		if (ticket.empty()) {
-			ticket = Utils::Json::getString(doc, "ticket");
-		}
-
 		if (!ticket.empty()) {
 			finish(ticket);
 		}
@@ -429,6 +441,7 @@ void RemoteAuth::sendHeartbeat() {
 	rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
 	doc.Accept(writer);
 	ws.send(buffer.GetString());
+	awaitingHeartbeatAck = true;
 }
 
 void RemoteAuth::post(std::function<void()> event) {

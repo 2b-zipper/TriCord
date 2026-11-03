@@ -55,11 +55,29 @@ std::string generateUUID() {
 	       "-" + generateRandomId(12);
 }
 
-std::string buildSuperProperties(const std::string &lang) {
+// The language setting is a code like "ja_JP".
+std::string languageTag(const std::string &lang) {
+	std::string tag = lang.empty() ? "en-US" : lang;
+	std::replace(tag.begin(), tag.end(), '_', '-');
+	return tag;
+}
+
+// Discord's locales keep the region for only a few languages.
+std::string discordLocale(const std::string &lang) {
+	const std::string tag = languageTag(lang);
+	for (const char *regional : {"en-GB", "en-US", "es-ES", "es-419", "pt-BR", "sv-SE", "zh-CN", "zh-TW"}) {
+		if (tag == regional) {
+			return tag;
+		}
+	}
+	return tag.substr(0, tag.find('-'));
+}
+
+std::string buildClientProperties(const std::string &lang) {
 	rapidjson::StringBuffer s;
 	rapidjson::Writer<rapidjson::StringBuffer> writer(s);
 
-	const std::string locale = (lang == "ja") ? "ja-JP" : "en-US";
+	const std::string locale = languageTag(lang);
 
 	writer.StartObject();
 	writer.Key("os");
@@ -102,8 +120,7 @@ std::string buildSuperProperties(const std::string &lang) {
 	writer.String("focused");
 	writer.EndObject();
 
-	const std::string json = s.GetString();
-	return Utils::Base64::encode((const unsigned char *)json.c_str(), json.length());
+	return s.GetString();
 }
 
 bool isDiscordUrl(const std::string &url) {
@@ -183,20 +200,26 @@ CURLcode useSharedCaChain(CURL *, void *sslConfig, void *) {
 
 } // namespace
 
+const std::string &clientProperties() {
+	static const std::string properties = buildClientProperties(Config::getInstance().getLanguage());
+	return properties;
+}
+
 void initHttpDefaults() {
 	if (!defaultHeaders.empty()) {
 		return;
 	}
-	const std::string lang = Config::getInstance().getLanguage();
-	const bool japanese = lang == "ja";
+	const std::string locale = discordLocale(Config::getInstance().getLanguage());
 
 	addDefaultHeader("Accept", "*/*");
-	addDefaultHeader("Accept-Language", japanese ? "ja,en-US;q=0.9,en;q=0.8" : "en-US,en;q=0.9");
+	addDefaultHeader("Accept-Language", locale == "en-US" ? "en-US,en;q=0.9" : locale + ",en-US;q=0.9,en;q=0.8");
 	addDefaultHeader("Content-Type", "application/json");
 	addDefaultHeader("User-Agent", USER_AGENT);
 	addDefaultHeader("X-Debug-Options", "bugReporterEnabled");
-	addDefaultHeader("X-Discord-Locale", japanese ? "ja" : "en-US", true);
-	addDefaultHeader("X-Super-Properties", buildSuperProperties(lang), true);
+	addDefaultHeader("X-Discord-Locale", locale, true);
+	const std::string &properties = clientProperties();
+	addDefaultHeader("X-Super-Properties",
+	                 Utils::Base64::encode((const unsigned char *)properties.data(), properties.size()), true);
 }
 
 curl_slist *prepareTransfer(CURL *easy, const HttpRequest &request, HttpResponse &response) {
