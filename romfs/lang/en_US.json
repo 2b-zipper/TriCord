@@ -154,7 +154,6 @@
     "message.spoiler": "Spoiler",
     "message.status.failed": "Failed",
     "message.status.sending": "Sending...",
-    "message.sticker": "[Sticker: {0}]",
     "message.sticker_failed": "Failed to load sticker",
     "message.system.boosted": " boosted the server!",
     "message.system.call": " started a call",

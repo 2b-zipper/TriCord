@@ -67,6 +67,24 @@ void markDrawnIfVisible(const UI::ImageManager::ImageInfo &info, float y, float 
 	}
 }
 
+constexpr float STICKER_SIZE = 100.0f;
+constexpr int STICKER_FORMAT_APNG = 2;
+constexpr int STICKER_FORMAT_LOTTIE = 3;
+constexpr int STICKER_FORMAT_GIF = 4;
+
+std::string stickerUrl(const Discord::Sticker &sticker) {
+	const char *ext = sticker.format_type == STICKER_FORMAT_LOTTIE ? ".json"
+	                  : sticker.format_type == STICKER_FORMAT_GIF  ? ".gif"
+	                                                               : ".png";
+	return "https://cdn.discordapp.com/stickers/" + sticker.id + ext;
+}
+
+void prefetchSticker(const Discord::Sticker &sticker, Network::RequestPriority priority) {
+	const bool animated = sticker.format_type == STICKER_FORMAT_APNG || sticker.format_type == STICKER_FORMAT_LOTTIE;
+	const int dim = animated ? (int)STICKER_SIZE : 160;
+	UI::ImageManager::getInstance().prefetch(stickerUrl(sticker), dim, dim, priority);
+}
+
 } // namespace
 
 namespace UI {
@@ -840,10 +858,8 @@ void MessageScreen::update() {
 						ImageManager::getInstance().prefetch(url, attach.width, attach.height);
 					}
 					for (const auto &sticker : msg.stickers) {
-						std::string ext = (sticker.format_type == 4) ? ".gif" : ".png";
-						std::string url = "https://cdn.discordapp.com/stickers/" + sticker.id + ext;
-						ImageManager::getInstance().clearFailed(url);
-						ImageManager::getInstance().prefetch(url);
+						ImageManager::getInstance().clearFailed(stickerUrl(sticker));
+						prefetchSticker(sticker, Network::RequestPriority::BACKGROUND);
 					}
 					for (const auto &embed : msg.embeds) {
 						if (!embed.gif_url.empty()) {
@@ -1157,16 +1173,7 @@ float MessageScreen::calculateMessageHeight(const Discord::Message &msg, bool sh
 			}
 		}
 
-		if (!msg.stickers.empty()) {
-			for (const auto &sticker : msg.stickers) {
-				if (sticker.format_type == 3) {
-
-					totalH += 12.0f;
-				} else {
-					totalH += 100.0f + 4.0f;
-				}
-			}
-		}
+		totalH += msg.stickers.size() * (STICKER_SIZE + 4.0f);
 
 		if (!msg.blocks.empty()) {
 			BlockPass pass{msg};
@@ -1653,22 +1660,8 @@ float MessageScreen::drawStickers(const Discord::Message &msg, float x, float y,
 
 	float newY = y;
 	for (const auto &sticker : msg.stickers) {
-		if (sticker.format_type == 3) {
-			std::string label = Core::I18n::format(TR("message.sticker"), sticker.name);
-			drawText(x, newY, 0.5f, 0.35f, 0.35f, ScreenManager::colorTextMuted(), label);
-			newY += 12.0f;
-			continue;
-		}
-
-		std::string ext = ".png";
-		if (sticker.format_type == 4) {
-			ext = ".gif";
-		}
-
-		std::string stickerUrl = "https://cdn.discordapp.com/stickers/" + sticker.id + ext;
-		float stickerSize = 100.0f;
-
-		UI::ImageManager::ImageInfo info = UI::ImageManager::getInstance().getImageInfo(stickerUrl);
+		const float stickerSize = STICKER_SIZE;
+		UI::ImageManager::ImageInfo info = UI::ImageManager::getInstance().getImageInfo(stickerUrl(sticker));
 		if (info.tex) {
 			float uMax = (float)info.originalW / info.tex->width;
 			float vMax = (float)info.originalH / info.tex->height;
@@ -1685,7 +1678,7 @@ float MessageScreen::drawStickers(const Discord::Message &msg, float x, float y,
 			         TR("message.sticker_failed"));
 			newY += stickerSize + 4.0f;
 		} else {
-			UI::ImageManager::getInstance().prefetch(stickerUrl, 160, 160, Network::RequestPriority::INTERACTIVE);
+			prefetchSticker(sticker, Network::RequestPriority::INTERACTIVE);
 			u32 stickerBg = ScreenManager::colorBackgroundDark();
 			C2D_DrawRectSolid(x, newY, 0.5f, stickerSize, stickerSize, stickerBg);
 			drawText(x + 5, newY + (stickerSize / 2) - 6, 0.55f, 0.3f, 0.3f, ScreenManager::colorTextMuted(),
@@ -3511,9 +3504,7 @@ void MessageScreen::showMessageOptions() {
 	}
 	if (!hasFailed) {
 		for (const auto &sticker : msg.stickers) {
-			std::string ext = (sticker.format_type == 4) ? ".gif" : ".png";
-			std::string url = "https://cdn.discordapp.com/stickers/" + sticker.id + ext;
-			if (ImageManager::getInstance().getImageInfo(url).failed) {
+			if (ImageManager::getInstance().getImageInfo(stickerUrl(sticker)).failed) {
 				hasFailed = true;
 				break;
 			}
