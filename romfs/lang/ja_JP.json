@@ -154,7 +154,6 @@
     "message.spoiler": "Spoiler",
     "message.status.failed": "送信失敗",
     "message.status.sending": "送信中...",
-    "message.sticker": "[スタンプ: {0}]",
     "message.sticker_failed": "スタンプの読み込みに失敗しました",
     "message.system.boosted": "がサーバーをブーストしました",
     "message.system.call": "が通話を開始しました",
