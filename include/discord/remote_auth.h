@@ -53,6 +53,7 @@ class RemoteAuth {
 	std::string fingerprint;
 	uint64_t heartbeatInterval;
 	uint64_t lastHeartbeat;
+	bool awaitingHeartbeatAck;
 	uint64_t retryAt;
 	const uint64_t retryDelay = 5000;
 

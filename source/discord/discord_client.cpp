@@ -35,6 +35,7 @@ namespace Discord {
 namespace {
 // Closing with anything but 1000 or 1001 keeps the session alive for a resume.
 constexpr int RESUMABLE_CLOSE_CODE = 4000;
+constexpr int RECONNECT_LATER_SECONDS = 60;
 // Heap kept free for everything the app does after login.
 constexpr size_t GUILD_DATA_RESERVE = 4 * 1024 * 1024;
 constexpr int INTERACTION_MESSAGE_COMPONENT = 3;
@@ -43,9 +44,7 @@ constexpr size_t MAX_EPHEMERAL_PER_CHANNEL = 20;
 
 bool hasRoomForGuildData() { return Utils::System::heapFreeBytes() >= GUILD_DATA_RESERVE; }
 
-bool isStreamedEvent(const std::string &event) {
-	return event == "READY" || event == "READY_SUPPLEMENTAL" || event == "GUILD_CREATE";
-}
+bool isStreamedEvent(const std::string &event) { return event == "READY" || event == "GUILD_CREATE"; }
 
 // False when the text ends before "t", which for a prefix means it comes later.
 bool peekEventName(const char *json, size_t size, std::string &event) {
@@ -123,6 +122,37 @@ std::string urlEncode(const std::string &value) {
 	}
 
 	return escaped.str();
+}
+
+// The first field error of an Invalid Form Body, else the top-level message.
+std::string apiErrorMessage(const rapidjson::Document &doc, const std::string &action, long statusCode) {
+	if (!doc.HasParseError() && doc.IsObject()) {
+		auto errors = doc.FindMember("errors");
+		if (errors != doc.MemberEnd() && errors->value.IsObject()) {
+			for (auto it = errors->value.MemberBegin(); it != errors->value.MemberEnd(); ++it) {
+				const rapidjson::Value &field = it->value;
+				if (field.IsObject() && field.HasMember("_errors") && field["_errors"].IsArray() &&
+				    !field["_errors"].Empty() && field["_errors"][0].IsObject()) {
+					std::string message = Utils::Json::getString(field["_errors"][0], "message");
+					if (!message.empty()) {
+						return message;
+					}
+				}
+			}
+		}
+		std::string message = Utils::Json::getString(doc, "message");
+		if (!message.empty()) {
+			return message;
+		}
+	}
+	return action + " failed: " + std::to_string(statusCode);
+}
+
+std::string encodeJson(const rapidjson::Document &doc) {
+	rapidjson::StringBuffer buffer;
+	rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+	doc.Accept(writer);
+	return buffer.GetString();
 }
 
 // Cloudflare's 429s have no JSON body, and one without Retry-After must not be retried.
@@ -285,6 +315,10 @@ void DiscordClient::runNetworkThread(const std::string &token) {
 			if (code == 4003 || code == 4007 || code == 4009) {
 				invalidateSession();
 			}
+			// Rate limited, or too many sessions open: reconnecting at once would only repeat it.
+			if (code == 4008 || code == 4015) {
+				reconnectLater = true;
+			}
 		});
 
 		std::string gatewayUrl = DISCORD_GATEWAY_URL;
@@ -376,7 +410,14 @@ void DiscordClient::runNetworkThread(const std::string &token) {
 
 		setStatus(Core::I18n::getInstance().get("login.status.lost_connection"));
 		ws.disconnect(RESUMABLE_CLOSE_CODE);
-		if (!hasSession) {
+		if (reconnectLater.exchange(false)) {
+			setStatus(Core::I18n::format(Core::I18n::getInstance().get("login.status.reconnect_later"),
+			                             std::to_string(RECONNECT_LATER_SECONDS)));
+			const uint64_t until = osGetTime() + RECONNECT_LATER_SECONDS * 1000ULL;
+			while (state != ConnectionState::DISCONNECTED && osGetTime() < until) {
+				svcSleepThread(100ULL * 1000 * 1000);
+			}
+		} else if (!hasSession) {
 			svcSleepThread(1ULL * 1000 * 1000 * 1000);
 		}
 	}
@@ -883,8 +924,6 @@ void DiscordClient::processStreamedMessage(Network::JsonInputStream &stream, con
 			std::string userId = getCurrentUser().id;
 			parsed = p.next() && p.token() == Token::START_OBJECT &&
 			         parseGuildFields(p, *guild, userId, &voiceStates, hasRoomForGuildData(), &unavailable);
-		} else if (event == "READY_SUPPLEMENTAL") {
-			parsed = parseReadySupplemental(p, voiceStates);
 		} else {
 			parsed = p.skipValue();
 		}
@@ -937,6 +976,10 @@ void DiscordClient::processMessage(std::string &message) {
 	std::string t = Utils::Json::getString(doc, "t");
 
 	switch (op) {
+	case 1: // Heartbeat request
+		sendHeartbeat();
+		break;
+
 	case 7: // Reconnect
 		handleReconnect();
 		break;
@@ -1404,23 +1447,6 @@ bool DiscordClient::parseReadyGuilds(JsonPull &p, ReadyData &ready, rapidjson::D
 		}
 		ready.guilds.push_back(std::move(guild));
 		return true;
-	});
-}
-
-// With PRIORITIZED_READY_PAYLOAD, voice states arrive here instead of in READY.
-bool DiscordClient::parseReadySupplemental(JsonPull &p, rapidjson::Document &voiceStates) {
-	if (!p.next() || p.token() != JsonPull::Token::START_OBJECT) {
-		return false;
-	}
-
-	return forEachMember(p, [&](const std::string &key) {
-		if (key != "guilds") {
-			return p.skipValue();
-		}
-		return forEachObject(p, [&]() {
-			Guild guild;
-			return parseGuildFields(p, guild, "", &voiceStates, false);
-		});
 	});
 }
 
@@ -3233,19 +3259,12 @@ void DiscordClient::sendIdentify() {
 	                   "\"token\": \"" +
 	                   token +
 	                   "\","
-	                   "\"properties\": {"
-	                   "\"os\": \"" +
-	                   Utils::System::getDeviceModelName() +
-	                   "\","
-	                   "\"browser\": \"TriCord\","
-	                   "\"device\": \"" +
-	                   Utils::System::getDeviceModelName() +
-	                   "\""
-	                   "},"
+	                   "\"properties\": " +
+	                   Network::clientProperties() +
+	                   ","
 	                   "\"compress\": false,"
-	                   // LAZY_USER_NOTES | VERSIONED_READ_STATES |
-	                   // VERSIONED_USER_GUILD_SETTINGS | PRIORITIZED_READY_PAYLOAD
-	                   "\"capabilities\": 45,"
+	                   // LAZY_USER_NOTES | VERSIONED_READ_STATES | VERSIONED_USER_GUILD_SETTINGS
+	                   "\"capabilities\": 13,"
 	                   "\"large_threshold\": 50"
 	                   "}"
 	                   "}";
@@ -4138,52 +4157,83 @@ void DiscordClient::deleteMessageAsync(const std::string &channelId, const std::
 void DiscordClient::exchangeTicketForToken(const std::string &ticket, TokenCallback cb) {
 	Logger::log("[DiscordClient] Exchanging ticket for token");
 
-	std::string url = "https://discord.com/api/v10/users/@me/remote-auth/login";
-
 	rapidjson::Document doc;
 	doc.SetObject();
-	rapidjson::Document::AllocatorType &allocator = doc.GetAllocator();
+	doc.AddMember("ticket", rapidjson::Value(ticket.c_str(), doc.GetAllocator()), doc.GetAllocator());
 
-	doc.AddMember("ticket", rapidjson::Value(ticket.c_str(), allocator), allocator);
+	postUnauthenticated("/users/@me/remote-auth/login", encodeJson(doc), [cb](Network::HttpResponse &resp) {
+		if (!resp.success) {
+			Logger::log("[DiscordClient] Token exchange failed: %d", resp.statusCode);
+			Logger::log("[DiscordClient] Response body: %s", resp.body.c_str());
+			if (cb) {
+				cb("");
+			}
+			return;
+		}
 
-	rapidjson::StringBuffer buffer;
-	rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
-	doc.Accept(writer);
-	std::string payload = buffer.GetString();
+		rapidjson::Document doc;
+		doc.Parse(resp.body.c_str());
 
-	Logger::log("[DiscordClient] Exchange payload prepared (len %zu)", payload.size());
+		if (doc.HasParseError() || !doc.IsObject()) {
+			Logger::log("[DiscordClient] Failed to parse token response");
+			if (cb) {
+				cb("");
+			}
+			return;
+		}
 
-	Network::NetworkManager::getInstance().enqueue(
-	    url, "POST", payload, Network::RequestPriority::INTERACTIVE,
-	    [cb](const Network::HttpResponse &resp) {
-		    if (!resp.success) {
-			    Logger::log("[DiscordClient] Token exchange failed: %d", resp.statusCode);
-			    Logger::log("[DiscordClient] Response body: %s", resp.body.c_str());
-			    if (cb) {
-				    cb("");
-			    }
-			    return;
-		    }
+		std::string token = Utils::Json::getString(doc, "encrypted_token");
+		Logger::log("[DiscordClient] Token received (len %zu)", token.size());
 
-		    rapidjson::Document doc;
-		    doc.Parse(resp.body.c_str());
+		if (cb) {
+			cb(token);
+		}
+	});
+}
 
-		    if (doc.HasParseError() || !doc.IsObject()) {
-			    Logger::log("[DiscordClient] Failed to parse token response");
-			    if (cb) {
-				    cb("");
-			    }
-			    return;
-		    }
+// Until login completes, requests carry a fingerprint from Get Experiment Assignments.
+void DiscordClient::postUnauthenticated(const std::string &path, const std::string &body,
+                                        std::function<void(Network::HttpResponse &)> cb) {
+	auto post = [path, body, cb](const std::string &fingerprint) {
+		std::map<std::string, std::string> headers = {{"Content-Type", "application/json"}};
+		if (!fingerprint.empty()) {
+			headers["X-Fingerprint"] = fingerprint;
+		}
+		Network::NetworkManager::getInstance().enqueue("https://discord.com/api/v10" + path, "POST", body,
+		                                               Network::RequestPriority::INTERACTIVE, cb, headers);
+	};
 
-		    std::string token = Utils::Json::getString(doc, "encrypted_token");
-		    Logger::log("[DiscordClient] Token received (len %zu)", token.size());
+	std::string known;
+	{
+		std::lock_guard<std::mutex> lock(fingerprintMutex);
+		known = fingerprint;
+	}
+	if (!known.empty()) {
+		post(known);
+		return;
+	}
 
-		    if (cb) {
-			    cb(token);
-		    }
-	    },
-	    {{"Content-Type", "application/json"}});
+	auto onExperiments = [this, post](Network::HttpResponse &resp) {
+		std::string received;
+		if (resp.statusCode == 200) {
+			rapidjson::Document doc;
+			doc.Parse(resp.body.c_str());
+			if (!doc.HasParseError() && doc.IsObject()) {
+				received = Utils::Json::getString(doc, "fingerprint");
+			}
+		}
+		{
+			std::lock_guard<std::mutex> lock(fingerprintMutex);
+			if (fingerprint.empty()) {
+				fingerprint = received;
+			}
+			received = fingerprint;
+		}
+		post(received);
+	};
+	// Only three valid fingerprints are issued per IP every two minutes, so one serves the whole run.
+	Network::NetworkManager::getInstance().enqueue("https://discord.com/api/v10/experiments", "GET", "",
+	                                               Network::RequestPriority::INTERACTIVE, onExperiments);
 }
 
 void DiscordClient::requestMembers(const std::string &guildId, const std::vector<std::string> &userIds) {
@@ -4279,135 +4329,149 @@ void DiscordClient::handleGuildMembersChunk(const rapidjson::Value &d) {
 	guildDataDirty.store(true);
 }
 
-void DiscordClient::performLogin(const std::string &email, const std::string &password, LoginCallback cb) {
+void DiscordClient::performLogin(const std::string &login, const std::string &password, bool undelete,
+                                 LoginCallback cb) {
 	rapidjson::Document d;
 	d.SetObject();
 	rapidjson::Document::AllocatorType &allocator = d.GetAllocator();
 
-	d.AddMember("login", rapidjson::Value(email.c_str(), allocator), allocator);
+	d.AddMember("login", rapidjson::Value(login.c_str(), allocator), allocator);
 	d.AddMember("password", rapidjson::Value(password.c_str(), allocator), allocator);
-	d.AddMember("undelete", false, allocator);
-	d.AddMember("captcha_key", rapidjson::Value(), allocator);
+	d.AddMember("undelete", undelete, allocator);
 	d.AddMember("login_source", rapidjson::Value(), allocator);
 	d.AddMember("gift_code_sku_id", rapidjson::Value(), allocator);
 
-	rapidjson::StringBuffer buffer;
-	rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
-	d.Accept(writer);
-	std::string json = buffer.GetString();
+	postUnauthenticated("/auth/login", encodeJson(d), [cb](Network::HttpResponse &resp) {
+		LoginResult result;
+		rapidjson::Document doc;
+		doc.Parse(resp.body.c_str());
+		const bool parsed = !doc.HasParseError() && doc.IsObject();
 
-	Network::NetworkManager::getInstance().enqueue(
-	    "https://discord.com/api/v10/auth/login", "POST", json, Network::RequestPriority::INTERACTIVE,
-	    [cb](const Network::HttpResponse &resp) {
-		    if (resp.statusCode == 200) {
-			    rapidjson::Document doc;
-			    doc.Parse(resp.body.c_str());
+		if (resp.statusCode == 200 && parsed) {
+			if (Utils::Json::getBool(doc, "mfa")) {
+				result.mfaRequired = true;
+				result.ticket = Utils::Json::getString(doc, "ticket");
+				result.loginInstanceId = Utils::Json::getString(doc, "login_instance_id");
+				result.totp = Utils::Json::getBool(doc, "totp");
+				result.sms = Utils::Json::getBool(doc, "sms");
+			} else {
+				result.token = Utils::Json::getString(doc, "token");
+				result.success = !result.token.empty();
+				if (!result.success) {
+					result.error = "Unknown response format";
+				}
+			}
+		} else if (resp.statusCode == 200) {
+			result.error = "Response parse error";
+		} else if (parsed && doc.HasMember("captcha_key")) {
+			result.error = "CAPTCHA required. Please use QR code login.";
+		} else if (parsed && doc.HasMember("suspended_user_token")) {
+			result.error = Core::I18n::getInstance().get("login.error.suspended");
+		} else {
+			result.errorCode = parsed ? Utils::Json::getInt(doc, "code") : 0;
+			result.error = apiErrorMessage(doc, "Login", resp.statusCode);
+		}
 
-			    if (doc.HasParseError()) {
-				    if (cb) {
-					    cb(false, "", false, "", "Response parse error");
-				    }
-				    return;
-			    }
-
-			    if (doc.HasMember("mfa") && doc["mfa"].IsBool() && doc["mfa"].GetBool()) {
-				    std::string ticket = "";
-				    if (doc.HasMember("ticket") && doc["ticket"].IsString()) {
-					    ticket = doc["ticket"].GetString();
-				    }
-				    if (cb) {
-					    cb(false, "", true, ticket, "");
-				    }
-			    } else if (doc.HasMember("token") && doc["token"].IsString()) {
-				    std::string token = doc["token"].GetString();
-				    if (cb) {
-					    cb(true, token, false, "", "");
-				    }
-			    } else {
-				    if (cb) {
-					    cb(false, "", false, "", "Unknown response format");
-				    }
-			    }
-		    } else {
-			    std::string error = "Login failed: " + std::to_string(resp.statusCode);
-			    rapidjson::Document doc;
-			    doc.Parse(resp.body.c_str());
-			    if (!doc.HasParseError() && doc.IsObject()) {
-				    if (doc.HasMember("captcha_key") && doc["captcha_key"].IsArray()) {
-					    error = "CAPTCHA required. Please use QR code login.";
-				    } else if (doc.HasMember("errors") && doc["errors"].IsObject()) {
-					    const rapidjson::Value &errors = doc["errors"];
-					    bool found = false;
-					    for (auto it = errors.MemberBegin(); it != errors.MemberEnd() && !found; ++it) {
-						    if (it->value.IsObject() && it->value.HasMember("_errors") &&
-						        it->value["_errors"].IsArray() && it->value["_errors"].Size() > 0) {
-							    const rapidjson::Value &firstErr = it->value["_errors"][0];
-							    if (firstErr.IsObject() && firstErr.HasMember("message") &&
-							        firstErr["message"].IsString()) {
-								    error = firstErr["message"].GetString();
-								    found = true;
-							    }
-						    }
-					    }
-					    if (!found && doc.HasMember("message") && doc["message"].IsString()) {
-						    error = doc["message"].GetString();
-					    }
-				    } else if (doc.HasMember("message") && doc["message"].IsString()) {
-					    error = doc["message"].GetString();
-				    }
-			    }
-			    if (cb) {
-				    cb(false, "", false, "", error);
-			    }
-		    }
-	    },
-	    {{"Content-Type", "application/json"}});
+		if (cb) {
+			cb(result);
+		}
+	});
 }
 
-void DiscordClient::submitMFA(const std::string &ticket, const std::string &code, LoginCallback cb) {
+void DiscordClient::submitMFA(const std::string &method, const std::string &ticket, const std::string &loginInstanceId,
+                              const std::string &code, LoginCallback cb) {
 	rapidjson::Document d;
 	d.SetObject();
 	rapidjson::Document::AllocatorType &allocator = d.GetAllocator();
 
 	d.AddMember("code", rapidjson::Value(code.c_str(), allocator), allocator);
 	d.AddMember("ticket", rapidjson::Value(ticket.c_str(), allocator), allocator);
+	if (!loginInstanceId.empty()) {
+		d.AddMember("login_instance_id", rapidjson::Value(loginInstanceId.c_str(), allocator), allocator);
+	}
 	d.AddMember("login_source", rapidjson::Value(), allocator);
 	d.AddMember("gift_code_sku_id", rapidjson::Value(), allocator);
 
-	rapidjson::StringBuffer buffer;
-	rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
-	d.Accept(writer);
-	std::string json = buffer.GetString();
+	postUnauthenticated("/auth/mfa/" + method, encodeJson(d), [cb](Network::HttpResponse &resp) {
+		LoginResult result;
+		rapidjson::Document doc;
+		doc.Parse(resp.body.c_str());
+		const bool parsed = !doc.HasParseError() && doc.IsObject();
 
+		if (resp.statusCode == 200 && parsed) {
+			result.token = Utils::Json::getString(doc, "token");
+			result.success = !result.token.empty();
+			if (!result.success) {
+				result.error = "No token in MFA response";
+			}
+		} else if (parsed && doc.HasMember("suspended_user_token")) {
+			result.error = Core::I18n::getInstance().get("login.error.suspended");
+		} else {
+			result.error = apiErrorMessage(doc, "MFA", resp.statusCode);
+		}
+
+		if (cb) {
+			cb(result);
+		}
+	});
+}
+
+void DiscordClient::sendMfaSms(const std::string &ticket, MfaSmsCallback cb) {
+	rapidjson::Document d;
+	d.SetObject();
+	d.AddMember("ticket", rapidjson::Value(ticket.c_str(), d.GetAllocator()), d.GetAllocator());
+
+	postUnauthenticated("/auth/mfa/sms/send", encodeJson(d), [cb](Network::HttpResponse &resp) {
+		rapidjson::Document doc;
+		doc.Parse(resp.body.c_str());
+		if (resp.statusCode == 200 && !doc.HasParseError() && doc.IsObject()) {
+			cb(true, Utils::Json::getString(doc, "phone"));
+		} else {
+			cb(false, apiErrorMessage(doc, "SMS", resp.statusCode));
+		}
+	});
+}
+
+void DiscordClient::authorizeLoginByPhone(const std::string &phone, const std::string &code, ErrorCallback cb) {
+	rapidjson::Document d;
+	d.SetObject();
+	rapidjson::Document::AllocatorType &allocator = d.GetAllocator();
+	d.AddMember("phone", rapidjson::Value(phone.c_str(), allocator), allocator);
+	d.AddMember("code", rapidjson::Value(code.c_str(), allocator), allocator);
+
+	postUnauthenticated("/phone-verifications/verify", encodeJson(d), [this, cb](Network::HttpResponse &resp) {
+		rapidjson::Document doc;
+		doc.Parse(resp.body.c_str());
+		std::string token;
+		if (resp.statusCode == 200 && !doc.HasParseError() && doc.IsObject()) {
+			token = Utils::Json::getString(doc, "token");
+		}
+		if (token.empty()) {
+			cb(apiErrorMessage(doc, "Phone verification", resp.statusCode));
+			return;
+		}
+
+		rapidjson::Document authorize;
+		authorize.SetObject();
+		authorize.AddMember("token", rapidjson::Value(token.c_str(), authorize.GetAllocator()),
+		                    authorize.GetAllocator());
+		postUnauthenticated("/auth/authorize-ip", encodeJson(authorize), [cb](Network::HttpResponse &resp) {
+			if (resp.statusCode == 204) {
+				cb("");
+				return;
+			}
+			rapidjson::Document doc;
+			doc.Parse(resp.body.c_str());
+			cb(apiErrorMessage(doc, "IP authorization", resp.statusCode));
+		});
+	});
+}
+
+void DiscordClient::revokeToken(const std::string &token) {
 	Network::NetworkManager::getInstance().enqueue(
-	    "https://discord.com/api/v10/auth/mfa/totp", "POST", json, Network::RequestPriority::INTERACTIVE,
-	    [cb](const Network::HttpResponse &resp) {
-		    if (resp.statusCode == 200) {
-			    rapidjson::Document doc;
-			    doc.Parse(resp.body.c_str());
-			    if (doc.HasMember("token") && doc["token"].IsString()) {
-				    std::string token = doc["token"].GetString();
-				    if (cb) {
-					    cb(true, token, false, "", "");
-				    }
-			    } else {
-				    if (cb) {
-					    cb(false, "", false, "", "No token in MFA response");
-				    }
-			    }
-		    } else {
-			    std::string error = "MFA failed: " + std::to_string(resp.statusCode);
-			    rapidjson::Document doc;
-			    doc.Parse(resp.body.c_str());
-			    if (!doc.HasParseError() && doc.HasMember("message") && doc["message"].IsString()) {
-				    error = doc["message"].GetString();
-			    }
-			    if (cb) {
-				    cb(false, "", false, "", error);
-			    }
-		    }
-	    },
-	    {{"Content-Type", "application/json"}});
+	    "https://discord.com/api/v10/auth/logout", "POST", "{}", Network::RequestPriority::INTERACTIVE,
+	    [](const Network::HttpResponse &resp) { Logger::log("[DiscordClient] Logout: %d", resp.statusCode); },
+	    {{"Authorization", token}, {"Content-Type", "application/json"}});
 }
 
 void DiscordClient::sendLazyRequest(const std::string &guildId, const std::string &channelId) {

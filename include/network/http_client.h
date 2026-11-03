@@ -24,6 +24,7 @@ struct HttpRequest {
 	long timeoutSeconds;
 };
 
+const std::string &clientProperties();
 void initHttpDefaults();
 curl_slist *prepareTransfer(CURL *easy, const HttpRequest &request, HttpResponse &response);
 
