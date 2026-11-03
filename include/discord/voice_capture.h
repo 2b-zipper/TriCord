@@ -26,6 +26,9 @@ class VoiceCapture {
 	void setMuted(bool m) { muted = m; }
 	bool isMuted() const { return muted; }
 
+	void setVolume(int percent) { volume = percent; }
+	int getVolume() const { return volume; }
+
 	void setEchoCanceller(EchoCanceller *e) { echo = e; }
 
 	int lastPeak() const { return peakLevel; }
@@ -47,6 +50,7 @@ class VoiceCapture {
 
 	bool running = false;
 	std::atomic<bool> muted{false};
+	std::atomic<int> volume{100};
 	std::atomic<int> peakLevel{0};
 	EchoCanceller *echo = nullptr;
 

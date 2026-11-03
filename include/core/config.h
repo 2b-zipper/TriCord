@@ -129,10 +129,8 @@ class Config {
 	bool isDisclaimerAccepted() const { return disclaimerAccepted; }
 	void setDisclaimerAccepted(bool accepted);
 
-	// Peak level in dBFS a mic frame must reach to be sent; 0 dBFS is the top.
-	static constexpr int MIC_THRESHOLD_MIN_DB = -80;
-	int getMicThreshold() const { return micThreshold; }
-	void setMicThreshold(int db);
+	int getMicVolume() const { return micVolume; }
+	void setMicVolume(int volumePercent);
 
 	int getUserVolume(const std::string &userId) const;
 	void setUserVolume(const std::string &userId, int volumePercent);
@@ -158,7 +156,7 @@ class Config {
 	bool showServerIcons;
 	bool showHiddenChannels;
 
-	int micThreshold;
+	int micVolume;
 	std::unordered_map<std::string, int> userVolumes;
 
 	bool customThemeEnabled;

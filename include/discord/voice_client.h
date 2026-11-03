@@ -127,6 +127,7 @@ class VoiceClient {
 	std::unordered_map<std::string, uint64_t> speakingUntil;
 	static constexpr uint64_t SPEAKING_HOLD_MS = 200;
 	static constexpr uint64_t TRANSMIT_HOLD_MS = 200;
+	static constexpr int MIC_GATE = 1036; // -30 dBFS
 	static constexpr int ECHO_GATE_PERCENT = 25;
 	static constexpr int ECHO_GATE_MAX = 6000;
 	static constexpr int MAX_MIC_FRAMES_PER_PASS = 3;
@@ -174,8 +175,8 @@ class VoiceClient {
 
 	void setUserVolume(const std::string &userId, int volumePercent);
 	int getUserVolume(const std::string &userId) const;
-	int getMicLevel() const;
-	int getMicGateThreshold() const;
+	void setMicVolume(int volumePercent);
+	int getMicVolume() const;
 
 	std::function<void(VoiceState)> stateCallback;
 };

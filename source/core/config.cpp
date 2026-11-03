@@ -24,7 +24,7 @@
 Config::Config()
     : currentAccountIndex(-1), timezoneOffset(0), language("en_US"), themeType(0), typingIndicatorEnabled(true),
       notificationSound(true), fileLoggingEnabled(false), disclaimerAccepted(false), showAvatars(true),
-      showServerIcons(true), showHiddenChannels(false), micThreshold(-30), customThemeEnabled(false),
+      showServerIcons(true), showHiddenChannels(false), micVolume(100), customThemeEnabled(false),
       selectedThemeName("") {
 	customTheme = getDarkPreset();
 	customTheme.name = "Custom Theme";
@@ -242,8 +242,8 @@ void Config::loadSettings() {
 			if (doc.HasMember("show_hidden_channels") && doc["show_hidden_channels"].IsBool()) {
 				showHiddenChannels = doc["show_hidden_channels"].GetBool();
 			}
-			if (doc.HasMember("mic_threshold") && doc["mic_threshold"].IsInt()) {
-				micThreshold = std::clamp(doc["mic_threshold"].GetInt(), MIC_THRESHOLD_MIN_DB, 0);
+			if (doc.HasMember("mic_volume") && doc["mic_volume"].IsInt()) {
+				micVolume = std::clamp(doc["mic_volume"].GetInt(), 0, 200);
 			}
 			if (doc.HasMember("user_volumes") && doc["user_volumes"].IsObject()) {
 				userVolumes.clear();
@@ -295,8 +295,8 @@ void Config::saveSettings() {
 	writer.Bool(showServerIcons);
 	writer.Key("show_hidden_channels");
 	writer.Bool(showHiddenChannels);
-	writer.Key("mic_threshold");
-	writer.Int(micThreshold);
+	writer.Key("mic_volume");
+	writer.Int(micVolume);
 	writer.Key("user_volumes");
 	writer.StartObject();
 	for (const auto &pair : userVolumes) {
@@ -321,9 +321,9 @@ void Config::setDisclaimerAccepted(bool accepted) {
 	saveSettings();
 }
 
-void Config::setMicThreshold(int db) {
+void Config::setMicVolume(int volumePercent) {
 	std::lock_guard<std::recursive_mutex> lock(mutex);
-	micThreshold = std::clamp(db, MIC_THRESHOLD_MIN_DB, 0);
+	micVolume = std::clamp(volumePercent, 0, 200);
 	saveSettings();
 }
 
