@@ -154,7 +154,6 @@
     "message.spoiler": "Spoiler",
     "message.status.failed": "Échec",
     "message.status.sending": "Envoi...",
-    "message.sticker": "[Autocollant : {0}]",
     "message.sticker_failed": "Échec du chargement de l'autocollant",
     "message.system.boosted": " a boosté le serveur !",
     "message.system.call": " a lancé un appel",
