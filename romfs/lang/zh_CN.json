@@ -154,7 +154,6 @@
     "message.spoiler": "Spoiler",
     "message.status.failed": "失败",
     "message.status.sending": "发送中...",
-    "message.sticker": "[贴纸: {0}]",
     "message.sticker_failed": "贴纸加载失败",
     "message.system.boosted": " 助理了服务器！",
     "message.system.call": " 发起了一个通话",
