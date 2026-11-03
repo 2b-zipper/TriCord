@@ -154,7 +154,6 @@
     "message.spoiler": "Spoiler",
     "message.status.failed": "Fallido",
     "message.status.sending": "Enviando...",
-    "message.sticker": "[Sticker: {0}]",
     "message.sticker_failed": "No se pudo cargar el sticker",
     "message.system.boosted": " acaba de mejorar el servidor.",
     "message.system.call": " inició una llamada",
