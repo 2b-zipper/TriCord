@@ -154,7 +154,6 @@
     "message.spoiler": "Spoiler",
     "message.status.failed": "Falhou",
     "message.status.sending": "Enviando...",
-    "message.sticker": "[Figurinha: {0}]",
     "message.sticker_failed": "Falha ao carregar figurinha",
     "message.system.boosted": " impulsionou o servidor!",
     "message.system.call": " iniciou uma chamada",
